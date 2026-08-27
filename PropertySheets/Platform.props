@@ -22,7 +22,7 @@
   </PropertyGroup>
 
   <PropertyGroup Condition="'$(ConfigurationType)'=='StaticLibrary'">
-    <OutDir>$(SolutionDir)bin\$(Platform)\$(Configuration)\lib\</OutDir>
+    <OutDir>$(SolutionDir)build\$(Platform)\$(Configuration)\lib\</OutDir>
   </PropertyGroup>
 
   <ItemDefinitionGroup>
@@ -122,9 +122,9 @@
       <IgnoreEmbeddedIDL>false</IgnoreEmbeddedIDL>
       <TypeLibraryResourceID>1</TypeLibraryResourceID>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <ProgramDatabaseFile>$(TargetDir)pdb/$(TargetName).pdb</ProgramDatabaseFile>
+      <ProgramDatabaseFile>$(SolutionDir)build\$(Platform)\$(Configuration)\pdb\$(TargetName).pdb</ProgramDatabaseFile>
       <GenerateMapFile>true</GenerateMapFile>
-      <MapFileName>$(TargetDir)map/$(TargetName).map</MapFileName>
+      <MapFileName>$(SolutionDir)build\$(Platform)\$(Configuration)\map\$(TargetName).map</MapFileName>
       <MapExports>false</MapExports>
       <HeapReserveSize />
       <HeapCommitSize />
@@ -140,7 +140,7 @@
       <FixedBaseAddress>false</FixedBaseAddress>
       <TurnOffAssemblyGeneration>false</TurnOffAssemblyGeneration>
       <SupportUnloadOfDelayLoadedDLL>false</SupportUnloadOfDelayLoadedDLL>
-      <ImportLibrary>$(TargetDir)lib/$(TargetName).lib</ImportLibrary>
+      <ImportLibrary>$(SolutionDir)build\$(Platform)\$(Configuration)\lib\$(TargetName).lib</ImportLibrary>
       <Profile>false</Profile>
       <CLRThreadAttribute>DefaultThreadingAttribute</CLRThreadAttribute>
       <CLRImageType>Default</CLRImageType>
@@ -192,6 +192,10 @@
       <OutputFile>$(TargetDir)$(TargetName).xml</OutputFile>
     </Xdcmake>
   </ItemDefinitionGroup>
+
+  <Target Name="CreateDiagnosticOutputDirectories" BeforeTargets="Link">
+    <MakeDir Directories="$(SolutionDir)build\$(Platform)\$(Configuration)\lib;$(SolutionDir)build\$(Platform)\$(Configuration)\map;$(SolutionDir)build\$(Platform)\$(Configuration)\pdb" />
+  </Target>
   <!-- END common platform settings -->
 
   <!-- Win32 -->

@@ -228,10 +228,13 @@ They write their DLLs directly alongside the executable, under
 is required. Debug solution builds do not invoke the Parallel scripts because
 they intentionally produce Release DLLs.
 
-There is no automated release-packaging script. Assemble any distributable
-manually from the rebuilt executable, required plugins, configuration, language,
-and license files. A Vulkan 1.3-capable GPU and driver are required to run the
-Parallel-RDP plugin. Further build-environment details are in
+Run `./New-ReleasePackages.ps1` in PowerShell to create ZIP archives for every
+complete `Release` or `Debug` export found under `Bin`. The archives are written
+to the ignored `Package` directory and contain the executable, plugins, portable
+configuration, languages, cheats/enhancements, and license files. Incomplete
+exports are skipped with a warning. Each ZIP contains a single versioned root
+directory for easy extraction. A Vulkan 1.3-capable GPU and driver are
+required to run the Parallel-RDP plugin. Further build-environment details are in
 [Docs/BUILDING.md](./Docs/BUILDING.md).
 ## Jet Force Gemini hacking reference
 
