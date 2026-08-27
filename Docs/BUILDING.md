@@ -57,9 +57,10 @@ plugins. Parallel-RDP and Parallel-RSP use their own CMake projects because
 Parallel-RSP needs a MinGW-compatible JIT toolchain.
 
 Set `Project64` as the startup project if you want F5 to launch the emulator
-from Visual Studio. Run the corresponding `build_parallel_win32.cmd` or
-`build_parallel_x64.cmd` afterward to build and copy the Parallel plugin pair
-next to the development executable.
+from Visual Studio. For a Release build, use **Build Solution**: the
+`Project64-Parallel` utility project runs the corresponding Parallel script
+after the emulator and writes the plugin pair directly next to it. The scripts
+remain available for manual Parallel-only rebuilds.
 
 ## Parallel plugin build
 
@@ -74,8 +75,9 @@ Source\Script\build_parallel_x64.cmd
 
 The first invocation compiles Granite, Shaderc, and the generated SPIR-V shader
 header, so it takes noticeably longer than later incremental builds. Each
-script writes the pair to `Plugin\<platform>\GFX\Project64-ParallelRDP.dll`
-and `Plugin\<platform>\RSP\Project64-ParallelRSP.dll`.
+script writes the pair to
+`Bin\<platform>\Release\Plugin\GFX\Project64-ParallelRDP.dll` and
+`Bin\<platform>\Release\Plugin\RSP\Project64-ParallelRSP.dll`.
 
 The scripts place their intermediate CMake trees in `C:\pj64-build` to avoid
 Windows' legacy 260-character path limit in Granite's nested dependencies.
@@ -96,9 +98,9 @@ path for the statically linked GNU Lightning component are described in
 
 ## Development configuration
 
-`Config\Project64.cfg.development` contains paths that point builds under
-`Bin\Win32\Release` or `Bin\x64\Release` back to the repository's `Config`,
-`Lang`, `Plugin`, `Save`, and `Textures` directories.
+`Config\Project64.cfg.development` keeps the shared `Config` and `Lang` data
+available to builds under `Bin\Win32\Release` or `Bin\x64\Release`. Plugin,
+save, screenshot, and texture directories use paths relative to the executable.
 
 The Project64 project copies this template to `Config\Project64.cfg` and to the
 output directory when those files do not already exist. Both generated files are

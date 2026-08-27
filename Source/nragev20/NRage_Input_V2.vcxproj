@@ -31,12 +31,12 @@
     <Import Project="$(SolutionDir)PropertySheets\Platform.$(Configuration).props" />
   </ImportGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <PropertyGroup>
     <TargetName>PJ64_NRage</TargetName>
     <TargetName Condition="'$(Configuration)'=='Debug'">PJ64_NRage_d</TargetName>
-    <OutDir>$(SolutionDir)Plugin\$(Platform)\Input\</OutDir>
+    <OutDir>$(SolutionDir)Bin\$(Platform)\$(Configuration)\Plugin\Input\</OutDir>
   </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ItemDefinitionGroup>
     <ClCompile>
       <AdditionalIncludeDirectories>$(Root)Source\3rdParty\directx\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>

@@ -66,7 +66,7 @@ void initialize_tooltips(HWND dialog)
         L"Halves patched enemy movement updates in 60 fps mode to compensate for doubled game speed.");
 
     add_tooltip(tooltip, dialog, IDC_GSH_FAST_CUTSCENES,
-        L"Skips known JFG cinematics in the US ROM. Press E (A) or Enter (Start) while a cinematic/logo screen plays. Press P to append a scene/setup probe line to JfgCinematicProbe.log. Requires the keyboard/mouse mapping.");
+        L"Skips known JFG cinematics in the US ROM. Press E (A) or Enter (Start) while a cinematic/logo screen plays. Requires the keyboard/mouse mapping.");
     add_tooltip(tooltip, dialog, IDC_GSH_ENABLE_SPRINT,
         L"Holding Left Shift increases standing movement speed in normal gameplay. It is disabled while aiming, crouching, prone, or in boss modes.");
     add_tooltip(tooltip, dialog, IDC_GSH_WIDESCREEN_HUD,

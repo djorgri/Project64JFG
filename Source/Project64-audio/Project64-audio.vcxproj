@@ -31,12 +31,12 @@
     <Import Project="$(SolutionDir)PropertySheets\Platform.$(Configuration).props" />
   </ImportGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
-  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <PropertyGroup>
     <TargetName>Project64-Audio</TargetName>
     <TargetName Condition="'$(Configuration)'=='Debug'">Project64-Audio_d</TargetName>
-    <OutDir>$(SolutionDir)Plugin\$(Platform)\Audio\</OutDir>
+    <OutDir>$(SolutionDir)Bin\$(Platform)\$(Configuration)\Plugin\Audio\</OutDir>
   </PropertyGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ItemDefinitionGroup>
     <ClCompile>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>

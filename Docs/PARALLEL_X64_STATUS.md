@@ -26,7 +26,8 @@ les sources actuelles, puis la tester avec une scène JFG reproductible.
   Ninja.
 * La solution `Project64.sln` construit l'émulateur avec les plugins Project64
   Audio et Project64 Input. Il n'y a pas de script d'export ou de ZIP ; une
-  distribution est assemblée manuellement à partir des binaires reconstruits.* Les valeurs par défaut de Project64 sélectionnent
+  distribution est assemblée manuellement à partir des binaires reconstruits.
+* Les valeurs par défaut de Project64 sélectionnent
   `GFX/Project64-ParallelRDP.dll` et `RSP/Project64-ParallelRSP.dll`.
 
 Le cœur Project64 possède également un recompiler x64 natif. L'émulateur et
@@ -40,8 +41,8 @@ reconstruites depuis les arbres figés, avec le correctif SIMD ci-dessous :
 
 | Artefact | Horodatage |
 | --- | --- |
-| `Plugin/Win32/{GFX,RSP}` | 8 août, 15h58 |
-| `Plugin/x64/{GFX,RSP}` | 8 août, 18h48 |
+| `Bin/Win32/Release/Plugin/{GFX,RSP}` | 8 août, 15h58 |
+| `Bin/x64/Release/Plugin/{GFX,RSP}` | 8 août, 18h48 |
 
 Le Win32 date d'avant le correctif SIMD sans que ce soit un problème : ses
 drapeaux étaient déjà ceux-là, et sa reconstruction ne produit aucun objet

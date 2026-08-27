@@ -59,20 +59,6 @@ if errorlevel 1 goto :EndErr
 "%msys_cmake%" --build "%parallel_rsp_build_dir%" --target Project64-ParallelRSP --parallel 1
 if errorlevel 1 goto :EndErr
 
-rem A developer build runs Project64.exe from Bin\Win32\Release. Project64 may
-rem mirror the selected plugins there, so keep that mirror in sync as well.
-set "developer_plugin_dir=%base_dir%\Bin\Win32\Release\Plugin\Win32"
-if exist "%base_dir%\Bin\Win32\Release\Project64.exe" (
-	if not exist "%developer_plugin_dir%\GFX" mkdir "%developer_plugin_dir%\GFX"
-	if errorlevel 1 goto :EndErr
-	if not exist "%developer_plugin_dir%\RSP" mkdir "%developer_plugin_dir%\RSP"
-	if errorlevel 1 goto :EndErr
-	copy /Y "%base_dir%\Plugin\Win32\GFX\Project64-ParallelRDP.dll" "%developer_plugin_dir%\GFX" > NUL
-	if errorlevel 1 goto :EndErr
-	copy /Y "%base_dir%\Plugin\Win32\RSP\Project64-ParallelRSP.dll" "%developer_plugin_dir%\RSP" > NUL
-	if errorlevel 1 goto :EndErr
-)
-
 echo Parallel Win32 plugins built successfully
 goto :End
 

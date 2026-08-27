@@ -34,7 +34,7 @@
   <PropertyGroup>
     <TargetName>Project64-Input</TargetName>
     <TargetName Condition="'$(Configuration)'=='Debug'">Project64-Input_d</TargetName>
-    <OutDir>$(SolutionDir)Plugin\$(Platform)\Input\</OutDir>
+    <OutDir>$(SolutionDir)Bin\$(Platform)\$(Configuration)\Plugin\Input\</OutDir>
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ItemDefinitionGroup>

@@ -23,6 +23,7 @@ const uint64_t SprintMaximumElapsedMicroseconds = 100000;
 const uint32_t MouseButtonLeft = 0;
 const uint32_t MouseButtonRight = 2;
 const KeyboardMouseKey CinematicProbeKey = (KeyboardMouseKey)19; // USB HID P
+const bool CinematicProbeEnabled = false; // Kept for internal diagnostics, disabled in public builds.
 // Diagnostic only: hold the instrument scope open so every scope-gated HUD hook
 // behaves like the font hook, which is resolution-gated and therefore global.
 // The ammunition counter ignores all of them while the weapon frame beside it
@@ -2917,7 +2918,10 @@ CJetForceGeminiRuntime::CJetForceGeminiRuntime(CMipsMemoryVM & MMU, CRecompiler 
     m_LastCurrentScreen(0)
 {
     memset(m_HalvedEnemySlots, 0, sizeof(m_HalvedEnemySlots));
-    OpenCinematicProbeLogSession();
+    if (CinematicProbeEnabled)
+    {
+        OpenCinematicProbeLogSession();
+    }
 }
 
 CJetForceGeminiRuntime::~CJetForceGeminiRuntime()
@@ -3181,12 +3185,15 @@ void CJetForceGeminiRuntime::ProcessController(
         PatchLandingCinematicSkip(LandingSkipArmed);
         PatchIntroCinematicSkip(CinematicSkipRequested);
 
-        const bool CinematicProbeDown = KeyDown(Input, CinematicProbeKey);
-        if (CinematicProbeDown && !m_CinematicProbeDown)
+        if (CinematicProbeEnabled)
         {
-            DisplayCinematicProbe();
+            const bool CinematicProbeDown = KeyDown(Input, CinematicProbeKey);
+            if (CinematicProbeDown && !m_CinematicProbeDown)
+            {
+                DisplayCinematicProbe();
+            }
+            m_CinematicProbeDown = CinematicProbeDown;
         }
-        m_CinematicProbeDown = CinematicProbeDown;
 
         const bool ScopeForceDown = KeyDown(Input, WidescreenHudScopeForceKey);
         if (ScopeForceDown && !m_WidescreenHudScopeForceDown)

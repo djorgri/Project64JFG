@@ -17,6 +17,7 @@ A Windows fork of [Project64](https://github.com/project64/project64) focused on
 - [Controls](#controls)
 - [Requirements](#requirements)
 - [Installation](#installation)
+- [First-launch defaults](#first-launch-defaults)
 - [Known limitations](#known-limitations)
 - [Planned improvements](#planned-improvements)
 - [Building](#building)
@@ -44,8 +45,8 @@ A Windows fork of [Project64](https://github.com/project64/project64) focused on
 
 ### Performance and accuracy
 
-- 60 FPS mode is the default, with a doubled per-frame CPU budget for demanding
-  scenes; a 30 FPS compatibility mode remains available
+- 30 FPS is the default for predictable performance; the 60 FPS mode with its
+  doubled per-frame CPU budget remains available for demanding scenes
 - Switch between 60 and 30 FPS live in-game with **Numpad +** / **Numpad −**
 - 60 FPS gameplay-speed corrections for enemies (movement and animation),
   Squaddies, race opponents, projectiles, and the water wake, so the higher
@@ -150,14 +151,22 @@ Either byte order loads: the emulator identifies the ROM by its internal CRC.
 
 1. Download the latest build from the [releases](../../releases) page.
 2. Extract it anywhere.
-3. Launch `Project64.exe` and open your Jet Force Gemini ROM.
+3. Launch `Project64JFG.exe` and open your Jet Force Gemini ROM.
 
 The release includes the Project64 Parallel-RDP and Parallel-RSP pair, built
-from the vendored sources. Select them together in the **Plugins** page.
-The initial JFG profile uses English, keyboard/mouse controls, and the 60 FPS
-mode with the recommended Jet Force Gemini defaults — fast cutscenes,
-enemy-speed correction, crouch/prone stick-strafing, and sprint. All of these
-can be changed under *Options → Game-specific hacks → Jet Force Gemini*.
+from the vendored sources and selects them by default. The initial JFG profile
+uses English, keyboard/mouse controls, and 30 FPS with the recommended Jet Force
+Gemini defaults — fast cutscenes, crouch/prone stick-strafing, and sprint. 60
+FPS and its game-speed corrections remain available under
+*Options → Game-specific hacks → Jet Force Gemini*.
+
+## First-launch defaults
+
+- Emulation pauses when the Project64JFG window is not active.
+- Advanced settings are hidden initially, but can be revealed in
+  *Options → Configuration → General settings*.
+- Plugin, save, screenshot, and texture paths are relative to the executable,
+  keeping an extracted release self-contained and portable.
 
 ## Known limitations
 
@@ -198,17 +207,26 @@ git submodule update --init external/sdl
 ```
 
 Open `Project64.sln` in Visual Studio, select `Release | x64` (or
-`Release | Win32`), and build the `Project64` project. This builds the emulator
-with the Project64 Audio and Project64 Input plugins. Set `Project64` as the
-startup project to launch it with F5.
+`Release | Win32`), and use **Build Solution**. This builds the emulator with
+the Project64 Audio and Project64 Input plugins, then the `Project64-Parallel`
+utility project runs the matching Parallel build automatically. The executable
+and DLLs are written together under `Bin\<platform>\<configuration>`. Set
+`Project64` as the startup project to launch it with F5.
 
-Parallel-RDP and Parallel-RSP are separate CMake projects. Rebuild their pair
-only when you need to update those DLLs:
+Parallel-RDP and Parallel-RSP remain separate CMake projects, but their scripts
+are invoked automatically for Release solution builds. You can still run either
+script manually when working on Parallel itself:
 
 ```
 Source\Script\build_parallel_win32.cmd
 Source\Script\build_parallel_x64.cmd
 ```
+
+They write their DLLs directly alongside the executable, under
+`Bin\<platform>\Release\Plugin\GFX` and
+`Bin\<platform>\Release\Plugin\RSP`; no separate root-level `Plugin` folder
+is required. Debug solution builds do not invoke the Parallel scripts because
+they intentionally produce Release DLLs.
 
 There is no automated release-packaging script. Assemble any distributable
 manually from the rebuilt executable, required plugins, configuration, language,
@@ -239,7 +257,7 @@ changes carried on top are recorded in
 [Docs/PARALLEL_VENDOR_PROVENANCE.md](./Docs/PARALLEL_VENDOR_PROVENANCE.md).
 Every public binary release must identify its immutable release tag as the
 corresponding source; that tag contains the adapters, vendored sources, and
-build scripts. Binary version metadata is fixed at `0.9`; it never incorporates
+build scripts. Binary version metadata is fixed at `0.9.1`; it never incorporates
 a Git commit, build number, or worktree state. The notices and the documented
 rebuild path for the GNU
 Lightning-linked RSP plugin are in [Licenses/](./Licenses).

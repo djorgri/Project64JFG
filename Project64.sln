@@ -1,6 +1,6 @@
 Microsoft Visual Studio Solution File, Format Version 12.00
-# Visual Studio 14
-VisualStudioVersion = 14.0.25420.1
+# Visual Studio Version 17
+VisualStudioVersion = 17.14.37516.0 d17.14
 MinimumVisualStudioVersion = 10.0.40219.1
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "3rd Party", "3rd Party", "{AA8F7F8E-5377-4911-859D-8A8817B0DB26}"
 EndProject
@@ -36,6 +36,11 @@ EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Project64", "Source\Project64\Project64.vcxproj", "{7E534C8E-1ACE-4A88-8807-39A11ED4DA18}"
 	ProjectSection(ProjectDependencies) = postProject
 		{D3F979CE-8FA7-48C9-A2B3-A33594B48536} = {D3F979CE-8FA7-48C9-A2B3-A33594B48536}
+	EndProjectSection
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "Project64-Parallel", "Source\Script\Project64-Parallel.vcxproj", "{C6B58AF5-9120-4F7A-9C52-3572E7970C59}"
+	ProjectSection(ProjectDependencies) = postProject
+		{7E534C8E-1ACE-4A88-8807-39A11ED4DA18} = {7E534C8E-1ACE-4A88-8807-39A11ED4DA18}
 	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "discord-rpc", "Source\3rdParty\discord-rpc\discord-rpc.vcxproj", "{DCC841B2-298A-40F0-84D1-ACBABD3B86E8}"
@@ -134,6 +139,7 @@ Global
 		{E8D9A652-A354-4374-B6C5-A51EE62749FD}.Release|x64.Build.0 = Release|x64
 		{D233025A-231F-4A43-92B6-E87193C60ACC}.Debug|Win32.ActiveCfg = Debug|Win32
 		{D233025A-231F-4A43-92B6-E87193C60ACC}.Debug|x64.ActiveCfg = Debug|x64
+		{D233025A-231F-4A43-92B6-E87193C60ACC}.Debug|x64.Build.0 = Debug|x64
 		{D233025A-231F-4A43-92B6-E87193C60ACC}.Release|Win32.ActiveCfg = Release|Win32
 		{D233025A-231F-4A43-92B6-E87193C60ACC}.Release|x64.ActiveCfg = Release|x64
 		{D233025A-231F-4A43-92B6-E87193C60ACC}.Release|x64.Build.0 = Release|x64
@@ -145,6 +151,12 @@ Global
 		{7E534C8E-1ACE-4A88-8807-39A11ED4DA18}.Release|Win32.Build.0 = Release|Win32
 		{7E534C8E-1ACE-4A88-8807-39A11ED4DA18}.Release|x64.ActiveCfg = Release|x64
 		{7E534C8E-1ACE-4A88-8807-39A11ED4DA18}.Release|x64.Build.0 = Release|x64
+		{C6B58AF5-9120-4F7A-9C52-3572E7970C59}.Debug|Win32.ActiveCfg = Debug|Win32
+		{C6B58AF5-9120-4F7A-9C52-3572E7970C59}.Debug|x64.ActiveCfg = Debug|x64
+		{C6B58AF5-9120-4F7A-9C52-3572E7970C59}.Release|Win32.ActiveCfg = Release|Win32
+		{C6B58AF5-9120-4F7A-9C52-3572E7970C59}.Release|Win32.Build.0 = Release|Win32
+		{C6B58AF5-9120-4F7A-9C52-3572E7970C59}.Release|x64.ActiveCfg = Release|x64
+		{C6B58AF5-9120-4F7A-9C52-3572E7970C59}.Release|x64.Build.0 = Release|x64
 		{DCC841B2-298A-40F0-84D1-ACBABD3B86E8}.Debug|Win32.ActiveCfg = Debug|Win32
 		{DCC841B2-298A-40F0-84D1-ACBABD3B86E8}.Debug|Win32.Build.0 = Debug|Win32
 		{DCC841B2-298A-40F0-84D1-ACBABD3B86E8}.Debug|x64.ActiveCfg = Debug|x64
@@ -155,6 +167,7 @@ Global
 		{DCC841B2-298A-40F0-84D1-ACBABD3B86E8}.Release|x64.Build.0 = Release|x64
 		{D3F979CE-8FA7-48C9-A2B3-A33594B48536}.Debug|Win32.ActiveCfg = Debug|Win32
 		{D3F979CE-8FA7-48C9-A2B3-A33594B48536}.Debug|x64.ActiveCfg = Debug|x64
+		{D3F979CE-8FA7-48C9-A2B3-A33594B48536}.Debug|x64.Build.0 = Debug|x64
 		{D3F979CE-8FA7-48C9-A2B3-A33594B48536}.Release|Win32.ActiveCfg = Release|Win32
 		{D3F979CE-8FA7-48C9-A2B3-A33594B48536}.Release|x64.ActiveCfg = Release|x64
 		{D3F979CE-8FA7-48C9-A2B3-A33594B48536}.Release|x64.Build.0 = Release|x64
