@@ -1,0 +1,63 @@
+// Project64 - A Nintendo 64 emulator
+// https://www.pj64-emu.com/
+// Copyright(C) 2001-2021 Project64
+// Copyright(C) 2000-2015 Azimer
+// GNU/GPLv2 licensed: https://gnu.org/licenses/gpl-2.0.html
+
+#pragma once
+#include <Common/SyncEvent.h>
+#include <Common/CriticalSection.h>
+
+enum
+{
+    AI_STATUS_FIFO_FULL = 0x80000000,	// Bit 31: full
+    AI_STATUS_DMA_BUSY = 0x40000000,	// Bit 30: busy
+
+    MI_INTR_AI = 0x04,		// Bit 2: AI INTR
+    AI_CONTROL_DMA_ON = 0x01,
+    AI_CONTROL_DMA_OFF = 0x00,
+};
+
+class SoundDriverBase
+{
+public:
+    SoundDriverBase();
+
+    void AI_SetFrequency(uint32_t Frequency, uint32_t BufferSize);
+    void AI_LenChanged(uint8_t *start, uint32_t length);
+    void AI_Startup();
+    void AI_Shutdown();
+    void AI_Update(bool Wait);
+    uint32_t AI_ReadLength();
+
+    virtual void SetFrequency(uint32_t Frequency, uint32_t BufferSize);
+    virtual void StartAudio();
+    virtual void StopAudio();
+
+protected:
+    enum { MAX_SIZE = 48000 * 2 * 2 }; // Max buffer size (44100Hz * 16-bit * stereo)
+
+    virtual bool Initialize();
+    void LoadAiBuffer(uint8_t *start, uint32_t length); // Reads in length amount of audio bytes
+    // Ring fill fraction in [0, 1]; dynamic rate control steers this toward 0.5.
+    double BufferFillRatio() const
+    {
+        return (m_MaxBufferSize != 0) ? (double)m_BufferRemaining / (double)m_MaxBufferSize : 0.5;
+    }
+    uint32_t m_MaxBufferSize;   // Variable size determined by playback rate
+    CriticalSection m_CS;
+
+private:
+    void BufferAudio();
+
+    SyncEvent m_AiUpdateEvent;
+    uint8_t *m_AI_DMAPrimaryBuffer, *m_AI_DMASecondaryBuffer;
+    uint32_t m_AI_DMAPrimaryBytes, m_AI_DMASecondaryBytes;
+    uint32_t m_BufferRemaining; // Buffer remaining
+    uint32_t m_CurrentReadLoc;  // Currently playing buffer
+    uint32_t m_CurrentWriteLoc; // Currently writing buffer
+    // Last stereo frame actually played, used to fade out (declick) on a buffer
+    // underrun instead of cutting straight to silence.
+    int16_t m_LastSampleL, m_LastSampleR;
+    uint8_t m_Buffer[MAX_SIZE]; // Emulated buffers
+};

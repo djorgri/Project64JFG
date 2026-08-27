@@ -1,0 +1,9 @@
+# The Parallel trees are vendored third-party source, frozen at the state that
+# was built and validated. core.autocrlf is on for this repository, which would
+# otherwise rewrite their line endings on checkout and report every file as
+# modified forever -- that churn is what hid a real ten-line Granite fix among
+# hundreds of phantom changes while they were still submodules. -text disables
+# end-of-line conversion for them entirely, so what is committed is byte for
+# byte what the compiler was given.
+external/parallel-rdp/** -text
+external/parallel-rsp/** -text

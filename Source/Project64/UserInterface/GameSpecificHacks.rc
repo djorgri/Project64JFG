@@ -1,0 +1,41 @@
+#include "resource.h"
+#include "WinResrc.h"
+
+#ifdef IDC_STATIC
+#undef IDC_STATIC
+#endif
+#define IDC_STATIC (-1)
+
+LANGUAGE LANG_ENGLISH, SUBLANG_ENGLISH_US
+#pragma code_page(65001)
+
+IDD_GameSpecificHacks DIALOGEX 0, 0, 390, 324
+STYLE DS_SETFONT | DS_MODALFRAME | DS_CENTER | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Game-specific hacks"
+FONT 9, "Segoe UI", 0, 0, 0x0
+BEGIN
+    CONTROL         "",IDC_GSH_GAME_TAB,"SysTabControl32",WS_TABSTOP,7,7,376,283
+    GROUPBOX        "Controls",IDC_STATIC,16,32,178,126
+    CONTROL         "Enable keyboard/mouse controls",IDC_GSH_KEYBOARD_MOUSE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,47,158,12
+    CONTROL         "Preserve in-game camera limits",IDC_GSH_PRESERVE_CAMERA,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,65,158,12
+    CONTROL         "Free camera during jump",IDC_GSH_FREE_CAMERA_JUMP,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,83,158,12
+    CONTROL         "Prone Q/D use C left/right",IDC_GSH_PRONE_CBUTTONS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,101,158,12
+    CONTROL         "Invert Floyd mouse Y axis",IDC_GSH_DRONE_INVERT_Y,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,119,158,12
+    GROUPBOX        "Performance",IDC_STATIC,202,32,171,126
+    LTEXT           "Frame rate:",IDC_STATIC,211,48,45,10
+    COMBOBOX        IDC_GSH_FRAME_RATE,260,45,101,58,CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    CONTROL         "Keep 30 fps during heavy action",IDC_GSH_KEEP_30FPS,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,211,76,150,12
+    CONTROL         "Release graphics task every retrace",IDC_GSH_SCHEDULER_RELEASE,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,211,76,150,12
+    CONTROL         "Double CPU budget per frame",IDC_GSH_CPU_BUDGET,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,211,98,150,12
+    CONTROL         "Halve enemy movement speed",IDC_GSH_HALVE_ENEMY_SPEED,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,211,120,150,12
+    CONTROL         "Synchronize emulator to audio",IDC_GSH_SYNC_AUDIO,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,211,120,158,12
+    GROUPBOX        "Improvements",IDC_STATIC,16,168,178,117
+    CONTROL         "Skip cinematics (E / Enter)",IDC_GSH_FAST_CUTSCENES,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,186,168,12
+    CONTROL         "Floyd lateral movement (Q/D)",IDC_GSH_LATERAL_MOVEMENT,"Button",BS_AUTOCHECKBOX | WS_DISABLED | WS_TABSTOP,25,204,158,12
+    CONTROL         "Direct Floyd mouse aiming",IDC_GSH_DRONE_DIRECT,"Button",BS_AUTOCHECKBOX | WS_DISABLED | WS_TABSTOP,25,222,158,12
+    CONTROL         "Enable sprint at 125% speed (Left Shift)",IDC_GSH_ENABLE_SPRINT,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,240,158,12
+    CONTROL         "Correct widescreen HUD",IDC_GSH_WIDESCREEN_HUD,"Button",BS_AUTOCHECKBOX | WS_DISABLED | WS_TABSTOP,25,258,158,12
+    GROUPBOX        "Logs",IDC_STATIC,202,168,171,117
+    CONTROL         "Show input rate (diagnostic)",IDC_GSH_SHOW_INPUT_RATE,"Button",BS_AUTOCHECKBOX | WS_DISABLED | WS_TABSTOP,211,189,150,12
+    DEFPUSHBUTTON   "Close",IDOK,328,300,55,16
+END

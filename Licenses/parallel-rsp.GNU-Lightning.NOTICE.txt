@@ -1,0 +1,25 @@
+GNU Lightning — statically linked into Project64-ParallelRSP.dll
+
+The RSP plugin (Project64-ParallelRSP.dll) statically links the GNU Lightning
+JIT library. GNU Lightning is dual-licensed under GPLv3 or LGPLv3, and is used
+here under the terms of the LGPLv3.
+
+  GNU Lightning:  https://www.gnu.org/software/lightning/
+  LGPLv3 text:    LGPL-3.0.txt (in this folder)
+  GPLv3 text:     GPL-3.0.txt (in this folder)
+
+The LGPLv3 is a set of additional permissions on top of the GPLv3, so both
+texts are included here.
+
+The source used for this Project64 plugin is not only the upstream repository.
+The matching immutable release tag of this repository contains:
+
+  Source\Project64-parallel-rsp       Project64 plugin adapter
+  external\parallel-rsp               vendored Parallel-RSP and GNU Lightning
+  Source\Script\build_parallel_*.cmd  documented rebuild scripts
+
+For each public binary release, its release notes must identify that immutable
+tag as the corresponding source. To build a replacement plugin, check out that
+tag, follow Docs\BUILDING.md, run the matching build_parallel script, and
+replace Plugin\RSP\Project64-ParallelRSP.dll with the resulting DLL. The
+original upstream project is https://github.com/Themaister/parallel-rsp.

@@ -1,0 +1,50 @@
+#include <windows.h>
+#include "resource.h"
+
+IDD_PARALLEL_RDP_SETTINGS DIALOGEX 0, 0, 412, 324
+STYLE DS_SETFONT | DS_MODALFRAME | WS_POPUP | WS_CAPTION | WS_SYSMENU
+CAPTION "Project64 Parallel RDP Settings"
+FONT 9, "Segoe UI", 400, 0, 0x1
+BEGIN
+    GROUPBOX        "Display", -1, 7, 7, 196, 96
+    LTEXT           "Windowed size:", -1, 16, 23, 70, 10
+    COMBOBOX        IDC_WINDOW_SIZE, 90, 20, 101, 82, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    AUTOCHECKBOX    "Fullscreen presentation", IDC_FULLSCREEN, 16, 41, 122, 10
+    AUTOCHECKBOX    "Vertical sync", IDC_VSYNC, 16, 56, 90, 10
+    AUTOCHECKBOX    "Force 16:9 display (stretches image)", IDC_FORCE_WIDESCREEN, 16, 71, 168, 10
+    AUTOCHECKBOX    "Integer scaling", IDC_INTEGER_SCALING, 16, 86, 90, 10
+
+    GROUPBOX        "RDP", -1, 209, 7, 196, 156
+    LTEXT           "N64 resolution upscale:", -1, 218, 23, 104, 10
+    COMBOBOX        IDC_UPSCALING, 326, 20, 67, 70, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Downscaling:", -1, 218, 39, 104, 10
+    COMBOBOX        IDC_DOWNSCALING, 326, 36, 67, 70, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    LTEXT           "Deinterlacer:", -1, 218, 55, 104, 10
+    COMBOBOX        IDC_DEINTERLACER, 326, 52, 67, 70, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    AUTOCHECKBOX    "Synchronize RDP and CPU", IDC_SYNCHRONOUS_RDP, 218, 73, 142, 10
+    AUTOCHECKBOX    "Supersampled dither", IDC_SUPER_DITHER, 218, 88, 130, 10
+    AUTOCHECKBOX    "Supersampled RDRAM reads", IDC_SUPER_READBACK, 218, 103, 145, 10
+    AUTOCHECKBOX    "Native texture LOD", IDC_NATIVE_LOD, 218, 118, 120, 10
+    AUTOCHECKBOX    "Native TEX_RECT elements", IDC_NATIVE_TEXRECTS, 218, 133, 148, 10
+
+    GROUPBOX        "Video Interface (VI)", -1, 7, 109, 196, 146
+    AUTOCHECKBOX    "Anti-aliasing", IDC_VI_AA, 16, 125, 90, 10
+    AUTOCHECKBOX    "Divot filter", IDC_VI_DIVOT, 16, 140, 90, 10
+    AUTOCHECKBOX    "Dither filter", IDC_VI_DITHER, 16, 155, 90, 10
+    AUTOCHECKBOX    "Bilinear filtering", IDC_VI_BILINEAR, 16, 170, 100, 10
+    AUTOCHECKBOX    "Gamma dither", IDC_VI_GAMMA, 16, 185, 90, 10
+    AUTOCHECKBOX    "Interlace serration", IDC_VI_SERRATE, 16, 200, 105, 10
+    LTEXT           "Overscan crop:", -1, 16, 221, 76, 10
+    COMBOBOX        IDC_OVERSCAN, 96, 218, 96, 70, CBS_DROPDOWNLIST | WS_VSCROLL | WS_TABSTOP
+    AUTOCHECKBOX    "Persist invalid frame", IDC_PERSIST_INVALID, 16, 237, 110, 10
+
+    GROUPBOX        "Advanced", -1, 209, 169, 196, 86
+    AUTOCHECKBOX    "Blend previous frame (weave)", IDC_BLEND_PREVIOUS, 218, 186, 160, 10
+    LTEXT           "RDP options apply after recreating the renderer.", -1, 218, 207, 174, 20
+    LTEXT           "Fullscreen is applied when the plugin is initialized.", -1, 218, 227, 174, 20
+
+    PUSHBUTTON      "N64 hardware preset", IDC_HARDWARE_PRESET, 7, 273, 112, 18
+    DEFPUSHBUTTON   "Apply", IDOK, 271, 273, 64, 18
+    PUSHBUTTON      "Cancel", IDCANCEL, 341, 273, 64, 18
+    LTEXT           "Hardware preset preserves the N64 VI pipeline at native internal resolution.", -1, 7, 301, 398, 12
+END
