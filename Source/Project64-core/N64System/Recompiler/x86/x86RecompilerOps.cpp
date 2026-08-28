@@ -494,6 +494,17 @@ void CX86RecompilerOps::Compile_Branch(RecompilerBranchCompare CompareType, bool
     }
     else if (m_PipelineStage == PIPELINE_STAGE_NORMAL)
     {
+        R4300iOpcode DelaySlotInstruction;
+        if (g_MMU->MemoryValue32((uint32_t)(m_CompilePC + 4), DelaySlotInstruction.Value) &&
+            R4300iInstruction(m_CompilePC + 4, DelaySlotInstruction.Value).HasDelaySlot())
+        {
+            // Branches in delay slots require state transitions that the
+            // legacy x86 recompiler does not implement. Let the interpreter
+            // execute this pair, then resume recompilation afterwards.
+            UnknownOpcode();
+            return;
+        }
+
         if (CompareType == RecompilerBranchCompare_COP1BCF || CompareType == RecompilerBranchCompare_COP1BCT)
         {
             CompileCop1Test();

@@ -854,10 +854,18 @@ bool CCodeBlock::AnalyzeInstruction(uint32_t PC, uint32_t & TargetPC, uint32_t &
             EndBlock = true;
             break;
         }
+#if defined(__i386__) || defined(_M_IX86)
+        // The x86 recompiler can safely hand unsupported opcodes back to the
+        // interpreter.  Stop eager block analysis here so it can emit that
+        // fallback instead of aborting emulation with a breakpoint.
+        EndBlock = true;
+        break;
+#else
         WriteTrace(TraceUserInterface, TraceError,
                    "Recompiler cannot analyze instruction %08X at %08X", Command.Value, PC);
         g_Notify->BreakPoint(__FILE__, __LINE__);
         return false;
+#endif
     }
     return true;
 }

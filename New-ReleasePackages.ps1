@@ -37,18 +37,34 @@ function Remove-BuildArtifacts {
 function Reset-DistributionConfiguration {
     param([Parameter(Mandatory)][string] $ConfigFile)
 
-    # The development template points to the repository root. Removing these
-    # entries makes the emulator use its portable defaults relative to the EXE.
-    $developmentPathKeys = '7zipCache', 'AudioRDB', 'CheatDir', 'EnhancementDir', 'ExtInfo', 'VideoRDB'
-    $keyExpression = '^(' + ($developmentPathKeys -join '|') + ')='
+    # The development template is used from bin\<platform>\<configuration>.
+    # A release instead runs from its own root, so every path must be relative
+    # to that root for the ROM database and compatibility settings to load.
+    $portablePaths = [ordered]@{
+        '7zipCache'            = 'Config\Project64.zcache'
+        'AudioRDB'              = 'Config\Audio.rdb'
+        'CheatDir'              = 'Config\Cheats\'
+        'EnhancementDir'        = 'Config\Enhancements\'
+        'ExtInfo'               = 'Config\Project64.rdx'
+        'Notes'                 = 'Config\Project64.rdn'
+        'RomDatabase'           = 'Config\Project64.rdb'
+        'RomListCache'          = 'Config\Project64.cache3'
+        'ShortCuts'             = 'Config\Project64.sc3'
+        'UserCheatDir'          = 'Config\Cheats-User\'
+        'UserEnhancementDir'    = 'Config\Enhancements-User\'
+        'VideoRDB'              = 'Config\Video.rdb'
+    }
+    $keyExpression = '^(' + (($portablePaths.Keys | ForEach-Object { [regex]::Escape($_) }) -join '|') + ')='
 
     $lines = Get-Content -LiteralPath $ConfigFile
     $cleanLines = foreach ($line in $lines) {
         if ($line -match $keyExpression) {
+            "$($matches[1])=$($portablePaths[$matches[1]])"
             continue
         }
 
         if ($line -eq 'Directory=..\..\..\Lang') {
+            'Directory=Lang'
             continue
         }
 
@@ -107,7 +123,7 @@ foreach ($build in $builds) {
     $archiveName = "$projectName-$version-$($build.Suffix).zip"
     $archivePath = Join-Path $OutputDirectory $archiveName
     $stagingDirectory = Join-Path $OutputDirectory ".staging-$($build.Platform)-$($build.Configuration)"
-    $packageRootName = "$projectName-" + ($version -replace '\.', '')
+    $packageRootName = [System.IO.Path]::GetFileNameWithoutExtension($archiveName)
     $packageRoot = Join-Path $stagingDirectory $packageRootName
 
     if (Test-Path -LiteralPath $stagingDirectory) {

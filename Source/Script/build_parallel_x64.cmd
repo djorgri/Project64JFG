@@ -55,15 +55,22 @@ set "parallel_rdp_build_dir=%parallel_build_root%\parallel-rdp-x64"
 set "parallel_rsp_build_dir=%parallel_build_root%\parallel-rsp-x64"
 set "parallel_rsp_build_dir_msys=/%SystemDrive:~0,1%/pj64-build/parallel-rsp-x64"
 
+for %%i in ("%base_dir%") do set "base_dir_short=%%~si"
+
+call :EnsureMatchingCmakeCache "%parallel_rdp_build_dir%" "%base_dir%\Source\Project64-parallel-rdp"
+if errorlevel 1 goto :EndErr
+
 echo Building Project64 Parallel RDP x64
 "%cmake%" -S "%base_dir%\Source\Project64-parallel-rdp" -B "%parallel_rdp_build_dir%" -G "Visual Studio 17 2022" -A x64 -DPython_EXECUTABLE="%python%" -DPython3_EXECUTABLE="%python%"
 if errorlevel 1 goto :EndErr
 "%cmake%" --build "%parallel_rdp_build_dir%" --config Release --target Project64-ParallelRDP --parallel 1
 if errorlevel 1 goto :EndErr
 
-for %%i in ("%base_dir%") do set "base_dir_short=%%~si"
 set "msys_base=%base_dir_short:\=/%"
 set "msys_base=/%msys_base:~0,1%%msys_base:~2%"
+
+call :EnsureMatchingCmakeCache "%parallel_rsp_build_dir%" "%base_dir_short%\Source\Project64-parallel-rsp"
+if errorlevel 1 goto :EndErr
 
 echo Building Project64 Parallel RSP x64
 "%msys_bash%" -lc "export PATH=/ucrt64/bin:$PATH; cmake -S '%msys_base%/Source/Project64-parallel-rsp' -B '%parallel_rsp_build_dir_msys%' -G Ninja -DCMAKE_BUILD_TYPE=Release -DPARALLEL_RSP_TESTS=OFF -DPARALLEL_RSP_DEBUG_JIT=OFF"
@@ -83,4 +90,17 @@ exit /B 1
 :End
 if defined current_dir cd /d "%current_dir%"
 ENDLOCAL
+exit /B 0
+
+:EnsureMatchingCmakeCache
+set "cache_dir=%~1"
+set "source_dir=%~2"
+if not exist "%cache_dir%\CMakeCache.txt" exit /B 0
+set "source_dir_cmake=%source_dir:\=/%"
+findstr /I /X /C:"CMAKE_HOME_DIRECTORY:INTERNAL=%source_dir_cmake%" "%cache_dir%\CMakeCache.txt" >nul
+if not errorlevel 1 exit /B 0
+
+echo Removing stale CMake cache: %cache_dir%
+rmdir /S /Q "%cache_dir%"
+if exist "%cache_dir%" exit /B 1
 exit /B 0

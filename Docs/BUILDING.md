@@ -81,7 +81,9 @@ script writes the pair to
 
 The scripts place their intermediate CMake trees in `C:\pj64-build` to avoid
 Windows' legacy 260-character path limit in Granite's nested dependencies.
-That directory can be deleted when no Parallel build is running.
+They automatically recreate a CMake tree whose cache belongs to a different
+checkout. That directory can also be deleted manually when no Parallel build is
+running.
 
 Parallel-RSP no longer needs a patch step: the extra JIT emission space it
 requires on Win32 is part of the vendored `external\parallel-rsp\rsp_jit.cpp`.

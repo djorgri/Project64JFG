@@ -46,10 +46,16 @@ if errorlevel 1 goto :EndErr
 set "parallel_rdp_build_dir=%parallel_build_root%\parallel-rdp-win32"
 set "parallel_rsp_build_dir=%parallel_build_root%\parallel-rsp-win32-mingw"
 
+call :EnsureMatchingCmakeCache "%parallel_rdp_build_dir%" "%base_dir%\Source\Project64-parallel-rdp"
+if errorlevel 1 goto :EndErr
+
 echo Building Project64 Parallel RDP Win32
 "%cmake%" -S "%base_dir%\Source\Project64-parallel-rdp" -B "%parallel_rdp_build_dir%" -G "Visual Studio 17 2022" -A Win32 -DPython_EXECUTABLE="%python%" -DPython3_EXECUTABLE="%python%"
 if errorlevel 1 goto :EndErr
 "%cmake%" --build "%parallel_rdp_build_dir%" --config Release --target Project64-ParallelRDP --parallel 1
+if errorlevel 1 goto :EndErr
+
+call :EnsureMatchingCmakeCache "%parallel_rsp_build_dir%" "%base_dir%\Source\Project64-parallel-rsp"
 if errorlevel 1 goto :EndErr
 
 echo Building Project64 Parallel RSP Win32
@@ -71,4 +77,17 @@ exit /B 1
 :End
 if defined current_dir cd /d "%current_dir%"
 ENDLOCAL
+exit /B 0
+
+:EnsureMatchingCmakeCache
+set "cache_dir=%~1"
+set "source_dir=%~2"
+if not exist "%cache_dir%\CMakeCache.txt" exit /B 0
+set "source_dir_cmake=%source_dir:\=/%"
+findstr /I /X /C:"CMAKE_HOME_DIRECTORY:INTERNAL=%source_dir_cmake%" "%cache_dir%\CMakeCache.txt" >nul
+if not errorlevel 1 exit /B 0
+
+echo Removing stale CMake cache: %cache_dir%
+rmdir /S /Q "%cache_dir%"
+if exist "%cache_dir%" exit /B 1
 exit /B 0

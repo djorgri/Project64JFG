@@ -17,7 +17,6 @@ A Windows fork of [Project64](https://github.com/project64/project64) focused on
 - [Controls](#controls)
 - [Requirements](#requirements)
 - [Installation](#installation)
-- [First-launch defaults](#first-launch-defaults)
 - [Known limitations](#known-limitations)
 - [Planned improvements](#planned-improvements)
 - [Building](#building)
@@ -40,17 +39,17 @@ A Windows fork of [Project64](https://github.com/project64/project64) focused on
 - Boss encounters turn the view from the reticle, the way the stock game does
   from the stick, rather than swinging the rail the player runs along
 - Optional cutscene skip: with **Fast Cutscenes** enabled, press A or Start
-  during a cinematic to skip it (retail builds)
+  during certain cinematics to skip them
 - QWERTY and AZERTY layouts
 
 ### Performance and accuracy
 
-- 30 FPS is the default for predictable performance; the 60 FPS mode with its
-  doubled per-frame CPU budget remains available for demanding scenes
+- 30 FPS is the default for predictable performance. The 60 FPS mode is
+  playable, but certain areas can still have animation-speed or enemy-behaviour
+  issues, as well as sound or music stutters
 - Switch between 60 and 30 FPS live in-game with **Numpad +** / **Numpad −**
 - 60 FPS gameplay-speed corrections for enemies (movement and animation),
-  Squaddies, race opponents, projectiles, and the water wake, so the higher
-  frame rate matches the 30 FPS behaviour rather than running fast
+  Squaddies, race opponents, projectiles, and the water wake
 - Save states remain usable with the gameplay patches enabled
 - Source-built Win32 and x64 Parallel-RDP and Parallel-RSP plugins, with
   configurable RDP and Video Interface settings
@@ -63,9 +62,10 @@ A Windows fork of [Project64](https://github.com/project64/project64) focused on
 - More reliable audio: hardened against the crashes, stalls, and dropouts that
   could occur during heavy cutscenes, with click-free recovery when the frame
   rate dips
-- Discord Rich Presence does not open on its own
 - Jet Force Gemini options are grouped under
   *Options → Game-specific hacks → Jet Force Gemini*
+- Some greyed-out options are still under development and are not available
+  yet, including Floyd lateral movement
 - The Parallel-RDP graphics dialog includes a hardware-oriented preset and
   display, RDP, and VI controls
 
@@ -85,22 +85,21 @@ Jet Force Gemini settings:
 | Space / Ctrl | C-up / C-down |
 | Left Shift | Sprint, when enabled; standing normal movement only |
 | Enter | Start |
-| E / Enter | Skip the current cutscene, when Fast Cutscenes is on |
+| E / Enter | Skip certain cinematics, when Fast Cutscenes is on |
 | Numpad + / Numpad − | Switch to 60 / 30 FPS live |
 
 When this option is enabled, the JFG scheme has exclusive control of N64
 controller port 1: its regular plugin bindings are not sent to the game.
 
 During crouch, Q/D are routed to N64 C-left/C-right. The equivalent prone
-behaviour is configurable in the **Controls** tab. When **Floyd strafe** is
-enabled, those same directions move Floyd sideways with the game's native
-thrust acceleration and speed. Floyd otherwise uses contextual flight controls:
-W/S (or E/F) control its A/B throttle and the mouse controls its reticle or
-camera according to the selected Floyd option.
+behaviour is configurable in the **Controls** tab. Floyd lateral movement is
+still in development; its current contextual flight controls use W/S (or E/F)
+for A/B throttle, while the mouse controls its reticle or camera according to
+the selected Floyd option.
 
 ## Requirements
 
-- 64-bit Windows 10 or 11.
+- Win32 and x64 builds are available for Windows 10 and 11.
 - A Vulkan 1.3-capable GPU for Project64 Parallel-RDP.
 - A supported **Jet Force Gemini** ROM — **not included**; dump it from your own
   cartridge.
@@ -153,6 +152,14 @@ Either byte order loads: the emulator identifies the ROM by its internal CRC.
 2. Extract it anywhere.
 3. Launch `Project64JFG.exe` and open your Jet Force Gemini ROM.
 
+> **Windows Smart App Control:** Some Windows 11 configurations block unsigned
+> applications entirely. If this happens and you trust the file downloaded from
+> this project's release page, open **Windows Security → App & browser
+> control → Smart App Control settings**, then set **Smart App Control** to
+> **Off**. You can turn it back on from the same screen; only the automatic
+> **Evaluation** mode requires resetting or reinstalling Windows to restore.
+> See [Microsoft's documentation](https://support.microsoft.com/windows/security/windows-security/app-browser-control-in-the-windows-security-app).
+
 The release includes the Project64 Parallel-RDP and Parallel-RSP pair, built
 from the vendored sources and selects them by default. The initial JFG profile
 uses English, keyboard/mouse controls, and 30 FPS with the recommended Jet Force
@@ -160,20 +167,10 @@ Gemini defaults — fast cutscenes, crouch/prone stick-strafing, and sprint. 60
 FPS and its game-speed corrections remain available under
 *Options → Game-specific hacks → Jet Force Gemini*.
 
-## First-launch defaults
-
-- Emulation pauses when the Project64JFG window is not active.
-- Advanced settings are hidden initially, but can be revealed in
-  *Options → Configuration → General settings*.
-- Plugin, save, screenshot, and texture paths are relative to the executable,
-  keeping an extracted release self-contained and portable.
-
 ## Known limitations
 
 - Only the USA 1.0 and Kiosk demo builds listed above are supported by the
   game-specific patches. PAL and Japanese releases are not.
-- The Kiosk demo has no landing cinematic, so the cinematic-skip option has
-  nothing to act on there.
 
 ## Planned improvements
 
@@ -181,6 +178,9 @@ These items are planned work, not promises for a particular release:
 
 - Support the PAL and Japanese releases of Jet Force Gemini.
 - Add support for modern gamepads.
+- Continue improving 60 FPS performance and timing accuracy.
+- Add Floyd lateral movement and direct aiming.
+- Correct the original game's inaccurate widescreen presentation.
 
 ## Building
 
