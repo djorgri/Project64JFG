@@ -534,17 +534,14 @@ uint32_t read_rdp_word(uint32_t address)
 
 void flush_pending_rdp_command_batch()
 {
-	if (!g_processor)
+	if (!g_processor || g_pending_rdp_command_batch.empty())
 		return;
 
-	for (size_t offset = 0; offset < g_pending_rdp_command_batch.size();)
-	{
-		const auto word_count = g_pending_rdp_command_batch[offset++];
-		if (word_count == 0 || word_count > g_pending_rdp_command_batch.size() - offset)
-			break;
-		g_processor->enqueue_command(word_count, g_pending_rdp_command_batch.data() + offset);
-		offset += word_count;
-	}
+	// The vector already contains the length-prefixed format expected by the
+	// command ring. Submit it under one producer lock instead of unpacking it
+	// into individually locked commands. Callers keep SyncFull at the boundary.
+	g_processor->enqueue_command_batch(static_cast<unsigned>(g_pending_rdp_command_batch.size()),
+	                                 g_pending_rdp_command_batch.data());
 	g_pending_rdp_command_batch.clear();
 }
 
@@ -948,7 +945,6 @@ EXPORT void CALL ProcessRDPList()
 			QueryPerformanceCounter(&batch_end);
 			g_performance.rdp_batch_enqueue_ticks += batch_end.QuadPart - batch_start.QuadPart;
 			g_performance.rdp_batch_count++;
-			g_pending_rdp_command_batch.clear();
 		}
 		if (opcode == 0x29) // RDP SyncFull
 		{
@@ -959,7 +955,6 @@ EXPORT void CALL ProcessRDPList()
 			QueryPerformanceCounter(&batch_end);
 			g_performance.rdp_batch_enqueue_ticks += batch_end.QuadPart - batch_start.QuadPart;
 			g_performance.rdp_batch_count++;
-			g_pending_rdp_command_batch.clear();
 			// SyncFull is a hardware completion point. The CPU can consume the
 			// framebuffer as soon as we raise its interrupt, so wait for the GPU
 			// before returning to Project64. This matches ParaLLEl's synchronous

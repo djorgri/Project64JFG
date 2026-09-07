@@ -33,6 +33,7 @@ CSettings::CSettings() :
     if (m_Set_debugger != 0) { SettingsRegisterChange(true, m_Set_debugger, this, stSettingsChanged); }
     if (m_Set_log_flush != 0) { SettingsRegisterChange(true, m_Set_log_flush, this, stSettingsChanged); }
     if (m_Set_SyncAudio != 0) { SettingsRegisterChange(true, m_Set_SyncAudio, this, stSettingsChanged); }
+    if (m_Set_SyncViaAudioEnabled != 0) { SettingsRegisterChange(true, m_Set_SyncViaAudioEnabled, this, stSettingsChanged); }
     if (m_Set_FullSpeed != 0) { SettingsRegisterChange(true, m_Set_FullSpeed, this, stSettingsChanged); }
     if (m_Set_LimitFPS != 0) { SettingsRegisterChange(true, m_Set_LimitFPS, this, stSettingsChanged); }
     SettingsRegisterChange(false, Set_Volume, this, stSettingsChanged);
@@ -53,6 +54,7 @@ CSettings::~CSettings()
     if (m_Set_debugger != 0) { SettingsUnregisterChange(true, m_Set_debugger, this, stSettingsChanged); }
     if (m_Set_log_flush != 0) { SettingsUnregisterChange(true, m_Set_log_flush, this, stSettingsChanged); }
     if (m_Set_SyncAudio != 0) { SettingsUnregisterChange(true, m_Set_SyncAudio, this, stSettingsChanged); }
+    if (m_Set_SyncViaAudioEnabled != 0) { SettingsUnregisterChange(true, m_Set_SyncViaAudioEnabled, this, stSettingsChanged); }
     if (m_Set_FullSpeed != 0) { SettingsUnregisterChange(true, m_Set_FullSpeed, this, stSettingsChanged); }
     if (m_Set_LimitFPS != 0) { SettingsUnregisterChange(true, m_Set_LimitFPS, this, stSettingsChanged); }
     SettingsUnregisterChange(false, Set_Volume, this, stSettingsChanged);
@@ -139,7 +141,12 @@ void CSettings::ReadSettings(void)
     m_debugger_enabled = m_advanced_options && m_Set_debugger ? GetSystemSetting(m_Set_debugger) == 1 : false;
     m_Buffer = GetSetting(Set_Buffer);
     m_FullSpeed = m_Set_FullSpeed ? GetSystemSetting(m_Set_FullSpeed) != 0 : false;
-    m_SyncAudio = (!m_advanced_options || bLimitFPS);
+    // Follow the core's audio pacing policy as well as the speed limiter.
+    // JFG disables SyncViaAudioEnabled live at 60 FPS so a full audio buffer
+    // must not add a second pacing wait on top of the VI limiter.
+    const bool syncAudio = m_Set_SyncAudio ? GetSystemSetting(m_Set_SyncAudio) != 0 : true;
+    const bool syncViaAudioEnabled = m_Set_SyncViaAudioEnabled ? GetSystemSetting(m_Set_SyncViaAudioEnabled) != 0 : true;
+    m_SyncAudio = (!m_advanced_options || bLimitFPS) && syncAudio && syncViaAudioEnabled;
 
     if (m_Set_log_dir != 0)
     {
