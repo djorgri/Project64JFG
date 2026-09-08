@@ -67,6 +67,11 @@ option(PARALLEL_RSP_BAKED_LIGHTNING "Use built-in Lightning." ON)
 
 target_compile_definitions(parallel-rsp PUBLIC PARALLEL_RSP_LIGHTNING)
 if (PARALLEL_RSP_BAKED_LIGHTNING)
+	# Autotools normally generates this header, but the embedded CMake build
+	# must also work from a clean checkout. Keep generated files in the build tree.
+	set(MAYBE_INCLUDE_STDINT_H "#include <stdint.h>")
+	configure_file(lightning/include/lightning.h.in
+			"${CMAKE_CURRENT_BINARY_DIR}/lightning/include/lightning.h" @ONLY)
 	add_library(lightning STATIC
 			lightning/lib/jit_disasm.c
 			lightning/lib/jit_memory.c
@@ -76,6 +81,7 @@ if (PARALLEL_RSP_BAKED_LIGHTNING)
 			lightning/lib/jit_size.c
 			lightning/lib/lightning.c)
 	target_include_directories(lightning PUBLIC
+			${CMAKE_CURRENT_BINARY_DIR}/lightning/include
 			${CMAKE_CURRENT_SOURCE_DIR}/lightning/include)
 	if (WIN32)
 		target_sources(lightning PRIVATE win32/mman/sys/mman.c)

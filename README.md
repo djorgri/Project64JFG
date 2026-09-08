@@ -206,6 +206,12 @@ cd <clone-directory>
 git submodule update --init external/sdl
 ```
 
+For an existing clone, run `git submodule update --init external/sdl` from the
+repository root before building, including after pulling updates. A plain clone
+does not populate SDL automatically; Git records the required revision separately
+from its source files. Use a Git clone for development rather than GitHub's
+**Download ZIP**, which does not include the SDL submodule contents.
+
 Open `Project64.sln` in Visual Studio, select `Release | x64` (or
 `Release | Win32`), and use **Build Solution**. This builds the emulator with
 the Project64 Audio and Project64 Input plugins, then the `Project64-Parallel`
@@ -218,8 +224,8 @@ are invoked automatically for Release solution builds. You can still run either
 script manually when working on Parallel itself:
 
 ```
-Source\Script\build_parallel_win32.cmd
-Source\Script\build_parallel_x64.cmd
+.\Source\Script\build_parallel_win32.cmd
+.\Source\Script\build_parallel_x64.cmd
 ```
 
 They write their DLLs directly alongside the executable, under
@@ -236,6 +242,31 @@ exports are skipped with a warning. Each ZIP contains a single versioned root
 directory for easy extraction. A Vulkan 1.3-capable GPU and driver are
 required to run the Parallel-RDP plugin. Further build-environment details are in
 [Docs/BUILDING.md](./Docs/BUILDING.md).
+
+### Build troubleshooting
+
+- **C1083: missing `sdl\src\...` files or `SDL.h`:** check whether
+  `external/sdl` is empty. Run `git submodule update --init external/sdl` from
+  the repository root, then rebuild the solution. This retrieves the SDL revision
+  expected by the project; there is no need to download a separate SDL SDK.
+- **MSB3073: `build_parallel_x64.cmd` exited with code 1:** this is the final
+  script failure, not the underlying compiler error. Open Visual Studio's
+  **Output** window, select **Build**, and look for the first error above it.
+  The x64 utility-project log is also saved at
+  `Source\Script\x64\Release\Project64-Parallel.log`.
+- **Parallel-RSP fails with `lightning.h: No such file or directory`:** the
+  generated header is intentionally ignored by Git. CMake now generates it from
+  the tracked `external/parallel-rsp/lightning/include/lightning.h.in` template
+  in the build directory. Make sure your checkout includes this fix in
+  `external/parallel-rsp/CMakeLists.txt`, then rebuild `Project64-Parallel` in
+  `Release | x64` (or run the matching script above). Do not manually copy the
+  template to `lightning.h`; it contains a placeholder that must be substituted.
+- **The RSP plugin list is empty:** for an x64 Release build, confirm that
+  `Bin\x64\Release\Plugin\RSP\Project64-ParallelRSP.dll` exists. RDP builds
+  before RSP, so the graphics plugin can be present even when the RSP build has
+  failed. Build the full Release solution or `Project64-Parallel`, resolve any
+  reported errors, then restart Project64JFG and select **Project64 Parallel RSP**.
+
 ## Jet Force Gemini hacking reference
 
 For developers extending the game-specific runtime, the
