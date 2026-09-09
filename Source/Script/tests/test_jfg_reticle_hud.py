@@ -76,7 +76,8 @@ class JfgReticleHudTests(unittest.TestCase):
         self.assertEqual((self.stub, self.stub + len(self.words) * 4, len(self.words)),
                          (0x80067790, 0x800677F4, 25))
         self.assertLessEqual(self.stub + len(self.words) * 4, self.end)
-        self.assertLessEqual(self.end, 0x800678C4)
+        self.assertEqual(self.end, 0x80067950)
+        self.assertLess(self.end, 0x80067994)  # Independent alignment guard.
         self.assertEqual(constant(self.source, "WidescreenHudReticleOverlayModule"), 13)
         self.assertEqual(constant(self.source, "WidescreenHudReticleDrawOffset"), 0x4A8)
         original = constant(self.source, "WidescreenHudReticleLineCallOriginal")

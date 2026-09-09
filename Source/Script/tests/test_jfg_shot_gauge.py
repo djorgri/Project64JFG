@@ -180,9 +180,10 @@ class JfgShotGaugeTests(unittest.TestCase):
         wrapper_end = self.wrapper + len(code_array(self.source, "WidescreenHudShotGaugeWrapperCode")) * 4
         anchor_end = self.anchor + len(code_array(self.source, "WidescreenHudShotGaugeAnchorCode")) * 4
         self.assertEqual((reticle_end, wrapper_end, anchor_end),
-                         (self.wrapper, self.anchor, constant(self.source, "WidescreenHudReticleCaveEnd")))
+                         (self.wrapper, self.anchor, constant(self.source, "WidescreenHudFloydLineStub")))
         self.assertGreaterEqual(reticle, 0x80067790)  # Keep diCpuLogMessage before this intact.
-        self.assertLessEqual(anchor_end, 0x800678C4)  # Next diagnostic function begins here.
+        self.assertEqual(anchor_end, 0x80067844)  # Floyd's separate tail wrapper begins here.
+        self.assertEqual(constant(self.source, "WidescreenHudReticleCaveEnd"), 0x80067950)
         legacy = code_array(self.source, "WidescreenHudRectangleLegacyCode")
         current = code_array(self.source, "WidescreenHudRectangleCode")
         self.assertEqual(len(legacy), len(current))

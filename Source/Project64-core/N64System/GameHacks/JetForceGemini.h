@@ -71,6 +71,7 @@ private:
     bool PatchHudAlignment(bool Enabled, bool WidescreenCorrected);
     bool SetWidescreenHudBanner(uint32_t OverlayBase, bool Enabled);
     bool SetWidescreenHudShotGauge(uint32_t OverlayBase, bool Enabled);
+    bool SetWidescreenHudFloyd(uint32_t OverlayBase, bool Enabled);
     bool SetWidescreenHudReticle(bool Enabled);
     bool RemoveWidescreenHudOverlayHooks(void);
     void DisplayCinematicProbe(void);

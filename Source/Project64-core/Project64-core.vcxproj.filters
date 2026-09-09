@@ -725,6 +725,9 @@
     <ClInclude Include="N64System\GameHacks\JetForceGemini.h">
       <Filter>Header Files\N64 System\GameHacks</Filter>
     </ClInclude>
+    <ClInclude Include="N64System\GameHacks\JetForceGeminiFloydHud.h">
+      <Filter>Header Files\N64 System\GameHacks</Filter>
+    </ClInclude>
     <ClInclude Include="N64System\GameHacks\JetForceGeminiHudAlignment.h">
       <Filter>Header Files\N64 System\GameHacks</Filter>
     </ClInclude>

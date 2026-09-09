@@ -144,7 +144,7 @@ void CheckAlignmentInstalled(const CGameHackMemory &m, uint32_t base6 = Overlay6
 
 void RequireProtectedMemory(const CGameHackMemory &m, const std::vector<uint8_t> &before) {
     // Both widescreen cave segments and their intervening logger stay byte-identical.
-    const uint32_t first = 0x80067280, last = 0x800678C4;
+    const uint32_t first = 0x80067280, last = 0x80067950;
     Require(std::equal(before.begin() + first - 0x80000000, before.begin() + last - 0x80000000,
                        m.bytes.begin() + first - 0x80000000), "alignment overwrote widescreen or logger code");
     for (uint32_t address : {Code::ActiveKindAddress - 2, Code::ActiveKindAddress - 1, Code::ActiveKindAddress + 1})

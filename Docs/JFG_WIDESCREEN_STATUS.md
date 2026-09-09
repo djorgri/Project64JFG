@@ -8,6 +8,8 @@ du 8 septembre. Les formes 3D, déjà correctes, restent intactes. L'utilisateur
 a également validé le bandeau de ramassage affichant **Gemini Capacity Increased**.
 Le dernier réglage des barres vertes et leur changement de format sont couverts
 par les tests automatiques ; leur validation visuelle reste en attente.
+Le contour de l'icône de Floyd reçoit également une correction ciblée de
+centrage et de pente des diagonales, à valider visuellement en jeu.
 Les observations historiques de Claude sont distinguées des mesures de reprise.
 
 Les [mesures des marges et du centrage du HUD d'origine](./JFG_HUD_LAYOUT_MEASUREMENTS.md)
@@ -77,12 +79,16 @@ jeu, de `0x80067280` à `0x80067690` exclu. Cette installation tardive évite
 d'écraser du code encore exécuté au démarrage. L'extension pour le compteur
 occupe le début de `diCpuReportWatchpoint`, une fonction de diagnostic de panne
 inutilisée en partie, et s'arrête avant `diCpuLogMessage` à `0x800676B4`.
-Le réticule et les deux nouveaux stubs des jauges utilisent un second segment
-séparé, de `0x80067790` à `0x80067844` exclu, dans l'ancien affichage du journal
+Le réticule, les jauges et Floyd utilisent un second segment
+séparé, de `0x80067790` à `0x80067950` exclu, dans l'ancien affichage du journal
 de diagnostic. Le code du réticule se termine toujours à `0x800677F4` ; le wrapper
 des jauges commence à cette adresse et son helper d'ancrage à `0x80067810`.
-La fonction diagnostic suivante commence à `0x800678C4` et reste intacte. L'unique appelant
-à `0x800674BC` est déjà remplacé par la cave HUD. L'image mémoire concatène les
+Le wrapper de Floyd commence à `0x80067844`. La fonction de rapport d'erreur
+mémoire à `0x800678C4` est neutralisée avant de réutiliser son corps ; sa totalité
+est restaurée au retrait, y compris après adoption d'une ancienne sauvegarde
+contenant ce correctif. `diCpuTraceGetFault` à `0x80067950` reste intacte.
+L'unique appelant de l'ancien affichage, à `0x800674BC`, est déjà remplacé
+par la cave HUD. L'image mémoire concatène les
 deux segments : le code entre eux, notamment `diCpuLogMessage`, n'est ni lu ni
 écrit par l'installateur de cave.
 
@@ -93,9 +99,10 @@ Le réticule est dessiné avant l'entrée : ses segments disposent désormais de
 sept appels corrigés distincts dans l'overlay 13. Les polices texturées consultent seulement le mode vidéo une fois
 leurs hooks installés.
 
-Le prototype de correction place quinze stubs : deux pour ouvrir/fermer la portée,
+Le prototype de correction place dix-neuf stubs : deux pour ouvrir/fermer la portée,
 dix pour le rendu HUD, un pour les segments du réticule et deux pour identifier
-et ancrer le dessin des jauges. Les dix corrections HUD
+et ancrer le dessin des jauges, ainsi qu'un wrapper et trois helpers pour Floyd.
+Les dix corrections HUD
 vérifient toutes le bit widescreen ; huit vérifient aussi la portée.
 Le stub du réticule vérifie le mode widescreen et l'absence de portée HUD, afin
 d'éviter une double correction lorsque le diagnostic O force cette portée.
@@ -113,6 +120,7 @@ tir s'exécute seulement après les gardes de mode et de portée du stub de rect
 | Lignes, radar et petite police en traits | Coordonnées X transformées à la mise en file, avant le dessin différé. |
 | Rectangles pleins | Compression horizontale avant émission des commandes de dessin. |
 | Six barres vertes de capacité de tir | Ancrage du cadre d'arme appliqué aux rectangles pendant leur dessin ; table native conservée, gardes de mode et de portée. |
+| Contour de l'icône de Floyd | Même ancrage droit que l'icône ; diagonales adaptées au rapport 16/9 en conservant le trait vert natif de deux pixels. |
 | Chiffres du compteur de munitions | `frontPrintNum` : compression horizontale des glyphes et de leur espacement, ancrage sur le panneau gauche et adaptation du pas de texture ; premier rendu validé en interpréteur. |
 | Bandeau de ramassage | Extrémité attachée à gauche pendant toute l'animation, texte centré à pleine ouverture et découpe alignée sur le bandeau ; affichage complet validé visuellement par l'utilisateur. |
 | Segments des réticules | Compression horizontale autour du point visé, avant découpe et dessin CPU ; arrondi symétrique et formes 3D intactes. Rendu validé par l'utilisateur sur son essai du 8 septembre. |
@@ -153,6 +161,35 @@ le retrait et la migration. Le 9 septembre, les 67 tests JFG passent et la
 compilation Release x64 termine sans erreur ni avertissement.
 La comparaison visuelle de ce dernier réglage,
 notamment lors des bascules 4/3 ↔ 16/9, reste à effectuer.
+
+## Contour de l'icône de Floyd
+
+La sauvegarde `floyd widescreen.pj.zip` confirme que l'icône pleine utilise
+`frontDrawObj(12)`, déjà corrigé par le chemin des sprites. Son contour passe
+par un appel distinct à `fxDrawLine`, dans l'overlay 14 à `+0x468`, avec une
+table de 22 segments à `+0x4678`. La compression générale déplaçait son centre
+vers X=244, alors que le pivot du sprite corrigé est proche de X=281.
+
+Le wrapper recale le centre converti stocké dans la pile du jeu avant la
+compression des lignes. Le contour aboutit à `(280,192)` en basse résolution
+et `(359,240)` en haute résolution, à moins d'un pixel du pivot réel du sprite.
+L'icône pleine et la table de segments ne sont pas modifiées. Le wrapper exige
+les modes 1/3 et la portée HUD active ; le 4/3 suit le chemin original.
+
+Le style 13 de `fxOutputLines` dessine normalement une colonne de deux pixels
+par ligne, avec un pas X fixe de −1, 0 ou +1. Les diagonales demeuraient donc
+à 45° malgré la compression de leurs extrémités. Seuls les segments de Floyd
+marqués lors de leur mise en file utilisent désormais un accumulateur entier
+qui répartit les déplacements X entre les lignes Y. Le rendu garde les deux
+pixels verts, leur addition saturée et l'inclusion des deux extrémités.
+Les autres tracés conservent leur fonctionnement d'origine. La file ne reçoit
+aucun segment supplémentaire.
+
+Les tests exécutent les instructions de mise en file et de rastérisation,
+vérifient les centres dans les deux résolutions et les pixels des diagonales.
+Les 88 tests JFG passent ; la compilation Release x64 du 9 septembre termine
+sans erreur ni avertissement.
+La comparaison visuelle dans l'émulateur reste à effectuer.
 
 ## Segments des réticules
 

@@ -187,20 +187,29 @@ class JfgAmmoHudTests(unittest.TestCase):
         self.assertLessEqual(cave_end, 0x800676B4)  # next original function
         reticle_start = constant(self.source, "WidescreenHudReticleStub")
         reticle_end = constant(self.source, "WidescreenHudReticleCaveEnd")
-        self.assertEqual((cave_end, reticle_start, reticle_end), (0x80067690, 0x80067790, 0x80067844))
+        self.assertEqual((cave_end, reticle_start, reticle_end), (0x80067690, 0x80067790, 0x80067950))
         segments = ((cave_start, cave_end), (reticle_start, reticle_end))
         addresses = [address for start, end in segments for address in range(start, end, 4)]
-        self.assertEqual(len(addresses), 305)
+        self.assertEqual(len(addresses), 372)
         self.assertEqual(len(set(addresses)), len(addresses))
         self.assertFalse(set(addresses).intersection(range(0x80067690, 0x80067790, 4)))
         placements = re.findall(r"!PlaceCode\((WidescreenHud\w+),\s*(WidescreenHud\w+),", self.source)
         self.assertIn(("WidescreenHudAmmoStub", "WidescreenHudAmmoCode"), placements)
         self.assertIn(("WidescreenHudReticleStub", "WidescreenHudReticleCode"), placements)
+        self.assertIn(("WidescreenHudFloydLineStub", "WidescreenHudFloydLineCode"), placements)
         self.assertGreaterEqual(len(placements), 13)
         claimed = {}
-        for address_name, code_name in placements:
-            address = constant(self.source, address_name)
-            words = code_array(self.source, code_name)
+        all_placements = [(self.source, address, code) for address, code in placements]
+        floyd_source = SOURCE.with_name("JetForceGeminiFloydHud.h").read_text(encoding="utf-8-sig")
+        floyd_placements = re.findall(r"!PlaceCode\(JfgFloydHud::(\w+),\s*JfgFloydHud::(\w+),", self.source)
+        self.assertEqual(set(floyd_placements), {
+            ("GuardStub", "GuardCode"), ("InitStub", "InitCode"),
+            ("StepStub", "StepCode"), ("StepTailStub", "StepTailCode"),
+        })
+        all_placements.extend((floyd_source, address, code) for address, code in floyd_placements)
+        for source, address_name, code_name in all_placements:
+            address = constant(source, address_name)
+            words = code_array(source, code_name)
             self.assertEqual(address & 3, 0)
             self.assertTrue(any(start <= address and address + 4 * len(words) <= end for start, end in segments),
                             "%s crosses an unowned cave range" % code_name)

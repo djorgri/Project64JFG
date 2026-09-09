@@ -3,6 +3,7 @@
 #include "JetForceGemini.h"
 #include "JetForceGeminiAddresses.h"
 #include "JetForceGeminiHudAlignment.h"
+#include "JetForceGeminiFloydHud.h"
 #include <Common/DateTime.h>
 #include <Common/path.h>
 #include <math.h>
@@ -592,9 +593,11 @@ const size_t WidescreenHudMainCaveWordCount =
     (WidescreenHudCaveEnd - WidescreenHudCaveStart) / sizeof(uint32_t);
 // A second, disjoint segment reuses the retired diagnostic ring-buffer display.
 // Its sole caller at 0x800674BC is already replaced by SpriteScaleAltCode.
+// Floyd also uses the adjacent malloc-fault report after retiring its entry.
+// The original report is restored in full, including after loading a saved hook.
 // Keep the intervening diCpuLogMessage code entirely outside our memory image.
 const uint32_t WidescreenHudReticleStub = 0x80067790;
-const uint32_t WidescreenHudReticleCaveEnd = 0x80067844;
+const uint32_t WidescreenHudReticleCaveEnd = 0x80067950;
 const size_t WidescreenHudCaveWordCount = WidescreenHudMainCaveWordCount +
     (WidescreenHudReticleCaveEnd - WidescreenHudReticleStub) / sizeof(uint32_t);
 
@@ -615,6 +618,7 @@ const uint32_t WidescreenHudLineStub = 0x800673E0;
 const uint32_t WidescreenHudRectangleStub = 0x80067440;
 const uint32_t WidescreenHudShotGaugeWrapperStub = 0x800677F4;
 const uint32_t WidescreenHudShotGaugeAnchorStub = 0x80067810;
+const uint32_t WidescreenHudFloydLineStub = 0x80067844;
 const uint32_t WidescreenHudShotGaugeCallOffset = 0x2B28;
 const uint32_t WidescreenHudShotGaugeCallOriginal = 0x0C01657D;
 const uint32_t WidescreenHudShotGaugeCallDelay = 0x00003825;
@@ -708,7 +712,7 @@ const uint32_t WidescreenHudReticleCode[] =
 };
 static_assert(WidescreenHudReticleStub + sizeof(WidescreenHudReticleCode) == WidescreenHudShotGaugeWrapperStub,
               "Reticle and shot-gauge stubs must not overlap");
-static_assert(WidescreenHudReticleStub >= 0x80067790 && WidescreenHudReticleCaveEnd <= 0x800678C4,
+static_assert(WidescreenHudReticleStub >= 0x80067790 && WidescreenHudReticleCaveEnd <= 0x80067950,
               "Reticle cave must not overwrite neighbouring diagnostic functions");
 struct WIDESCREEN_HUD_OVERLAY_WORD_PATCH
 {
@@ -984,7 +988,7 @@ const uint32_t WidescreenHudFontDtdyCode[] =
     0x00000000, // nop
 };
 
-// WidescreenHudDigitalAdvanceStub is no longer written: the digit stride is a
+// WidescreenHudDigitalAdvanceStub no longer contains a digit hook: the stride is a
 // plain constant patch now. The address is kept so the jump the previous build
 // installed at WidescreenHudDigitalAdvanceEntry can still be recognised and
 // retired when a save state from that build is loaded.
@@ -1271,8 +1275,50 @@ const uint32_t WidescreenHudShotGaugeAnchorCode[] =
 };
 static_assert(WidescreenHudShotGaugeWrapperStub + sizeof(WidescreenHudShotGaugeWrapperCode) == WidescreenHudShotGaugeAnchorStub,
               "Shot-gauge wrapper must end before its rectangle anchor helper");
-static_assert(WidescreenHudShotGaugeAnchorStub + sizeof(WidescreenHudShotGaugeAnchorCode) == WidescreenHudReticleCaveEnd,
+static_assert(WidescreenHudShotGaugeAnchorStub + sizeof(WidescreenHudShotGaugeAnchorCode) == WidescreenHudFloydLineStub,
               "Shot-gauge helper must fit within the retired ring-display function");
+
+// Only overlay 14's Floyd outline calls this wrapper. The caller has converted
+// its native (272,192) centre with viConvertXY and saved it at sp+E0/DC.
+// Relocate that centre before the common .75 line transform: its final centre
+// becomes (280,192) / (359,240), following the already right-anchored sprite.
+// Mark only style 13 for the slope-aware rasterizer; the table stays native.
+// The original stack arguments and return address pass through to fxDrawLine.
+const uint32_t WidescreenHudFloydLineCode[] =
+{
+    0x3C188010, // lui   t8, 0x8010
+    0x93192553, // lbu   t9, 0x2553(t8) ; HUD scope
+    0x13200019, // beq   t9, zero, stock
+    0x9319ECA8, // lbu   t9, -0x1358(t8) ; current game mode
+    0x2F2F0004, // sltiu t7, t9, 4
+    0x11E00016, // beq   t7, zero, stock
+    0x332F0001, // andi  t7, t9, 1
+    0x11E00014, // beq   t7, zero, stock
+    0x332F0002, // andi  t7, t9, 2
+    0x24190140, // addiu t9, zero, 320 ; pre-transform centre X
+    0x11E00003, // beq   t7, zero, centre_ready
+    0x241800C0, // addiu t8, zero, 192 ; centre Y
+    0x24190194, // addiu t9, zero, 404
+    0x241800F0, // addiu t8, zero, 240
+    0x8FAF00E0, // centre_ready: lw t7, 0xE0(sp)
+    0x032FC823, // subu  t9, t9, t7
+    0x00992021, // addu  a0, a0, t9
+    0x00D93021, // addu  a2, a2, t9
+    0x8FAF00DC, // lw    t7, 0xDC(sp)
+    0x030FC023, // subu  t8, t8, t7
+    0x00B82821, // addu  a1, a1, t8
+    0x00F83821, // addu  a3, a3, t8
+    0x8FB90010, // lw    t9, 0x10(sp) ; line style
+    0x332F000F, // andi  t7, t9, 0xF
+    0x25EFFFF3, // addiu t7, t7, -13
+    0x15E00002, // bne   t7, zero, stock
+    0x37390040, // ori   t9, t9, 0x40 ; queued outline marker
+    0xAFB90010, // sw    t9, 0x10(sp)
+    0x0801B4E4, // stock: j fxDrawLine (current shared HUD guard/transform)
+    0x00000000, // nop
+};
+static_assert(WidescreenHudFloydLineStub + sizeof(WidescreenHudFloydLineCode) <= 0x800678C4,
+              "Floyd queue wrapper must end before the next diagnostic entry");
 
 // These two words were used by the first experimental landing-skip build. They
 // are only restored when exactly that old hook is found in a loaded state; its
@@ -4186,7 +4232,37 @@ bool CJetForceGeminiRuntime::SetWidescreenHudShotGauge(uint32_t OverlayBase, boo
     return !Enabled || Succeeded(m_CodePatcher.SetEnabled(&CallPatch, 1, true));
 }
 
-// Remove the relocatable overlay hooks, banner and gauge before any fixed hook
+bool CJetForceGeminiRuntime::SetWidescreenHudFloyd(uint32_t OverlayBase, bool Enabled)
+{
+    // The live overlay-14 scope signatures are validated by the caller. Only
+    // this line call belongs to the Floyd HUD; its data table remains stock.
+    const GAME_HACK_CODE_PATCH CallPatch = {
+        OverlayBase + 0x468, 0x0C01B4E4, CallTo(WidescreenHudFloydLineStub),
+    };
+    uint32_t Call = 0, Delay = 0;
+    if ((OverlayBase & 3) != 0 ||
+        !m_Memory.IsRdramAddress(OverlayBase, 0x470) ||
+        !m_Memory.ReadU32(CallPatch.Address, Call))
+    {
+        return false;
+    }
+    if (!Enabled && Call != CallPatch.Replacement)
+    {
+        // A foreign word is never restored as one of our installed callers.
+        return true;
+    }
+    if ((Call != CallPatch.Original && Call != CallPatch.Replacement) ||
+        !m_Memory.ReadU32(CallPatch.Address + 4, Delay) || Delay != 0xAFB90010)
+    {
+        return false;
+    }
+    const CGameHackCodePatcher::Result Result =
+        m_CodePatcher.SetEnabled(&CallPatch, 1, Enabled);
+    return Result == CGameHackCodePatcher::Result_NoChanges ||
+           Result == CGameHackCodePatcher::Result_Changed;
+}
+
+// Remove the relocatable overlay hooks, banner, gauge and Floyd before any fixed hook
 // or cave word. Once the module table points elsewhere, the old allocation
 // belongs to the overlay allocator again and must be forgotten without writes.
 bool CJetForceGeminiRuntime::RemoveWidescreenHudOverlayHooks(void)
@@ -4284,11 +4360,10 @@ bool CJetForceGeminiRuntime::RemoveWidescreenHudOverlayHooks(void)
     }
     // The caller has just proved that this allocation is still overlay 14.
     // Accept either video mode so a resolution switch can restore the old one.
-    if (!SetWidescreenHudBanner(m_WidescreenHudOverlayBase, false))
-    {
-        return false;
-    }
-    if (!SetWidescreenHudShotGauge(m_WidescreenHudOverlayBase, false))
+    const bool BannerRemoved = SetWidescreenHudBanner(m_WidescreenHudOverlayBase, false);
+    const bool GaugeRemoved = SetWidescreenHudShotGauge(m_WidescreenHudOverlayBase, false);
+    const bool FloydRemoved = SetWidescreenHudFloyd(m_WidescreenHudOverlayBase, false);
+    if (!BannerRemoved || !GaugeRemoved || !FloydRemoved)
     {
         return false;
     }
@@ -4646,6 +4721,13 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
     };
     FixedPatches.insert(FixedPatches.end(), AmmoPatches,
                         AmmoPatches + sizeof(AmmoPatches) / sizeof(AmmoPatches[0]));
+    // Retire the diagnostic entry and install the Floyd rasterizer consumers
+    // before exposing its overlay caller. Reverse removal disconnects the
+    // consumers before restoring the diagnostic entry and cave image.
+    for (const auto & Patch : JfgFloydHud::FixedPatches)
+    {
+        FixedPatches.push_back({ Patch.Address, Patch.Original, Patch.Replacement });
+    }
 
     // Earlier builds patched the framebuffer digit renderer, one of them
     // through a cave trampoline. Both forms are returned to stock below before
@@ -4708,7 +4790,26 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         return true;
     };
 
-    auto CaptureCaveImage = [this]() {
+    auto CaptureCaveImage = [this, &CaveCodeMatches]() {
+        // A fresh runtime may adopt a snapshot containing our raster helpers.
+        // Reopening the original diagnostic entry over that saved helper body
+        // would be unsafe. Normalize this entire recognizable function to its
+        // ROM image, while leaving unrelated captured diagnostic bytes alone.
+        const bool SavedFloydDiagnostic =
+            CaveCodeMatches(JfgFloydHud::GuardStub, JfgFloydHud::GuardCode,
+                            sizeof(JfgFloydHud::GuardCode) / sizeof(uint32_t)) &&
+            CaveCodeMatches(JfgFloydHud::InitStub, JfgFloydHud::InitCode,
+                            sizeof(JfgFloydHud::InitCode) / sizeof(uint32_t)) &&
+            CaveCodeMatches(JfgFloydHud::StepStub, JfgFloydHud::StepCode,
+                            sizeof(JfgFloydHud::StepCode) / sizeof(uint32_t)) &&
+            CaveCodeMatches(JfgFloydHud::StepTailStub, JfgFloydHud::StepTailCode,
+                            sizeof(JfgFloydHud::StepTailCode) / sizeof(uint32_t));
+        if (!SavedFloydDiagnostic &&
+            !CaveCodeMatches(JfgFloydHud::GuardStub, JfgFloydHud::OriginalDiagnosticCode,
+                            sizeof(JfgFloydHud::OriginalDiagnosticCode) / sizeof(uint32_t)))
+        {
+            return false;
+        }
         m_WidescreenHudCaveOriginal.resize(WidescreenHudCaveWordCount);
         for (size_t i = 0; i < WidescreenHudCaveWordCount; i++)
         {
@@ -4718,6 +4819,13 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
             {
                 m_WidescreenHudCaveOriginal.clear();
                 return false;
+            }
+            const uint32_t Address = WidescreenHudCaveWordAddress(i);
+            if (SavedFloydDiagnostic && Address >= JfgFloydHud::GuardStub &&
+                Address < JfgFloydHud::GuardStub + sizeof(JfgFloydHud::OriginalDiagnosticCode))
+            {
+                m_WidescreenHudCaveOriginal[i] = JfgFloydHud::OriginalDiagnosticCode[
+                    (Address - JfgFloydHud::GuardStub) / sizeof(uint32_t)];
             }
         }
         return true;
@@ -4803,7 +4911,17 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
             !PlaceCode(WidescreenHudShotGaugeWrapperStub, WidescreenHudShotGaugeWrapperCode,
                        sizeof(WidescreenHudShotGaugeWrapperCode) / sizeof(WidescreenHudShotGaugeWrapperCode[0])) ||
             !PlaceCode(WidescreenHudShotGaugeAnchorStub, WidescreenHudShotGaugeAnchorCode,
-                       sizeof(WidescreenHudShotGaugeAnchorCode) / sizeof(WidescreenHudShotGaugeAnchorCode[0])))
+                       sizeof(WidescreenHudShotGaugeAnchorCode) / sizeof(WidescreenHudShotGaugeAnchorCode[0])) ||
+            !PlaceCode(WidescreenHudFloydLineStub, WidescreenHudFloydLineCode,
+                       sizeof(WidescreenHudFloydLineCode) / sizeof(uint32_t)) ||
+            !PlaceCode(JfgFloydHud::GuardStub, JfgFloydHud::GuardCode,
+                       sizeof(JfgFloydHud::GuardCode) / sizeof(uint32_t)) ||
+            !PlaceCode(JfgFloydHud::InitStub, JfgFloydHud::InitCode,
+                       sizeof(JfgFloydHud::InitCode) / sizeof(uint32_t)) ||
+            !PlaceCode(JfgFloydHud::StepStub, JfgFloydHud::StepCode,
+                       sizeof(JfgFloydHud::StepCode) / sizeof(uint32_t)) ||
+            !PlaceCode(JfgFloydHud::StepTailStub, JfgFloydHud::StepTailCode,
+                       sizeof(JfgFloydHud::StepTailCode) / sizeof(uint32_t)))
         {
             return false;
         }
@@ -4962,7 +5080,9 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
                 (Exit == WidescreenHudOverlayExitOriginal || Exit == JumpTo(WidescreenHudScopeExitStub)) &&
                 ExitDelay == WidescreenHudOverlayExitDelayOriginal)
             {
-                return SetWidescreenHudShotGauge(Base, false) && DigitalRemoved;
+                const bool GaugeRemoved = SetWidescreenHudShotGauge(Base, false);
+                const bool FloydRemoved = SetWidescreenHudFloyd(Base, false);
+                return GaugeRemoved && FloydRemoved && DigitalRemoved;
             }
             return DigitalRemoved;
         }
@@ -4989,6 +5109,14 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         for (size_t i = FixedPatches.size(); i > 0; i--)
         {
             const GAME_HACK_CODE_PATCH & Patch = FixedPatches[i - 1];
+            if (Patch.Address >= JfgFloydHud::GuardStub &&
+                Patch.Address < JfgFloydHud::GuardStub + sizeof(JfgFloydHud::GuardCode))
+            {
+                // Reopen the diagnostic only in the same validated write set
+                // as its complete original body. A foreign helper word must
+                // never leave the original prologue pointing into our cave.
+                continue;
+            }
             uint32_t Current = 0;
             if (!m_Memory.ReadU32(Patch.Address, Current))
             {
@@ -5186,7 +5314,15 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
     {
         Enter, WidescreenHudOverlayEnterOriginal, EnterReplacement,
     };
-    // The exit goes live first, followed by the independent gauge caller. Only
+    // Remember the validated allocation before installing any local caller so
+    // failure can use the normal ownership-aware cleanup, including any fixed
+    // hooks and caves installed earlier in this call.
+    m_WidescreenHudOverlayBase = OverlayBase;
+    auto RollbackOverlay = [this]() {
+        PatchWidescreenHud(false);
+        return false;
+    };
+    // The exit goes live first, followed by the independent HUD callers. Only
     // once the exit can balance the depth counter may the entry redirect into
     // the scoped renderer.
     CGameHackCodePatcher::Result ExitResult =
@@ -5194,33 +5330,31 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
     if (ExitResult == CGameHackCodePatcher::Result_SignatureMismatch ||
         ExitResult == CGameHackCodePatcher::Result_MemoryUnavailable)
     {
-        return false;
+        return RollbackOverlay();
     }
     if (!SetWidescreenHudShotGauge(OverlayBase, true))
     {
-        m_CodePatcher.SetEnabled(&ExitPatch, 1, false);
-        return false;
+        return RollbackOverlay();
+    }
+    if (!SetWidescreenHudFloyd(OverlayBase, true))
+    {
+        return RollbackOverlay();
     }
     if (!SetWidescreenHudBanner(OverlayBase, true))
     {
-        SetWidescreenHudShotGauge(OverlayBase, false);
-        m_CodePatcher.SetEnabled(&ExitPatch, 1, false);
-        return false;
+        return RollbackOverlay();
     }
     CGameHackCodePatcher::Result EnterResult =
         m_CodePatcher.SetEnabled(&EnterPatch, 1, true);
     if (EnterResult == CGameHackCodePatcher::Result_SignatureMismatch ||
         EnterResult == CGameHackCodePatcher::Result_MemoryUnavailable)
     {
-        SetWidescreenHudBanner(OverlayBase, false);
-        SetWidescreenHudShotGauge(OverlayBase, false);
-        m_CodePatcher.SetEnabled(&ExitPatch, 1, false);
-        return false;
+        return RollbackOverlay();
     }
 
     m_WidescreenHudOverlayHookApplied = true;
     m_WidescreenHudOverlayBase = OverlayBase;
-    return SetWidescreenHudReticle(true);
+    return SetWidescreenHudReticle(true) || RollbackOverlay();
 }
 
 // True only when the live (scene, setup) is one the landing stub would act on:

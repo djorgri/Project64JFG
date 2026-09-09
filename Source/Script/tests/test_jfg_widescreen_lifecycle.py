@@ -39,7 +39,7 @@ def translation_unit():
     helper = ""
     if "bool IsWidescreenHudResolution(" in source and "bool IsWidescreenHudResolution(" not in constants:
         helper = function(source, "bool IsWidescreenHudResolution(")
-    names = ("SetWidescreenHudReticle", "SetWidescreenHudBanner", "SetWidescreenHudShotGauge",
+    names = ("SetWidescreenHudReticle", "SetWidescreenHudBanner", "SetWidescreenHudShotGauge", "SetWidescreenHudFloyd",
              "RemoveWidescreenHudOverlayHooks", "PatchWidescreenHud")
     methods = "\n".join(function(source, "bool CJetForceGeminiRuntime::" + name + "(") for name in names)
     lifecycle = function(source, "bool CJetForceGeminiRuntime::PatchWidescreenHud(")
@@ -47,7 +47,9 @@ def translation_unit():
                               lifecycle.index("    // Earlier builds patched the framebuffer digit renderer")]
     patcher = memory_source[memory_source.index("CGameHackCodePatcher::CGameHackCodePatcher("):]
     declarations = memory_header[memory_header.index("struct GAME_HACK_CODE_PATCH"):]
-    return MOCKS + declarations + "\n" + constants + "\n" + helper + RUNTIME + patcher + "\n" + methods + \
+    floyd_header = HACKS / "JetForceGeminiFloydHud.h"
+    floyd_include = '\n#include "' + floyd_header.as_posix() + '"\n'
+    return MOCKS + declarations + floyd_include + constants + "\n" + helper + RUNTIME + patcher + "\n" + methods + \
         "\nstd::vector<GAME_HACK_CODE_PATCH> FixedFixture() {\n" + fixed_fixture + \
         "\nreturn FixedPatches;\n}\n" + CASES
 
@@ -121,6 +123,7 @@ public:
     bool SetWidescreenHudReticle(bool Enabled);
     bool SetWidescreenHudBanner(uint32_t OverlayBase, bool Enabled);
     bool SetWidescreenHudShotGauge(uint32_t OverlayBase, bool Enabled);
+    bool SetWidescreenHudFloyd(uint32_t OverlayBase, bool Enabled);
     bool RemoveWidescreenHudOverlayHooks();
     bool PatchWidescreenHud(bool Enabled);
 };
@@ -129,6 +132,7 @@ public:
 CASES = r'''
 const uint32_t Table = 0x80180000, Overlay13 = 0x80310000, Overlay14 = 0x80320000;
 const uint32_t GaugeCallOffset = 0x2B28, GaugeOriginalCall = 0x0C01657D;
+const uint32_t FloydCallOffset = 0x468, FloydOriginalCall = 0x0C01B4E4, FloydDelay = 0xAFB90010;
 void Require(bool value, const std::string &message) {
     if (!value) throw std::runtime_error(message);
 }
@@ -137,6 +141,12 @@ void Stock(CGameHackMemory &m, uint8_t mode) {
     m.WriteU32(OverlayTableAddress, Table);
     m.WriteU32(Table + 13 * OverlayHeaderSize, Overlay13);
     m.WriteU32(Table + 14 * OverlayHeaderSize, Overlay14);
+    // Some retired diagnostic entries lie inside a cave segment. Populate
+    // filler first, then preserve the real fixed-site prologues below.
+    for (size_t i = 0; i < WidescreenHudCaveWordCount; ++i)
+        m.WriteU32(WidescreenHudCaveWordAddress(i), 0x34000000 | uint32_t(i));
+    for (size_t i = 0; i < sizeof(JfgFloydHud::OriginalDiagnosticCode) / sizeof(uint32_t); ++i)
+        m.WriteU32(0x800678C4 + uint32_t(i * 4), JfgFloydHud::OriginalDiagnosticCode[i]);
     for (const auto &p : FixedFixture()) m.WriteU32(p.Address, p.Original);
     m.WriteU32(WidescreenHudAmmoEntry + 4, WidescreenHudAmmoDelayOriginal);
     for (const auto &p : WidescreenHudDigitalRetired) m.WriteU32(p.Address, p.Original);
@@ -148,14 +158,19 @@ void Stock(CGameHackMemory &m, uint8_t mode) {
     for (const auto &p : WidescreenHudShotGaugePatches) m.WriteU32(Overlay14 + p.Offset, p.Original);
     m.WriteU32(Overlay14 + GaugeCallOffset, GaugeOriginalCall);
     m.WriteU32(Overlay14 + GaugeCallOffset + 4, 0x00003825);
+    m.WriteU32(Overlay14 + FloydCallOffset, FloydOriginalCall);
+    m.WriteU32(Overlay14 + FloydCallOffset + 4, FloydDelay);
     const uint32_t signature[] = {0x27BDFF68, 0xAFB4002C, 0xAFB30028, 0xAFB10020};
     for (unsigned i = 0; i < 4; ++i) m.WriteU32(Overlay13 + WidescreenHudReticleDrawOffset + i * 4, signature[i]);
     for (const auto &p : WidescreenHudReticleCalls) {
         m.WriteU32(Overlay13 + p.Offset, WidescreenHudReticleLineCallOriginal);
         m.WriteU32(Overlay13 + p.Offset + 4, p.Delay);
     }
-    for (size_t i = 0; i < WidescreenHudCaveWordCount; ++i)
-        m.WriteU32(WidescreenHudCaveWordAddress(i), 0x34000000 | uint32_t(i));
+}
+void CheckFloydDiagnosticStock(const CGameHackMemory &m) {
+    for (size_t i = 0; i < sizeof(JfgFloydHud::OriginalDiagnosticCode) / sizeof(uint32_t); ++i)
+        Require(m.Word(0x800678C4 + uint32_t(i * 4)) == JfgFloydHud::OriginalDiagnosticCode[i],
+                "Floyd diagnostic prologue/body was not fully restored");
 }
 void CheckOverlay14Stock(const CGameHackMemory &m, uint32_t base = Overlay14) {
     Require(m.Word(base + WidescreenHudOverlayEnterOffset) == WidescreenHudOverlayEnterOriginal, "HUD scope entry remains active");
@@ -165,9 +180,11 @@ void CheckOverlay14Stock(const CGameHackMemory &m, uint32_t base = Overlay14) {
     for (const auto &p : WidescreenHudShotGaugePatches)
         Require(m.Word(base + p.Offset) == p.Original, "gauge remains patched");
     Require(m.Word(base + GaugeCallOffset) == GaugeOriginalCall, "gauge wrapper remains active");
+    Require(m.Word(base + FloydCallOffset) == FloydOriginalCall, "Floyd line wrapper remains active");
 }
 void CheckAllStock(const CGameHackMemory &m, uint32_t base13 = Overlay13, uint32_t base14 = Overlay14) {
     CheckOverlay14Stock(m, base14);
+    CheckFloydDiagnosticStock(m);
     for (const auto &p : FixedFixture()) Require(m.Word(p.Address) == p.Original, "fixed hook remains active");
     for (const auto &p : WidescreenHudDigitalRetired)
         Require(m.Word(p.Address) == p.Original, "retired digital patch remains active");
@@ -186,6 +203,8 @@ void CheckInstalled(const CGameHackMemory &m, uint8_t mode) {
         Require(m.Word(Overlay14 + p.Offset) == p.Original, "gauge source coordinates were modified");
     Require(m.Word(Overlay14 + GaugeCallOffset) == CallTo(WidescreenHudShotGaugeWrapperStub),
             "fixture did not install gauge wrapper");
+    Require(m.Word(Overlay14 + FloydCallOffset) == CallTo(WidescreenHudFloydLineStub),
+            "fixture did not install Floyd line wrapper");
 }
 // Coordinate Y and colour are guest data, not ownership signatures. Simulate
 // a saved table whose X values came from an older build while other fields
@@ -240,6 +259,8 @@ int main(int argc, char **argv) {
             Require(live.PatchWidescreenHud(true), "initial snapshot fixture failed");
             SeedGaugeTable(m, true, true);
             m.WriteU32(Overlay14 + GaugeCallOffset, GaugeOriginalCall);
+            m.WriteU32(Overlay14 + FloydCallOffset, FloydOriginalCall);
+            for (const auto &p : JfgFloydHud::FixedPatches) m.WriteU32(p.Address, p.Original);
             for (unsigned i = 0; i < sizeof(WidescreenHudRectangleLegacyCode) / sizeof(uint32_t); ++i)
                 m.WriteU32(WidescreenHudRectangleStub + 4 * i, WidescreenHudRectangleLegacyCode[i]);
             // The earlier build had only the reticle in this segment; restore
@@ -257,6 +278,7 @@ int main(int argc, char **argv) {
             Require(restored.Word(Overlay14 + GaugeCallOffset) ==
                     (enable ? CallTo(WidescreenHudShotGaugeWrapperStub) : GaugeOriginalCall),
                     "legacy snapshot retained wrong gauge call");
+            if (!enable) CheckFloydDiagnosticStock(restored);
         } else if (scenario == "gauge_orphan" || scenario == "gauge_orphan_partial" ||
                    scenario == "gauge_orphan_enable") {
             SeedGaugeTable(m, true, scenario == "gauge_orphan_partial");
@@ -282,6 +304,70 @@ int main(int argc, char **argv) {
             ExactUsRomMock = scenario != "gauge_non_us";
             Require(live.PatchWidescreenHud(false), "unsupported gauge cleanup returned failure");
             Require(m.bytes == before, "orphan gauge cleanup modified unsupported ROM");
+        } else if (scenario == "floyd_invalid_delay") {
+            m.WriteU32(Overlay14 + FloydCallOffset + 4, 0xAFB80010);
+            const auto before = m.bytes;
+            Require(!live.PatchWidescreenHud(true), "foreign Floyd delay was accepted");
+            Require(m.bytes == before, "failed Floyd install did not roll back other hooks");
+        } else if (scenario == "floyd_owned_bad_delay") {
+            Require(live.PatchWidescreenHud(true), "initial Floyd installation failed");
+            const auto caveImage = m.bytes;
+            m.WriteU32(Overlay14 + FloydCallOffset + 4, 0xAFB80010);
+            Require(!live.PatchWidescreenHud(false), "owned Floyd call with foreign delay was disconnected");
+            Require(m.Word(Overlay14 + FloydCallOffset) == CallTo(WidescreenHudFloydLineStub),
+                    "Floyd call with unknown delay was overwritten");
+            Require(m.Word(Overlay14 + GaugeCallOffset) == GaugeOriginalCall,
+                    "Floyd failure prevented independent gauge cleanup");
+            for (const auto &p : WidescreenHudBannerPatches)
+                Require(m.Word(Overlay14 + p.Offset) == p.Original,
+                        "Floyd failure prevented independent banner cleanup");
+            for (size_t i = 0; i < WidescreenHudCaveWordCount; ++i)
+                for (unsigned byte = 0; byte < 4; ++byte) {
+                    const size_t offset = WidescreenHudCaveWordAddress(i) + byte - 0x80000000;
+                    Require(m.bytes[offset] == caveImage[offset], "referenced Floyd cave was restored early");
+                }
+            m.WriteU32(Overlay14 + FloydCallOffset + 4, FloydDelay);
+            Require(live.PatchWidescreenHud(false), "Floyd cleanup could not resume after delay restored");
+            CheckAllStock(m);
+        } else if (scenario == "floyd_foreign_diagnostic_owned" || scenario == "floyd_foreign_diagnostic_snapshot") {
+            Require(live.PatchWidescreenHud(true), "initial diagnostic fixture failed");
+            const uint32_t modified = JfgFloydHud::InitStub + 4;
+            m.WriteU32(modified, 0xDEADBEEF);
+            if (scenario == "floyd_foreign_diagnostic_snapshot") {
+                const auto before = m.bytes;
+                CJetForceGeminiRuntime fresh(m);
+                Require(!fresh.PatchWidescreenHud(false), "unknown saved diagnostic body was adopted");
+                Require(m.bytes == before, "unknown saved diagnostic body was modified");
+            } else {
+                Require(!live.PatchWidescreenHud(false), "unknown diagnostic body was restored");
+                for (size_t i = 0; i < sizeof(JfgFloydHud::GuardCode) / sizeof(uint32_t); ++i)
+                    Require(m.Word(JfgFloydHud::GuardStub + uint32_t(i * 4)) == JfgFloydHud::GuardCode[i],
+                            "diagnostic entry reopened over unknown helper body");
+                Require(m.Word(modified) == 0xDEADBEEF, "unknown diagnostic word was overwritten");
+                m.WriteU32(modified, JfgFloydHud::InitCode[1]);
+                Require(live.PatchWidescreenHud(false), "diagnostic cleanup failed after recognized body restored");
+                CheckAllStock(m);
+            }
+        } else if (scenario == "floyd_gauge_cleanup_failure") {
+            Require(live.PatchWidescreenHud(true), "initial Floyd fixture failed");
+            const auto &p = WidescreenHudShotGaugePatches[5];
+            m.WriteU32(Overlay14 + p.Offset, 0x12340001);
+            Require(!live.PatchWidescreenHud(false), "foreign gauge table was accepted during cleanup");
+            Require(m.Word(Overlay14 + FloydCallOffset) == FloydOriginalCall,
+                    "gauge cleanup failure left independent Floyd call installed");
+            Require(m.Word(Overlay14 + p.Offset) == 0x12340001, "foreign gauge was overwritten");
+            m.WriteU32(Overlay14 + p.Offset, p.Original);
+            Require(live.PatchWidescreenHud(false), "cleanup failed after gauge repaired");
+            CheckAllStock(m);
+        } else if (scenario == "floyd_toggles") {
+            for (unsigned repeat = 0; repeat < 4; ++repeat) {
+                m.WriteU8(WidescreenHudResolutionIndexAddress, mode);
+                Require(live.PatchWidescreenHud(true), "Floyd toggle installation failed");
+                CheckInstalled(m, mode);
+                m.WriteU8(WidescreenHudResolutionIndexAddress, mode & ~1);
+                Require(live.PatchWidescreenHud(true), "Floyd mode toggle cleanup failed");
+                CheckAllStock(m);
+            }
         } else if (scenario == "stock") {
             const auto before = m.bytes;
             live.PatchWidescreenHud(true);
@@ -315,7 +401,7 @@ int main(int argc, char **argv) {
                 m.WriteU8(WidescreenHudResolutionIndexAddress, mode & ~1);
                 Require(live.PatchWidescreenHud(true), "mode transition cleanup failed");
                 CheckAllStock(m);
-            } else if (scenario == "adopt" || scenario == "adopt_disabled") {
+            } else if (scenario == "adopt" || scenario == "adopt_disabled" || scenario == "adopt_enabled") {
                 CGameHackMemory restored;
                 restored.bytes = m.bytes;
                 // A snapshot can interrupt an active guest scope. Ownership is
@@ -324,6 +410,10 @@ int main(int argc, char **argv) {
                 if (scenario == "adopt") restored.WriteU8(WidescreenHudResolutionIndexAddress, mode & ~1);
                 CJetForceGeminiRuntime fresh(restored);
                 Require(fresh.PatchWidescreenHud(scenario != "adopt_disabled"), "fresh snapshot cleanup failed");
+                if (scenario == "adopt_enabled") {
+                    CheckInstalled(restored, mode);
+                    Require(fresh.PatchWidescreenHud(false), "fresh enabled snapshot could not uninstall");
+                }
                 CheckAllStock(restored);
                 // An adopted cave image may remain inert; all entry points and
                 // data edits must nevertheless be disconnected/restored.
@@ -417,6 +507,9 @@ class JfgWidescreenLifecycleTests(unittest.TestCase):
     def test_fresh_host_cleans_patched_snapshot_when_disabled(self):
         self.scenario("adopt_disabled", (1, 3))
 
+    def test_fresh_enabled_snapshot_restores_complete_diagnostic_function_on_disable(self):
+        self.scenario("adopt_enabled", (1, 3))
+
     def test_foreign_fixed_signature_is_preserved_without_partial_installation(self):
         self.scenario("foreign", (1, 3))
 
@@ -459,6 +552,22 @@ class JfgWidescreenLifecycleTests(unittest.TestCase):
     def test_orphan_gauge_migration_requires_exact_supported_us_rom(self):
         self.scenario("gauge_non_us", (0, 1, 2, 3))
         self.scenario("gauge_unsupported", (0, 1, 2, 3))
+
+    def test_floyd_installation_rolls_back_all_hooks_when_call_delay_is_unknown(self):
+        self.scenario("floyd_invalid_delay", (1, 3))
+
+    def test_owned_floyd_call_keeps_cave_until_safe_removal_without_blocking_other_callers(self):
+        self.scenario("floyd_owned_bad_delay", (1, 3))
+
+    def test_gauge_cleanup_failure_does_not_prevent_floyd_removal(self):
+        self.scenario("floyd_gauge_cleanup_failure", (1, 3))
+
+    def test_unknown_diagnostic_body_is_preserved_without_reopening_original_entry(self):
+        self.scenario("floyd_foreign_diagnostic_owned", (1, 3))
+        self.scenario("floyd_foreign_diagnostic_snapshot", (1, 3))
+
+    def test_floyd_call_tracks_repeated_game_widescreen_toggles(self):
+        self.scenario("floyd_toggles", (1, 3))
 
 
 if __name__ == "__main__":

@@ -173,9 +173,10 @@ For the USA retail ROM, select widescreen in the game's own options, enable
 *Force 16:9 display (stretches image)* in the Parallel-RDP graphics settings,
 then check *Correct widescreen HUD* under *Options → Game-specific hacks*.
 The HUD correction includes both ammunition counters, the green shot-capacity
-bars, the pickup message
-banner (cap position, text alignment and clipping), and the line-based aiming
-reticles. The green bars use the weapon frame's anchor during drawing, so
+bars, the pickup message banner (cap position, text alignment and clipping),
+the line-based aiming reticles, and the outline around Floyd's lower-right icon.
+Floyd's outline follows the icon and keeps connected diagonals with the original
+two-pixel green stroke. The green bars use the weapon frame's anchor during drawing, so
 switching the game's widescreen mode does not leave shifted coordinates behind.
 It does not require
 keyboard/mouse controls. The checkbox alone does not change the game's video
