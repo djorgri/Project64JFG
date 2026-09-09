@@ -355,6 +355,7 @@ enum SettingID
     Setting_JfgSyncAudio,
     Setting_JfgDroneLateralMovement,
     Setting_JfgWidescreenHud,
+    Setting_JfgAlignHud,
 
     FirstUISettings = MaxPluginSetting + 1,
     LastUISettings = FirstUISettings + MaxPluginSetting,

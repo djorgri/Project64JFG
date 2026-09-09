@@ -167,6 +167,45 @@ Gemini defaults — fast cutscenes, crouch/prone stick-strafing, and sprint. 60
 FPS and its game-speed corrections remain available under
 *Options → Game-specific hacks → Jet Force Gemini*.
 
+### Experimental widescreen HUD
+
+For the USA retail ROM, select widescreen in the game's own options, enable
+*Force 16:9 display (stretches image)* in the Parallel-RDP graphics settings,
+then check *Correct widescreen HUD* under *Options → Game-specific hacks*.
+The HUD correction includes both ammunition counters, the green shot-capacity
+bars, the pickup message
+banner (cap position, text alignment and clipping), and the line-based aiming
+reticles. The green bars use the weapon frame's anchor during drawing, so
+switching the game's widescreen mode does not leave shifted coordinates behind.
+It does not require
+keyboard/mouse controls. The checkbox alone does not change the game's video
+mode: the entire correction follows the game's active widescreen mode and is
+removed when returning to 4:3, including recognized patches from older save
+states. Forcing 16:9 in the graphics plugin alone does not activate it.
+See the [widescreen investigation notes](./Docs/JFG_WIDESCREEN_STATUS.md)
+for measured results, remaining limitations, and the developer trace script.
+
+### HUD alignment
+
+For the USA retail ROM in single-player, enable *Align HUD elements* under
+*Options → Game-specific hacks → Jet Force Gemini*. It gives the weapon frame
+and health arc a base left margin of 13 logical units and centres the health
+icon's placement point within the arc. In widescreen, a small optical adjustment
+moves the arc and icon about two logical units further left to align their
+visible edge with the weapon frame. The widescreen placement also accounts for
+the VI's left black border, keeping the visible margin consistent with the
+top and bottom margins. Ammunition, gauges, pickup banners and
+the weapon selector move with the weapon frame. Top and bottom margins retain
+the same 13-unit target.
+
+This option works in both 4:3 and in-game widescreen, independently of keyboard/
+mouse controls and *Correct widescreen HUD*. Leave the latter enabled for aspect
+correction in widescreen. Unchecking alignment restores the original placement.
+The high-resolution targets are rounded to the nearest quarter framebuffer
+pixel so text, clipping and geometry share the same positions. See the
+[HUD layout measurements](./Docs/JFG_HUD_LAYOUT_MEASUREMENTS.md) for the source
+coordinates and validation limits.
+
 ## Known limitations
 
 - Only the USA 1.0 and Kiosk demo builds listed above are supported by the
@@ -180,7 +219,8 @@ These items are planned work, not promises for a particular release:
 - Add support for modern gamepads.
 - Continue improving 60 FPS performance and timing accuracy.
 - Add Floyd lateral movement and direct aiming.
-- Correct the original game's inaccurate widescreen presentation.
+- Validate the experimental widescreen HUD correction across resolutions and
+  gameplay situations.
 
 ## Building
 

@@ -149,6 +149,7 @@ void CSettings::AddHowToHandleSetting(const char * BaseDirectory)
     AddHandler(Setting_JfgSyncAudio, new CSettingTypeApplication("Game Specific Hacks", "JFG Sync Audio", true));
     AddHandler(Setting_JfgDroneLateralMovement, new CSettingTypeApplication("Game Specific Hacks", "JFG Drone Lateral Movement", false));
     AddHandler(Setting_JfgWidescreenHud, new CSettingTypeApplication("Game Specific Hacks", "JFG Widescreen HUD", false));
+    AddHandler(Setting_JfgAlignHud, new CSettingTypeApplication("Game Specific Hacks", "JFG Align HUD", false));
 
     AddHandler(Default_RDRamSizeUnknown, new CSettingTypeApplication("Defaults", "Unknown RDRAM Size", 0x800000u));
     AddHandler(Default_RDRamSizeKnown, new CSettingTypeApplication("Defaults", "Known RDRAM Size", 0x400000u));

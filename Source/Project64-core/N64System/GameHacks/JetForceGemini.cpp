@@ -2,6 +2,7 @@
 
 #include "JetForceGemini.h"
 #include "JetForceGeminiAddresses.h"
+#include "JetForceGeminiHudAlignment.h"
 #include <Common/DateTime.h>
 #include <Common/path.h>
 #include <math.h>
@@ -586,9 +587,23 @@ const uint32_t IntroCinematicSkipHookCode[] =
 // per HUD pass on the code page would continually invalidate every stub under
 // the recompiler's self-modifying-code tracking.
 const uint32_t WidescreenHudCaveStart = 0x80067280;
-const uint32_t WidescreenHudCaveEnd = 0x80067610;
-const size_t WidescreenHudCaveWordCount =
+const uint32_t WidescreenHudCaveEnd = 0x80067690;
+const size_t WidescreenHudMainCaveWordCount =
     (WidescreenHudCaveEnd - WidescreenHudCaveStart) / sizeof(uint32_t);
+// A second, disjoint segment reuses the retired diagnostic ring-buffer display.
+// Its sole caller at 0x800674BC is already replaced by SpriteScaleAltCode.
+// Keep the intervening diCpuLogMessage code entirely outside our memory image.
+const uint32_t WidescreenHudReticleStub = 0x80067790;
+const uint32_t WidescreenHudReticleCaveEnd = 0x80067844;
+const size_t WidescreenHudCaveWordCount = WidescreenHudMainCaveWordCount +
+    (WidescreenHudReticleCaveEnd - WidescreenHudReticleStub) / sizeof(uint32_t);
+
+uint32_t WidescreenHudCaveWordAddress(size_t Index)
+{
+    return Index < WidescreenHudMainCaveWordCount ?
+        WidescreenHudCaveStart + (uint32_t)(Index * sizeof(uint32_t)) :
+        WidescreenHudReticleStub + (uint32_t)((Index - WidescreenHudMainCaveWordCount) * sizeof(uint32_t));
+}
 const uint32_t WidescreenHudScopeEnterStub = 0x80067280;
 const uint32_t WidescreenHudScopeExitStub = 0x800672A0;
 const uint32_t WidescreenHudCamCopyStub = 0x800672C0;
@@ -598,15 +613,34 @@ const uint32_t WidescreenHudFontDtdyStub = 0x80067360;
 const uint32_t WidescreenHudSpriteScaleStub = 0x800673A0;
 const uint32_t WidescreenHudLineStub = 0x800673E0;
 const uint32_t WidescreenHudRectangleStub = 0x80067440;
+const uint32_t WidescreenHudShotGaugeWrapperStub = 0x800677F4;
+const uint32_t WidescreenHudShotGaugeAnchorStub = 0x80067810;
+const uint32_t WidescreenHudShotGaugeCallOffset = 0x2B28;
+const uint32_t WidescreenHudShotGaugeCallOriginal = 0x0C01657D;
+const uint32_t WidescreenHudShotGaugeCallDelay = 0x00003825;
 const uint32_t WidescreenHudSpriteScaleAltStub = 0x800674A0;
 const uint32_t WidescreenHudSpritePositionStub = 0x800674E0;
 const uint32_t WidescreenHudMatrixTranslateStub = 0x80067560;
+// Extend into the first 0x80 bytes of the unused diCpuReportWatchpoint.
+// The next original function starts at 0x800676B4; no other stub occupies it.
+const uint32_t WidescreenHudAmmoStub = 0x80067610;
+const uint32_t WidescreenHudAmmoEntry = 0x8005900C;
+const uint32_t WidescreenHudAmmoOriginal = 0x00135080;
+const uint32_t WidescreenHudAmmoDelayOriginal = 0x030A4021;
 // cpuTraceTrackBufStatus is the byte at 0x80102550; the following three bytes
 // are alignment padding before the pointer at 0x80102554. Claim only the last
 // padding byte so a non-zero diagnostic status can never make the HUD hooks
 // appear active outside their scope.
 const uint32_t WidescreenHudScopeDepthAddress = 0x80102553;
 const uint32_t WidescreenHudResolutionIndexAddress = 0x800FECA8;
+
+bool IsWidescreenHudResolution(uint8_t Resolution)
+{
+    // Active US gameplay modes: 0/2 are 4:3, 1/3 are widescreen.
+    // Do not treat an odd boot/reset mode or the graphics plugin's aspect
+    // ratio as the game's widescreen setting.
+    return Resolution == 1 || Resolution == 3;
+}
 
 const uint32_t WidescreenHudOverlayModule = 14;
 const uint32_t WidescreenHudOverlayEnterOffset = 0xC00;
@@ -615,6 +649,67 @@ const uint32_t WidescreenHudOverlayEnterOriginal = 0x0C010359; // jal camStandar
 const uint32_t WidescreenHudOverlayEnterDelayOriginal = 0x02002025; // or a0, s0, zero
 const uint32_t WidescreenHudOverlayExitOriginal = 0x03E00008; // jr ra
 const uint32_t WidescreenHudOverlayExitDelayOriginal = 0x27BD00B0; // addiu sp, sp, 0xB0
+const uint32_t WidescreenHudReticleOverlayModule = 13;
+const uint32_t WidescreenHudReticleDrawOffset = 0x4A8;
+const uint32_t WidescreenHudReticleLineCallOriginal = 0x0C01B563; // jal fxDrawLineInWindow
+struct WIDESCREEN_HUD_RETICLE_CALL
+{
+    uint32_t Offset;
+    uint32_t Delay;
+};
+// Only the local, rotating/mirrored segment paths (types 0..4). The four
+// screen-edge frame calls (types 5/6) and the 3D target geometry stay stock.
+const WIDESCREEN_HUD_RETICLE_CALL WidescreenHudReticleCalls[] =
+{
+    { 0xC68, 0x02C08025 },
+    { 0xCF4, 0xAFAB0010 },
+    { 0xD48, 0xAFB10010 },
+    { 0xD9C, 0xAFB80010 },
+    { 0xDFC, 0xAFB00014 },
+    { 0xE4C, 0xAFA30010 },
+    { 0xE98, 0xAFB10010 },
+};
+
+// frontDrawTarget passes already projected/rotated endpoints, with its aim
+// centre in s4. Compress each X offset around that centre BEFORE clipping and
+// CPU line rasterization; never rescale the centre or thin a bitmap afterwards.
+// Round 3*dx/4 to nearest, ties away from zero, to keep mirrored lines symmetric.
+// The original call delay has run; this tail call preserves ra, stack arguments,
+// Y, colour, all saved registers, HI/LO and the FPU. t0/t1 are caller-saved.
+// Normal reticles run outside the HUD scope. If a diagnostic forces that scope
+// open, leave the existing fxDrawLine correction to act once, not twice.
+const uint32_t WidescreenHudReticleCode[] =
+{
+    0x3C088010, // lui   t0, 0x8010
+    0x91092553, // lbu   t1, 0x2553(t0) ; scope depth
+    0x15200014, // bne   t1, zero, stock
+    0x9108ECA8, // lbu   t0, -0x1358(t0) ; resolution index
+    0x31080001, // andi  t0, t0, 1
+    0x11000011, // beq   t0, zero, stock
+    0x00000000, // nop
+    0x00944023, // subu  t0, a0, s4 ; first endpoint relative to aim centre
+    0x00084840, // sll   t1, t0, 1
+    0x01094021, // addu  t0, t0, t1 ; 3*dx
+    0x00084FC3, // sra   t1, t0, 31 ; -1 for negative, 0 otherwise
+    0x25080002, // addiu t0, t0, 2
+    0x01094021, // addu  t0, t0, t1 ; symmetric rounding before /4
+    0x00084083, // sra   t0, t0, 2
+    0x01142021, // addu  a0, t0, s4
+    0x00D44023, // subu  t0, a2, s4 ; second endpoint
+    0x00084840, // sll   t1, t0, 1
+    0x01094021, // addu  t0, t0, t1
+    0x00084FC3, // sra   t1, t0, 31
+    0x25080002, // addiu t0, t0, 2
+    0x01094021, // addu  t0, t0, t1
+    0x00084083, // sra   t0, t0, 2
+    0x01143021, // addu  a2, t0, s4
+    0x0801B563, // stock: j fxDrawLineInWindow (original entry/prologue)
+    0x00000000, // nop
+};
+static_assert(WidescreenHudReticleStub + sizeof(WidescreenHudReticleCode) == WidescreenHudShotGaugeWrapperStub,
+              "Reticle and shot-gauge stubs must not overlap");
+static_assert(WidescreenHudReticleStub >= 0x80067790 && WidescreenHudReticleCaveEnd <= 0x800678C4,
+              "Reticle cave must not overwrite neighbouring diagnostic functions");
 struct WIDESCREEN_HUD_OVERLAY_WORD_PATCH
 {
     uint32_t Offset;
@@ -622,11 +717,11 @@ struct WIDESCREEN_HUD_OVERLAY_WORD_PATCH
     uint32_t Replacement;
 };
 
-// The six green shot-capacity bars and their backing rectangle live in a
-// mutable overlay-14 rectangle table. frontDrawRectangles already compresses
-// their shape around screen centre; subtracting 53 source pixels before that
-// transform cancels most of its +40 centre bias while leaving the bars aligned
-// with the right side of the weapon frame.
+// Legacy save-state recognition only. Earlier builds subtracted 45 from the
+// X coordinates in the overlay's live rectangle table. Leaving those values
+// behind even briefly while the game changes aspect mode moves the gauge to
+// the left of the weapon. New builds keep the table native and choose the
+// weapon anchor only while packing this draw call's display-list rectangles.
 const WIDESCREEN_HUD_OVERLAY_WORD_PATCH WidescreenHudShotGaugePatches[] =
 {
     { 0x447C, 0x00390015, 0x000C0015 },
@@ -643,6 +738,39 @@ const WIDESCREEN_HUD_OVERLAY_WORD_PATCH WidescreenHudShotGaugePatches[] =
     { 0x44BC, 0x00470026, 0x001A0026 },
     { 0x44C4, 0x003C0027, 0x000F0027 },
     { 0x44C8, 0x00470029, 0x001A0029 },
+};
+
+struct WIDESCREEN_HUD_BANNER_WORD_PATCH
+{
+    uint32_t Offset;
+    uint32_t Original;
+    uint32_t LowResolution;
+    uint32_t HighResolution;
+};
+
+// The pickup message uses a matrix-backed bar, front-end object 5 as its cap,
+// and a separately clipped font. Give all three the bar's left anchor. Keep
+// the stock slide animation and native glyph widths; horizontal font centring
+// puts the fully open message at 137.5 / 186.5 framebuffer pixels (320 / 448).
+// These overlay-local instructions are installed only while widescreen HUD
+// correction is active. No additional cave or global font hook is needed.
+const WIDESCREEN_HUD_BANNER_WORD_PATCH WidescreenHudBannerPatches[] =
+{
+    // text X = .75 * capX + 46 (95 in high resolution), shadow still adds 1
+    { 0x1DB8, 0x3C0142F4, 0x3C013F40, 0x3C013F40 }, // f4: 122 -> .75
+    { 0x1DC0, 0x3C0142B4, 0x3C014238, 0x3C0142BE }, // f8: 90 -> 46 / 95
+    { 0x1DD4, 0x46049181, 0x46049182, 0x46049182 }, // mul.s f6, f18, f4
+    // scissor left: 65.5 / 114.5 pixels, encoded in 10.2 at bits 12..23
+    { 0x1E20, 0x3C01ED14, 0x3C01ED10, 0x3C01ED1C },
+    { 0x1E28, 0x34218000, 0x34216000, 0x3421A000 },
+    // scissor right (10.2) = 3 * capX + 496 / 692; f0 stays 4 for both Y bounds
+    { 0x1E48, 0x3C014320, 0x3C014040, 0x3C014040 }, // f4: 160 -> 3
+    { 0x1E50, 0x00000000, 0x3C0143F8, 0x3C01442D }, // at: 496 / 692
+    { 0x1E54, 0x46049180, 0x46049182, 0x46049182 }, // mul.s f6, f18, f4
+    { 0x1E58, 0x46003202, 0x44814000, 0x44814000 }, // mtc1 at, f8
+    { 0x1E60, 0x00000000, 0x46083200, 0x46083200 }, // add.s f8, f6, f8
+    { 0x1EFC, 0x24180008, 0x2418000C, 0x2418000C }, // centre + middle
+    { 0x1F64, 0x240E0008, 0x240E000C, 0x240E000C }, // shadow, same alignment
 };
 
 const uint32_t WidescreenHudCamCopyEntry = 0x80042158;
@@ -689,8 +817,9 @@ const uint32_t WidescreenHudDigitalAdvanceCompressed = 0x26730008; // addiu s3, 
 
 // The four patches above are retired. The probe proved this renderer never
 // runs for the visible counter: no item of its queue type was produced across
-// two sessions, and the panel's counter reaches the framebuffer through the
-// tiny-text queue instead. They are still recognised here so a save state that
+// two sessions. The panel actually uses frontPrintNum's own TextureRectangles,
+// confirmed by a runtime trace of its yellow/white 96/100 arguments.
+// They are still recognised here so a save state that
 // carries them can be returned to stock.
 const uint32_t WidescreenHudDigitalRetiredCount = 4;
 const GAME_HACK_CODE_PATCH WidescreenHudDigitalRetired[] =
@@ -706,37 +835,55 @@ const GAME_HACK_CODE_PATCH WidescreenHudDigitalRetired[] =
       WidescreenHudDigitalAdvanceCompressed },
 };
 
-// func_8006E188's tiny-text pass blits the counter into the framebuffer one
-// pixel at a time, so its cursor is a byte pointer rather than a coordinate.
-// At this site t4 holds the glyph width and t9 is about to become width*2, the
-// step from one glyph origin to the next. Three quarters of that step is the
-// same 0.75 the rest of the HUD uses.
-//
-// The glyph bitmap itself is untouched: narrowing it would mean dropping source
-// columns in a CPU blit, with no filtering available at all on a six-pixel
-// font. Adjacent glyphs therefore overlap by a quarter of their width, and
-// because the plot is additive, overlapping strokes brighten rather than
-// disappear.
-//
-// The next word is a stack load, not a branch, so a jump here is safe.
-const uint32_t WidescreenHudTinyAdvanceEntry = 0x8006ED3C;
-const uint32_t WidescreenHudTinyAdvanceOriginal = 0x000CC840; // sll t9, t4, 1
-// This is the slot the retired digit stub freed, and it holds exactly eight
-// words: the stub below is sized to it. The font Y stub immediately before it
-// fills its own sixteen-word slot completely, so nothing may start earlier.
-//
-// Both exits branch straight to the resume address rather than falling into a
-// shared tail, which is what keeps the whole thing inside eight words. Each
-// branch carries a useful delay slot: the displaced shift on the way out, and
-// the final halving on the widescreen path.
-// Nothing is installed here yet. Compressing this step by 0.75 produced no
-// visible change to the ammunition counter, which is the same signature as the
-// three renderers already eliminated, so the path is not proven to carry it.
-//
-// Two things are settled for whoever picks this up. s3 is a byte pointer into a
-// 16-bit framebuffer, so the step must stay even: (width * 3) >> 1 is odd for
-// every odd width and leaves the cursor mid-pixel. And the cave has exactly
-// eight free words, at 0x80067340, which the retired digit stub left behind.
+// frontPrintNum draws the current/max ammunition with textures 8/9. It does
+// not use the ordinary font renderer. Scale destination width and digit stride
+// only: stack+0x9C also selects source atlas columns and must remain unchanged.
+// Its unused stack+0x88 local carries the texture step through texFrame and
+// both loops (significant digits and dimmed leading zeroes). Initialize that
+// local even outside the correction scope, because the step loads are global.
+// The anchor matches the left HUD panel: x' = .75*x + C/4 - .75*B, with
+// C=160/B=48 in mode 1 and C=224/B=68 in mode 3 (+4/+5 destination pixels).
+// t7/t9 are dead at this site; all saved registers, Y, UVs and dtdy stay intact.
+// The original entry delay computes t0 prematurely; replay it on every exit.
+const uint32_t WidescreenHudAmmoCode[] =
+{
+    0x00135080, // sll   t2, s3, 2 ; displaced stock X (10.2)
+    0x3C190400, // lui   t9, 0x0400
+    0x3739FC00, // ori   t9, t9, 0xFC00 ; stock dsdx=1024, dtdy=-1024
+    0xAFB90088, // sw    t9, 0x88(sp) ; unused local, initialized on every path
+    0x3C198010, // lui   t9, 0x8010
+    0x932F2553, // lbu   t7, 0x2553(t9) ; gameplay HUD scope
+    0x11E00017, // beq   t7, zero, resume
+    0x9328ECA8, // lbu   t0, -0x1358(t9) ; resolution index
+    0x310F0001, // andi  t7, t0, 1
+    0x11E00014, // beq   t7, zero, resume
+    0x8F2FF418, // lw    t7, -0xBE8(t9) ; texture 8 pointer
+    0x124F0003, // beq   s2, t7, compress
+    0x8F2FF41C, // lw    t7, -0xBE4(t9) ; texture 9 pointer
+    0x164F0010, // bne   s2, t7, resume
+    0x00000000, // nop
+    0x00187882, // srl   t7, t8, 2 ; destination width/4
+    0x030FC023, // subu  t8, t8, t7 ; preserve fractional quarter pixels
+    0x00135040, // sll   t2, s3, 1
+    0x01535021, // addu  t2, t2, s3 ; 3*X
+    0x31080002, // andi  t0, t0, 2 ; high resolution
+    0x11000002, // beq   t0, zero, stride
+    0x254A0010, // addiu t2, t2, 16 ; low-res anchor +4 pixels
+    0x254A0004, // addiu t2, t2, 4 ; high-res anchor +5 pixels
+    0x8FAF00A0, // lw    t7, 0xA0(sp) ; destination stride (source width stays intact)
+    0x000FC882, // srl   t9, t7, 2
+    0x01F97823, // subu  t7, t7, t9 ; 12/8 -> 9/6 pixels
+    0xAFAF00A0, // sw    t7, 0xA0(sp)
+    0x3C190555, // lui   t9, 0x0555 ; dsdx=1365, approximately 4/3
+    0x3739FC00, // ori   t9, t9, 0xFC00 ; preserve vertical sampling
+    0xAFB90088, // sw    t9, 0x88(sp)
+    0x08016405, // j     0x80059014
+    0x030A4021, // addu  t0, t8, t2 ; replay entry delay after X/width are ready
+};
+static_assert(WidescreenHudAmmoStub + sizeof(WidescreenHudAmmoCode) <= WidescreenHudCaveEnd,
+              "Ammo stub exceeds its reserved cave slot");
+static_assert(WidescreenHudCaveEnd <= 0x800676B4,
+              "HUD cave must not overwrite diCpuLogMessage");
 
 // Increment the scope then tail-call the displaced camStandardOrtho. The JAL
 // in overlay 14 already put its +0xC08 resume address in ra, so the tail call
@@ -900,30 +1047,47 @@ const uint32_t WidescreenHudSpritePositionCode[] =
     0x44183000, // mfc1  t8, f6 ; displaced converted X position
     0x3C0E8010, // lui   t6, 0x8010
     0x91CF2553, // lbu   t7, 0x2553(t6) ; scope depth
-    0x11E00015, // beq   t7, zero, resume
+    0x11E00018, // beq   t7, zero, resume
     0x00000000, // nop
     0x91CFECA8, // lbu   t7, -0x1358(t6) ; sResolutionIndex
     0x31F90001, // andi  t9, t7, 1
-    0x13200011, // beq   t9, zero, resume
+    0x13200014, // beq   t9, zero, resume
     0x31F90002, // andi  t9, t7, 2 ; high-resolution bit
+    0x3C0E8010, // lui   t6, 0x8010
+    0x25CEF820, // addiu t6, t6, -0x7E0 ; front-end object 5, pickup banner cap
+    0x106E000C, // beq   v1, t6, left_anchor ; anchored to the bar throughout its slide
     0x2B0EFFE1, // slti  t6, t8, -31
     0x15C0000A, // bne   t6, zero, left_anchor
     0x00000000, // nop
     0x2B0E0020, // slti  t6, t8, 32
     0x15C0000B, // bne   t6, zero, resume ; centred sprite
     0x00000000, // nop
-    0x13200001, // beq   t9, zero, right_low
+    0x17200002, // bne   t9, zero, right_set
     0x240E0044, // addiu t6, zero, 68
     0x240E0030, // right_low: addiu t6, zero, 48
-    0x030EC021, // addu  t8, t8, t6
+    0x030EC021, // right_set: addu t8, t8, t6
     0x10000005, // b     resume
     0x00000000, // nop
-    0x13200001, // left_anchor: beq t9, zero, left_low
+    0x17200002, // left_anchor: bne t9, zero, left_set
     0x240EFFBC, // addiu t6, zero, -68
     0x240EFFD0, // left_low: addiu t6, zero, -48
-    0x030EC021, // addu  t8, t8, t6
+    0x030EC021, // left_set: addu t8, t8, t6
     0x080105C9, // resume: j 0x80041724 (0x41720 ran in hook delay slot)
     0x00000000, // nop
+};
+
+// Recognition only: an older experimental state can replace the current cave
+// while the host still owns its installation. Accept this complete old stub
+// during restoration so the next frame can install the new cap positioning.
+// Never accept isolated legacy words without matching all 27 instructions.
+const uint32_t WidescreenHudSpritePositionLegacyCode[] =
+{
+    0x44183000, 0x3C0E8010, 0x91CF2553, 0x11E00015, 0x00000000,
+    0x91CFECA8, 0x31F90001, 0x13200011, 0x31F90002, 0x2B0EFFE1,
+    0x15C0000A, 0x00000000, 0x2B0E0020, 0x15C0000B, 0x00000000,
+    0x13200001, 0x240E0044, 0x240E0030, 0x030EC021, 0x10000005,
+    0x00000000, 0x13200001, 0x240EFFBC, 0x240EFFD0, 0x030EC021,
+    0x080105C9, 0x00000000,
 };
 
 // Matrix-backed HUD frames and gauges do not pass through camDo2DSprite. Their
@@ -1012,7 +1176,7 @@ const uint32_t WidescreenHudLineCode[] =
 // frontDrawRectangles packs clipped pixel coordinates straight into F6 fill
 // commands. At this site t8 and a2 are the right and left X endpoints; scale
 // both before replaying the displaced display-list load and pack operation.
-const uint32_t WidescreenHudRectangleCode[] =
+const uint32_t WidescreenHudRectangleLegacyCode[] =
 {
     0x3C198010, // lui   t9, 0x8010
     0x93392553, // lbu   t9, 0x2553(t9)
@@ -1039,6 +1203,76 @@ const uint32_t WidescreenHudRectangleCode[] =
     0x080165E6, // j     0x80059798
     0x00000000, // nop
 };
+
+const uint32_t WidescreenHudRectangleCode[] =
+{
+    0x3C198010, // lui   t9, 0x8010
+    0x93392553, // lbu   t9, 0x2553(t9)
+    0x13200011, // beq   t9, zero, stock
+    0x00000000, // nop
+    0x3C198010, // lui   t9, 0x8010
+    0x9339ECA8, // lbu   t9, -0x1358(t9) ; sResolutionIndex
+    0x332F0001, // andi  t7, t9, 1
+    0x11E0000C, // beq   t7, zero, stock
+    0x332F0002, // andi  t7, t9, 2 ; high-resolution bit
+    0x08019E04, // j     WidescreenHudShotGaugeAnchorStub
+    0x00000000, // nop
+    0x00000000, // nop
+    0x0018C840, // transform: sll t9, t8, 1
+    0x0338C821, // addu  t9, t9, t8
+    0x032FC821, // addu  t9, t9, t7
+    0x0019C083, // sra   t8, t9, 2
+    0x0006C840, // sll   t9, a2, 1
+    0x0326C821, // addu  t9, t9, a2
+    0x032FC821, // addu  t9, t9, t7
+    0x00193083, // sra   a2, t9, 2
+    0x8E020000, // stock: lw v0, 0(s0)
+    0x0018CB80, // sll   t9, t8, 14
+    0x080165E6, // j     0x80059798
+    0x00000000, // nop
+};
+
+// A fixed return address distinguishes the weapon gauge from other rectangle
+// callers after frontDrawRectangles has saved ra at 0x24(sp). The original
+// four arguments, native table and game-updated colours pass through intact.
+const uint32_t WidescreenHudShotGaugeWrapperCode[] =
+{
+    0x27BDFFE8, // addiu sp, sp, -0x18
+    0xAFBF0014, // sw    ra, 0x14(sp)
+    0x0C01657D, // jal   frontDrawRectangles
+    0x00000000, // nop
+    0x8FBF0014, // lw    ra, 0x14(sp) ; fixed callee return is 0x80067804
+    0x03E00008, // jr    ra
+    0x27BD0018, // addiu sp, sp, 0x18
+};
+
+// Called only after the HUD scope and current game aspect guards have passed.
+// t7 is resolution & 2; ordinary rectangles retain the screen-centre anchor.
+// The gauge's table stays in 320-pixel coordinates, whereas its weapon frame
+// uses the viewport centre plus world coordinates. Matching that frame gives
+// x' = .75*x + 4 at 320, or .75*x + 53 at 448, before HUD alignment translation.
+// v0 is scratch here because the displaced display-list load overwrites it
+// before any stock consumer. No coordinates are stored back to the game table.
+const uint32_t WidescreenHudShotGaugeAnchorCode[] =
+{
+    0x8FB90024, // lw    t9, 0x24(sp) ; frontDrawRectangles' saved caller
+    0x3C028006, // lui   v0, 0x8006
+    0x34427804, // ori   v0, v0, 0x7804
+    0x17220006, // bne   t9, v0, normal
+    0x00000000, // nop
+    0x11E00002, // beq   t7, zero, gauge_return
+    0x240F0010, // addiu t7, zero, 16 ; low-res weapon anchor
+    0x240F00D4, // addiu t7, zero, 212 ; high-res weapon anchor
+    0x08019D1C, // j     WidescreenHudRectangleStub + 0x30
+    0x00000000, // nop
+    0x000F7940, // normal: sll t7, t7, 5 ; 0 / 64
+    0x08019D1C, // j     WidescreenHudRectangleStub + 0x30
+    0x25EF00A0, // addiu t7, t7, 160 ; normal: 160 / 224
+};
+static_assert(WidescreenHudShotGaugeWrapperStub + sizeof(WidescreenHudShotGaugeWrapperCode) == WidescreenHudShotGaugeAnchorStub,
+              "Shot-gauge wrapper must end before its rectangle anchor helper");
+static_assert(WidescreenHudShotGaugeAnchorStub + sizeof(WidescreenHudShotGaugeAnchorCode) == WidescreenHudReticleCaveEnd,
+              "Shot-gauge helper must fit within the retired ring-display function");
 
 // These two words were used by the first experimental landing-skip build. They
 // are only restored when exactly that old hook is found in a loaded state; its
@@ -2904,7 +3138,11 @@ CJetForceGeminiRuntime::CJetForceGeminiRuntime(CMipsMemoryVM & MMU, CRecompiler 
     m_WidescreenHudOverlayHookApplied(false),
     m_WidescreenHudScopeOwned(false),
     m_WidescreenHudOverlayBase(0),
+    m_WidescreenReticleOverlayBase(0),
     m_WidescreenHudScopeOriginal(0),
+    m_HudAlignmentOverlay6Base(0),
+    m_HudAlignmentOverlay14Base(0),
+    m_HudAlignmentScopeOwned(false),
     m_CinematicProbeDown(false),
     m_Fps60ToggleDown(false),
     m_Fps30ToggleDown(false),
@@ -2934,6 +3172,7 @@ CJetForceGeminiRuntime::~CJetForceGeminiRuntime()
 
 void CJetForceGeminiRuntime::Reset(void)
 {
+    PatchHudAlignment(false, false);
     PatchWidescreenHud(false);
     Deactivate();
 }
@@ -2953,6 +3192,7 @@ void CJetForceGeminiRuntime::Reset(void)
 // let the next video frame put it back.
 void CJetForceGeminiRuntime::StateSaving(void)
 {
+    PatchHudAlignment(false, false);
     PatchWidescreenHud(false);
     PatchLandingCinematicSkip(false);
     PatchIntroCinematicSkip(false);
@@ -2996,6 +3236,7 @@ void CJetForceGeminiRuntime::StateSaving(void)
 
 void CJetForceGeminiRuntime::StateLoaded(void)
 {
+    PatchHudAlignment(false, false);
     PatchWidescreenHud(false);
     // States made by the first HUD prototype may contain an interrupted scope.
     // This byte is reserved alignment padding, so normalise it even when the
@@ -3075,11 +3316,12 @@ bool CJetForceGeminiRuntime::SupportsCurrentRom(void) const
 // exact-US-only until its overlay signatures have been established elsewhere.
 void CJetForceGeminiRuntime::ProcessRuntimeFrame(void)
 {
-    const bool Requested = IsSupportedRom() &&
-                           JfgAddresses() == &JfgUsAddresses &&
-                           g_Settings->LoadBool(Setting_JfgWidescreenHud);
-    if (!Requested)
+    const bool Supported = IsSupportedRom() && JfgAddresses() == &JfgUsAddresses;
+    const bool WidescreenRequested = Supported && g_Settings->LoadBool(Setting_JfgWidescreenHud);
+    const bool AlignmentRequested = Supported && g_Settings->LoadBool(Setting_JfgAlignHud);
+    if (!WidescreenRequested && !AlignmentRequested)
     {
+        PatchHudAlignment(false, false);
         PatchWidescreenHud(false);
         return;
     }
@@ -3090,10 +3332,10 @@ void CJetForceGeminiRuntime::ProcessRuntimeFrame(void)
     // skips that initializer, which is why the old eager installation appeared
     // to work only after loading a state.
     //
-    // Waiting for the game's own widescreen bit also leaves the Options screen
-    // completely stock while the player changes video mode. Once gameplay is
-    // resumed, the live overlay and its four-word signature are required before
-    // any cave or fixed call site is touched.
+    // Keep Options and boot screens stock. Once gameplay resumes, require the
+    // live overlay and its four-word signature before touching either cave.
+    // Placement works in all four video modes; aspect correction additionally
+    // requires the game's own widescreen bit below.
     uint8_t ResolutionIndex = 0;
     uint32_t PlayerObject = 0;
     uint32_t PlayerData = 0;
@@ -3109,7 +3351,7 @@ void CJetForceGeminiRuntime::ProcessRuntimeFrame(void)
         (WidescreenHudOverlayModule + 1) * OverlayHeaderSize;
     const bool GameplayHudReady =
         m_Memory.ReadU8(WidescreenHudResolutionIndexAddress, ResolutionIndex) &&
-        (ResolutionIndex & 1) != 0 &&
+        ResolutionIndex <= 3 &&
         GetPlayerData(PlayerObject, PlayerData) && PlayerObject != 0 &&
         GetControlCamera(ControlCamera) && ControlCamera != 0 &&
         m_Memory.ReadU32(DisableJoyAddress, JoyDisabled) && JoyDisabled == 0 &&
@@ -3141,12 +3383,17 @@ void CJetForceGeminiRuntime::ProcessRuntimeFrame(void)
          ExitWord == JumpTo(WidescreenHudScopeExitStub)) &&
         ExitDelay == WidescreenHudOverlayExitDelayOriginal;
 
-    PatchWidescreenHud(GameplayHudReady);
+    const bool EnableWidescreen = GameplayHudReady && WidescreenRequested &&
+                                  IsWidescreenHudResolution(ResolutionIndex);
+    const bool HudPatched = PatchWidescreenHud(EnableWidescreen);
+    PatchHudAlignment(GameplayHudReady && AlignmentRequested && HudPatched,
+                      EnableWidescreen && HudPatched);
 
     // Republish the override every frame: the scope-exit stub decrements this
     // byte on every HUD pass. Seed it well above zero so no legitimate exit can
     // reach zero mid-frame and briefly close the scope again.
-    if (m_WidescreenHudScopeForced && m_WidescreenHudScopeOwned)
+    if (EnableWidescreen && HudPatched &&
+        m_WidescreenHudScopeForced && m_WidescreenHudScopeOwned)
     {
         m_Memory.WriteU8(WidescreenHudScopeDepthAddress, 0x20);
     }
@@ -3769,14 +4016,183 @@ bool CJetForceGeminiRuntime::PatchIntroCinematicSkip(bool Enabled)
     return true;
 }
 
-// Remove the relocatable overlay hooks and the gauge anchor before any fixed
-// hook or cave word.
-// The allocation is writable only while the live module table still identifies
-// it as overlay 14. Once the table is zero or points elsewhere, that old block
+bool CJetForceGeminiRuntime::SetWidescreenHudReticle(bool Enabled)
+{
+    if (!Enabled && m_WidescreenReticleOverlayBase == 0 &&
+        m_WidescreenHudCaveOriginal.empty() && !m_WidescreenHudCaveApplied)
+    {
+        return true;
+    }
+    uint8_t Resolution = 0;
+    if (Enabled && (!m_WidescreenHudCaveApplied ||
+                    !m_Memory.ReadU8(WidescreenHudResolutionIndexAddress, Resolution) ||
+                    !IsWidescreenHudResolution(Resolution)))
+    {
+        return false;
+    }
+
+    uint32_t Table = 0;
+    uint32_t Base = 0;
+    const uint32_t TableSize = (WidescreenHudReticleOverlayModule + 1) * OverlayHeaderSize;
+    if (!m_Memory.ReadU32(OverlayTableAddress, Table) || (Table & 3) != 0 ||
+        !m_Memory.IsRdramAddress(Table, TableSize) ||
+        !m_Memory.ReadU32(Table + WidescreenHudReticleOverlayModule * OverlayHeaderSize, Base))
+    {
+        return false;
+    }
+    if (m_WidescreenReticleOverlayBase != 0 && Base != m_WidescreenReticleOverlayBase)
+    {
+        // Overlay 13 moved or was freed. Never write into its former allocation.
+        m_WidescreenReticleOverlayBase = 0;
+    }
+    // A state load may have replaced the live overlay without restoring host
+    // bookkeeping. Validate the current allocation even when the old one moved.
+    if (Base == 0)
+    {
+        return true;
+    }
+    if ((Base & 3) != 0 || !m_Memory.IsRdramAddress(Base, 0xEA0))
+    {
+        return false;
+    }
+
+    const uint32_t DrawSignature[] = { 0x27BDFF68, 0xAFB4002C, 0xAFB30028, 0xAFB10020 };
+    for (size_t i = 0; i < sizeof(DrawSignature) / sizeof(DrawSignature[0]); i++)
+    {
+        uint32_t Current = 0;
+        if (!m_Memory.ReadU32(Base + WidescreenHudReticleDrawOffset + (uint32_t)(i * 4), Current) ||
+            Current != DrawSignature[i])
+        {
+            return false;
+        }
+    }
+
+    std::vector<GAME_HACK_CODE_PATCH> Patches;
+    const uint32_t Replacement = CallTo(WidescreenHudReticleStub);
+    for (const WIDESCREEN_HUD_RETICLE_CALL & Call : WidescreenHudReticleCalls)
+    {
+        uint32_t Current = 0;
+        uint32_t Delay = 0;
+        if (!m_Memory.ReadU32(Base + Call.Offset, Current) ||
+            !m_Memory.ReadU32(Base + Call.Offset + 4, Delay) || Delay != Call.Delay ||
+            (Current != WidescreenHudReticleLineCallOriginal && Current != Replacement))
+        {
+            return false;
+        }
+        Patches.push_back({ Base + Call.Offset, WidescreenHudReticleLineCallOriginal, Replacement });
+    }
+    const CGameHackCodePatcher::Result Result =
+        m_CodePatcher.SetEnabled(Patches.data(), Patches.size(), Enabled);
+    if (Result == CGameHackCodePatcher::Result_SignatureMismatch ||
+        Result == CGameHackCodePatcher::Result_MemoryUnavailable)
+    {
+        return false;
+    }
+    m_WidescreenReticleOverlayBase = Enabled ? Base : 0;
+    return true;
+}
+
+// Call only after the live module table and renderer signature identify overlay
+// 14. Accept both installed resolutions for state loads, mode changes and undo.
+bool CJetForceGeminiRuntime::SetWidescreenHudBanner(uint32_t OverlayBase, bool Enabled)
+{
+    uint8_t Resolution = 0;
+    if (Enabled && (!m_Memory.ReadU8(WidescreenHudResolutionIndexAddress, Resolution) ||
+                    !IsWidescreenHudResolution(Resolution)))
+    {
+        return false;
+    }
+
+    std::vector<GAME_HACK_CODE_WRITE> Writes;
+    for (const WIDESCREEN_HUD_BANNER_WORD_PATCH & Patch : WidescreenHudBannerPatches)
+    {
+        GAME_HACK_CODE_WRITE Write = {};
+        Write.Address = OverlayBase + Patch.Offset;
+        Write.Desired = !Enabled ? Patch.Original :
+            (Resolution & 2) != 0 ? Patch.HighResolution : Patch.LowResolution;
+        Write.Allowed[0] = Patch.Original;
+        Write.Allowed[1] = Patch.LowResolution;
+        Write.Allowed[2] = Patch.HighResolution;
+        Write.AllowedCount = 3;
+        Writes.push_back(Write);
+    }
+    const CGameHackCodePatcher::Result Result = m_CodePatcher.Apply(Writes.data(), Writes.size());
+    return Result != CGameHackCodePatcher::Result_SignatureMismatch &&
+           Result != CGameHackCodePatcher::Result_MemoryUnavailable;
+}
+
+bool CJetForceGeminiRuntime::SetWidescreenHudShotGauge(uint32_t OverlayBase, bool Enabled)
+{
+    // Called only after the live overlay-14 renderer signatures are checked.
+    // The gauge wrapper marks its call chain; it leaves this game's rectangle
+    // table intact. The shared rectangle hook performs the whole correction
+    // under its draw-time resolution/scope guards.
+    const GAME_HACK_CODE_PATCH CallPatch = {
+        OverlayBase + WidescreenHudShotGaugeCallOffset,
+        WidescreenHudShotGaugeCallOriginal, CallTo(WidescreenHudShotGaugeWrapperStub),
+    };
+    auto Succeeded = [](CGameHackCodePatcher::Result Result) {
+        return Result == CGameHackCodePatcher::Result_NoChanges ||
+               Result == CGameHackCodePatcher::Result_Changed;
+    };
+    uint32_t Call = 0, Delay = 0;
+    if ((OverlayBase & 3) != 0 ||
+        !m_Memory.IsRdramAddress(OverlayBase, 0x44CC) ||
+        !m_Memory.ReadU32(CallPatch.Address, Call) ||
+        !m_Memory.ReadU32(CallPatch.Address + 4, Delay))
+    {
+        return false;
+    }
+    if ((Enabled || Call == CallPatch.Replacement) &&
+        ((Call != CallPatch.Original && Call != CallPatch.Replacement) ||
+         Delay != WidescreenHudShotGaugeCallDelay))
+    {
+        return false;
+    }
+    // Stop this independent caller even when an unrecognized table prevents
+    // migration; never leave a redirect to a cave that could be restored.
+    if (!Enabled && Call == CallPatch.Replacement &&
+        !Succeeded(m_CodePatcher.SetEnabled(&CallPatch, 1, false)))
+    {
+        return false;
+    }
+
+    // Migrate old states and installations which pretranslated all X values
+    // by -45. Y and colour belong to the game: compare only the complete X
+    // pattern and preserve the other halfword, including a changed Y.
+    // A partially restored mixture of known original/legacy X values is safe;
+    // an unknown X refuses the entire migration before any table write.
+    std::vector<GAME_HACK_CODE_WRITE> Writes;
+    for (const auto & Legacy : WidescreenHudShotGaugePatches)
+    {
+        uint32_t Current = 0;
+        if (!m_Memory.ReadU32(OverlayBase + Legacy.Offset, Current) ||
+            ((Current >> 16) != (Legacy.Original >> 16) &&
+             (Current >> 16) != (Legacy.Replacement >> 16)))
+        {
+            return false;
+        }
+        GAME_HACK_CODE_WRITE Write = {};
+        Write.Address = OverlayBase + Legacy.Offset;
+        Write.Desired = (Legacy.Original & 0xFFFF0000) | (Current & 0xFFFF);
+        Write.Allowed[0] = Current;
+        Write.AllowedCount = 1;
+        Writes.push_back(Write);
+    }
+    if (!Succeeded(m_CodePatcher.Apply(Writes.data(), Writes.size())))
+    {
+        return false;
+    }
+    return !Enabled || Succeeded(m_CodePatcher.SetEnabled(&CallPatch, 1, true));
+}
+
+// Remove the relocatable overlay hooks, banner and gauge before any fixed hook
+// or cave word. Once the module table points elsewhere, the old allocation
 // belongs to the overlay allocator again and must be forgotten without writes.
 bool CJetForceGeminiRuntime::RemoveWidescreenHudOverlayHooks(void)
 {
-    if (m_WidescreenHudOverlayBase == 0)
+    if (m_WidescreenHudOverlayBase == 0 &&
+        m_WidescreenHudCaveOriginal.empty() && !m_WidescreenHudCaveApplied)
     {
         m_WidescreenHudOverlayHookApplied = false;
         return true;
@@ -3800,8 +4216,32 @@ bool CJetForceGeminiRuntime::RemoveWidescreenHudOverlayHooks(void)
     {
         m_WidescreenHudOverlayHookApplied = false;
         m_WidescreenHudOverlayBase = 0;
+    }
+    if (LiveOverlayBase == 0)
+    {
         return true;
     }
+
+    // A loaded state can contain our hooks at a new address. Recognize the
+    // live renderer before adopting it for cleanup; never touch the old base.
+    uint32_t EnterWord = 0;
+    uint32_t EnterDelay = 0;
+    uint32_t ExitWord = 0;
+    uint32_t ExitDelay = 0;
+    if ((LiveOverlayBase & 3) != 0 ||
+        !m_Memory.IsRdramAddress(LiveOverlayBase, WidescreenHudOverlayExitOffset + 8) ||
+        !m_Memory.ReadU32(LiveOverlayBase + WidescreenHudOverlayEnterOffset, EnterWord) ||
+        !m_Memory.ReadU32(LiveOverlayBase + WidescreenHudOverlayEnterOffset + 4, EnterDelay) ||
+        !m_Memory.ReadU32(LiveOverlayBase + WidescreenHudOverlayExitOffset, ExitWord) ||
+        !m_Memory.ReadU32(LiveOverlayBase + WidescreenHudOverlayExitOffset + 4, ExitDelay) ||
+        (EnterWord != WidescreenHudOverlayEnterOriginal && EnterWord != CallTo(WidescreenHudScopeEnterStub)) ||
+        EnterDelay != WidescreenHudOverlayEnterDelayOriginal ||
+        (ExitWord != WidescreenHudOverlayExitOriginal && ExitWord != JumpTo(WidescreenHudScopeExitStub)) ||
+        ExitDelay != WidescreenHudOverlayExitDelayOriginal)
+    {
+        return false;
+    }
+    m_WidescreenHudOverlayBase = LiveOverlayBase;
 
     const uint32_t Enter = m_WidescreenHudOverlayBase + WidescreenHudOverlayEnterOffset;
     const uint32_t Exit = m_WidescreenHudOverlayBase + WidescreenHudOverlayExitOffset;
@@ -3842,37 +4282,15 @@ bool CJetForceGeminiRuntime::RemoveWidescreenHudOverlayHooks(void)
     {
         return false;
     }
-    std::vector<GAME_HACK_CODE_PATCH> ShotGaugePatches;
-    bool ShotGaugeRecognized = true;
-    bool ShotGaugeWasPatched = false;
-    for (const WIDESCREEN_HUD_OVERLAY_WORD_PATCH & GaugePatch :
-         WidescreenHudShotGaugePatches)
+    // The caller has just proved that this allocation is still overlay 14.
+    // Accept either video mode so a resolution switch can restore the old one.
+    if (!SetWidescreenHudBanner(m_WidescreenHudOverlayBase, false))
     {
-        const GAME_HACK_CODE_PATCH Patch =
-        {
-            m_WidescreenHudOverlayBase + GaugePatch.Offset,
-            GaugePatch.Original,
-            GaugePatch.Replacement,
-        };
-        uint32_t Current = 0;
-        if (!m_Memory.ReadU32(Patch.Address, Current) ||
-            (Current != Patch.Original && Current != Patch.Replacement))
-        {
-            ShotGaugeRecognized = false;
-            break;
-        }
-        ShotGaugeWasPatched |= Current == Patch.Replacement;
-        ShotGaugePatches.push_back(Patch);
+        return false;
     }
-    if (ShotGaugeRecognized && ShotGaugeWasPatched)
+    if (!SetWidescreenHudShotGauge(m_WidescreenHudOverlayBase, false))
     {
-        CGameHackCodePatcher::Result Result = m_CodePatcher.SetEnabled(
-            ShotGaugePatches.data(), ShotGaugePatches.size(), false);
-        if (Result == CGameHackCodePatcher::Result_SignatureMismatch ||
-            Result == CGameHackCodePatcher::Result_MemoryUnavailable)
-        {
-            return false;
-        }
+        return false;
     }
     if (!RemoveReference(ExitPatch, WidescreenHudOverlayExitDelayOriginal))
     {
@@ -3884,9 +4302,310 @@ bool CJetForceGeminiRuntime::RemoveWidescreenHudOverlayHooks(void)
     return true;
 }
 
+bool CJetForceGeminiRuntime::PatchHudAlignment(bool Enabled, bool WidescreenCorrected)
+{
+    namespace Layout = JfgHudAlignment;
+    namespace Code = JfgHudAlignmentCode;
+    namespace Sites = JfgHudAlignmentSites;
+    namespace Rdp = JfgHudAlignmentRdp;
+    const bool HostOwned = m_HudAlignmentScopeOwned || !m_HudAlignmentImage.empty();
+    if (!IsSupportedRom() || JfgAddresses() != &JfgUsAddresses)
+    {
+        return !Enabled && !HostOwned;
+    }
+    auto Succeeded = [](CGameHackCodePatcher::Result Result) {
+        return Result == CGameHackCodePatcher::Result_NoChanges ||
+               Result == CGameHackCodePatcher::Result_Changed;
+    };
+    auto WordIs = [&](uint32_t Address, uint32_t Expected) {
+        uint32_t Current = 0;
+        return m_Memory.ReadU32(Address, Current) && Current == Expected;
+    };
+    auto Forget = [&]() {
+        m_HudAlignmentCaveOriginal.clear();
+        m_HudAlignmentImage.clear();
+        m_HudAlignmentOverlay6Base = 0;
+        m_HudAlignmentOverlay14Base = 0;
+        m_HudAlignmentScopeOwned = false;
+    };
+
+    const size_t WordCount = (Layout::CaveEnd - Layout::CaveStart) / sizeof(uint32_t);
+    std::vector<uint32_t> CurrentImage(WordCount);
+    for (size_t i = 0; i < WordCount; i++)
+    {
+        if (!m_Memory.ReadU32(Layout::CaveStart + (uint32_t)(i * 4), CurrentImage[i]))
+        {
+            return false;
+        }
+    }
+    const bool StockBody = std::equal(CurrentImage.begin(), CurrentImage.end(),
+                                      JfgHudAlignmentOriginal::CaveWords);
+    const bool StockGuard = WordIs(Layout::GuardAddress, JfgHudAlignmentOriginal::GuardWords[0]) &&
+                            WordIs(Layout::GuardAddress + 4, JfgHudAlignmentOriginal::GuardWords[1]);
+    const bool RetiredGuard = WordIs(Layout::GuardAddress, Layout::GuardRetired[0]) &&
+                              WordIs(Layout::GuardAddress + 4, Layout::GuardRetired[1]);
+    // Strong save-state adoption: every instruction, padding word and magic
+    // must match. Only seven float parameters, four RDP parameters and the
+    // relocated JAL to the original weapon draw routine may differ.
+    std::vector<uint32_t> Signature;
+    bool KnownBody = Layout::BuildImage(Signature, 0x80300000, 0, false);
+    for (size_t i = 0; KnownBody && i < WordCount; i++)
+    {
+        const uint32_t Address = Layout::CaveStart + (uint32_t)(i * 4);
+        if (!Layout::IsParameterAddress(Address) && CurrentImage[i] != Signature[i])
+        {
+            KnownBody = false;
+        }
+    }
+    if (KnownBody)
+    {
+        const uint32_t BodyCall = CurrentImage[(Rdp::BodyCallAddress - Layout::CaveStart) / 4];
+        const uint32_t BodyAddress = 0x80000000 | ((BodyCall & 0x03FFFFFF) << 2);
+        KnownBody = (BodyCall >> 26) == 3 && m_Memory.IsRdramAddress(BodyAddress, 8);
+    }
+    const bool Adoptable = KnownBody && RetiredGuard;
+    const bool Stock = StockBody && StockGuard;
+    if (!Stock && !Adoptable && !HostOwned)
+    {
+        // An unrelated modification of the diagnostic routine is never storage
+        // we can borrow, nor a reason to rewrite the game's padding or hooks.
+        return !Enabled;
+    }
+
+    uint8_t ResolutionIndex = 0, PlayerCount = 0, ActiveKind = 0;
+    if (!m_Memory.ReadU8(Code::ActiveKindAddress, ActiveKind))
+    {
+        return false;
+    }
+    if (Enabled && (!m_Memory.ReadU8(WidescreenHudResolutionIndexAddress, ResolutionIndex) ||
+                    ResolutionIndex > 3 ||
+                    !m_Memory.ReadU8(Layout::PlayerCountAddress, PlayerCount) || PlayerCount != 1))
+    {
+        Enabled = false;
+    }
+    if (!Enabled && Stock && !HostOwned)
+    {
+        return true;
+    }
+    if (Enabled && Stock && !HostOwned && ActiveKind != 0)
+    {
+        return false;
+    }
+
+    uint32_t Table = 0, Base6 = 0, Base14 = 0;
+    const bool TableReady = m_Memory.ReadU32(OverlayTableAddress, Table) &&
+                            (Table & 3) == 0 &&
+                            m_Memory.IsRdramAddress(Table, 15 * OverlayHeaderSize) &&
+                            m_Memory.ReadU32(Table + 6 * OverlayHeaderSize, Base6) &&
+                            m_Memory.ReadU32(Table + 14 * OverlayHeaderSize, Base14);
+    auto ValidBase = [&](uint32_t Base, uint32_t Size) {
+        return Base != 0 && (Base & 3) == 0 && m_Memory.IsRdramAddress(Base, Size);
+    };
+    auto PrologueIs = [&](uint32_t Base, uint32_t Offset, const uint32_t * Words, size_t Count) {
+        for (size_t i = 0; i < Count; i++)
+        {
+            if (!WordIs(Base + Offset + (uint32_t)(i * 4), Words[i]))
+            {
+                return false;
+            }
+        }
+        return true;
+    };
+    const bool Ready6 = TableReady && ValidBase(Base6, 0x0C3C) &&
+                        PrologueIs(Base6, Sites::HealthFunctionOffset,
+                                   Sites::HealthFunctionPrologue, 2);
+    const bool Ready14 = TableReady && ValidBase(Base14, 0x2BA8) &&
+                         PrologueIs(Base14, Sites::WeaponGroupFunctionOffset,
+                                    Sites::WeaponGroupFunctionPrologue, 2);
+
+    struct Reference
+    {
+        GAME_HACK_CODE_PATCH Patch;
+        uint32_t Delay;
+    };
+    std::vector<Reference> References;
+    auto Add = [&](uint32_t Base, const Sites::CallSite & Site, uint32_t Entry) {
+        References.push_back({ { Base + Site.Offset, Site.Original, CallTo(Entry) }, Site.Delay });
+    };
+    References.push_back({ { Code::SpriteMatrixHookAddress, Code::SpriteMatrixHookOriginal,
+                             CallTo(Code::SpriteMatrixEntry) }, Code::SpriteMatrixHookDelay });
+    // The module table is authoritative. Never write into a cached allocation
+    // after the loader has relocated/replaced that module, even on disable.
+    if (TableReady && ValidBase(Base6, 0x0C3C))
+    {
+        Add(Base6, Sites::HealthSpriteCall, Code::SpriteHealthEntry);
+        Add(Base6, Sites::HealthMatrixCall, Code::MatrixHealthEntry);
+    }
+    if (TableReady && ValidBase(Base14, 0x2BA8))
+    {
+        for (const auto & Site : Sites::WeaponSpriteCalls)
+        {
+            Add(Base14, Site, Code::SpriteWeaponEntry);
+        }
+        for (const auto & Site : Sites::WeaponMatrixCalls)
+        {
+            Add(Base14, Site, Code::MatrixWeaponEntry);
+        }
+        // Install the outer wrapper last, after the scoped sprite/matrix calls.
+        References.push_back({ { Base14 + Sites::WeaponGroupCallOffset,
+                                 CallTo(Base14 + Sites::WeaponGroupFunctionOffset),
+                                 CallTo(Rdp::Entry) }, Sites::WeaponGroupCallDelay });
+    }
+    auto RemoveReferences = [&]() {
+        bool Safe = TableReady;
+        for (auto i = References.rbegin(); i != References.rend(); ++i)
+        {
+            uint32_t Current = 0;
+            if (!m_Memory.ReadU32(i->Patch.Address, Current))
+            {
+                Safe = false;
+                continue;
+            }
+            if (Current != i->Patch.Replacement)
+            {
+                continue;
+            }
+            // A changed delay slot is not our instruction to repair. Keep the
+            // cave available until the remaining redirect can be removed.
+            if (!WordIs(i->Patch.Address + 4, i->Delay) ||
+                !Succeeded(m_CodePatcher.SetEnabled(&i->Patch, 1, false)))
+            {
+                Safe = false;
+            }
+        }
+        // Zero means unloaded; a nonzero invalid pointer is not proof that the
+        // old module and its references have gone away.
+        return Safe && (Base6 == 0 || ValidBase(Base6, 0x0C3C)) &&
+               (Base14 == 0 || ValidBase(Base14, 0x2BA8));
+    };
+    auto Restore = [&]() {
+        // Independent removal means a problem in one overlay does not leave
+        // unrelated hooks installed. Code remains until every caller is gone.
+        if (!RemoveReferences())
+        {
+            return false;
+        }
+        if (!Stock && !Adoptable)
+        {
+            return false; // Preserve an unknown body/guard, even if formerly ours.
+        }
+        std::vector<GAME_HACK_CODE_WRITE> Writes;
+        Writes.reserve(WordCount);
+        for (size_t i = 0; i < WordCount; i++)
+        {
+            GAME_HACK_CODE_WRITE Write = {};
+            Write.Address = Layout::CaveStart + (uint32_t)(i * 4);
+            Write.Desired = JfgHudAlignmentOriginal::CaveWords[i];
+            Write.Allowed[0] = CurrentImage[i];
+            Write.AllowedCount = 1;
+            Writes.push_back(Write);
+        }
+        if (!Succeeded(m_CodePatcher.Apply(Writes.data(), Writes.size())))
+        {
+            return false;
+        }
+        const GAME_HACK_CODE_PATCH Guard[] = {
+            { Layout::GuardAddress, JfgHudAlignmentOriginal::GuardWords[0], Layout::GuardRetired[0] },
+            { Layout::GuardAddress + 4, JfgHudAlignmentOriginal::GuardWords[1], Layout::GuardRetired[1] },
+        };
+        if (!Succeeded(m_CodePatcher.SetEnabled(Guard, 2, false)))
+        {
+            return false;
+        }
+        if ((Adoptable || HostOwned) && !m_Memory.WriteU8(Code::ActiveKindAddress, 0))
+        {
+            return false;
+        }
+        Forget();
+        return true;
+    };
+    if (!Enabled)
+    {
+        return Restore();
+    }
+    if (!Ready6 || !Ready14 || (!Stock && !Adoptable))
+    {
+        if (Adoptable || HostOwned)
+        {
+            Restore();
+        }
+        return false;
+    }
+
+    // Preflight every entry and delay before changing the guard or cave. This
+    // prevents a partially supported overlay from acquiring only half a HUD.
+    std::vector<GAME_HACK_CODE_PATCH> Patches;
+    for (const auto & Reference : References)
+    {
+        uint32_t Current = 0;
+        if (!m_Memory.ReadU32(Reference.Patch.Address, Current) ||
+            (Current != Reference.Patch.Original && Current != Reference.Patch.Replacement) ||
+            !WordIs(Reference.Patch.Address + 4, Reference.Delay))
+        {
+            if (Adoptable || HostOwned)
+            {
+                Restore();
+            }
+            return false;
+        }
+        Patches.push_back(Reference.Patch);
+    }
+    std::vector<uint32_t> Image;
+    if (!Layout::BuildImage(Image, Base14, ResolutionIndex, WidescreenCorrected))
+    {
+        return false;
+    }
+    const GAME_HACK_CODE_PATCH Guard[] = {
+        { Layout::GuardAddress, JfgHudAlignmentOriginal::GuardWords[0], Layout::GuardRetired[0] },
+        { Layout::GuardAddress + 4, JfgHudAlignmentOriginal::GuardWords[1], Layout::GuardRetired[1] },
+    };
+    if (!Succeeded(m_CodePatcher.SetEnabled(Guard, 2, true)))
+    {
+        return false;
+    }
+    m_HudAlignmentCaveOriginal.assign(JfgHudAlignmentOriginal::CaveWords,
+                                     JfgHudAlignmentOriginal::CaveWords + WordCount);
+    m_HudAlignmentScopeOwned = true;
+    std::vector<GAME_HACK_CODE_WRITE> Writes;
+    Writes.reserve(WordCount);
+    for (size_t i = 0; i < WordCount; i++)
+    {
+        GAME_HACK_CODE_WRITE Write = {};
+        Write.Address = Layout::CaveStart + (uint32_t)(i * 4);
+        Write.Desired = Image[i];
+        Write.Allowed[0] = CurrentImage[i];
+        Write.AllowedCount = 1;
+        Writes.push_back(Write);
+    }
+    if (!Succeeded(m_CodePatcher.Apply(Writes.data(), Writes.size())))
+    {
+        // Apply validates the whole image before writing. A stock installation
+        // still has its original body here, so the guard can be returned safely.
+        if (Stock && Succeeded(m_CodePatcher.SetEnabled(Guard, 2, false)))
+        {
+            Forget();
+        }
+        return false;
+    }
+    m_HudAlignmentImage = Image;
+    m_HudAlignmentOverlay6Base = Base6;
+    m_HudAlignmentOverlay14Base = Base14;
+    if (Adoptable && !HostOwned && !m_Memory.WriteU8(Code::ActiveKindAddress, 0))
+    {
+        PatchHudAlignment(false, false);
+        return false;
+    }
+    if (!Succeeded(m_CodePatcher.SetEnabled(Patches.data(), Patches.size(), true)))
+    {
+        PatchHudAlignment(false, false);
+        return false;
+    }
+    return true;
+}
+
 bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
 {
-    const GAME_HACK_CODE_PATCH FixedPatches[] =
+    const GAME_HACK_CODE_PATCH LegacyFixedPatches[] =
     {
         { WidescreenHudCamCopyEntry, WidescreenHudCamCopyOriginal,
           JumpTo(WidescreenHudCamCopyStub) },
@@ -3911,6 +4630,22 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         { WidescreenHudRectangleEntry, WidescreenHudRectangleOriginal,
           JumpTo(WidescreenHudRectangleStub) },
     };
+    // Preserve the previous build's adoption signature when loading old states.
+    // Append the new step loads before the entry, so removal reverses that order.
+    std::vector<GAME_HACK_CODE_PATCH> FixedPatches(
+        LegacyFixedPatches,
+        LegacyFixedPatches + sizeof(LegacyFixedPatches) / sizeof(LegacyFixedPatches[0]));
+    const GAME_HACK_CODE_PATCH AmmoPatches[] =
+    {
+        { 0x800590D0, 0x3C140400, 0x8FB40088 }, // lw s4, 0x88(sp), significant digits
+        { 0x800590F4, 0x3694FC00, 0x00000000 }, // step already includes dtdy
+        { 0x8005921C, 0x3C140400, 0x8FB40088 }, // lw s4, 0x88(sp), leading zeroes
+        { 0x80059228, 0x3694FC00, 0x00000000 },
+        { WidescreenHudAmmoEntry, WidescreenHudAmmoOriginal,
+          JumpTo(WidescreenHudAmmoStub) },
+    };
+    FixedPatches.insert(FixedPatches.end(), AmmoPatches,
+                        AmmoPatches + sizeof(AmmoPatches) / sizeof(AmmoPatches[0]));
 
     // Earlier builds patched the framebuffer digit renderer, one of them
     // through a cave trampoline. Both forms are returned to stock below before
@@ -3978,7 +4713,7 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         for (size_t i = 0; i < WidescreenHudCaveWordCount; i++)
         {
             if (!m_Memory.ReadU32(
-                    WidescreenHudCaveStart + (uint32_t)(i * sizeof(uint32_t)),
+                    WidescreenHudCaveWordAddress(i),
                     m_WidescreenHudCaveOriginal[i]))
             {
                 m_WidescreenHudCaveOriginal.clear();
@@ -4003,13 +4738,27 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         std::vector<bool> Claimed(WidescreenHudCaveWordCount, false);
         auto PlaceCode = [&Image, &Claimed](
                              uint32_t Address, const uint32_t * Code, size_t Count) {
-            if (Address < WidescreenHudCaveStart ||
-                Address + Count * sizeof(uint32_t) > WidescreenHudCaveEnd ||
-                ((Address - WidescreenHudCaveStart) & 3) != 0)
+            if ((Address & 3) != 0)
             {
                 return false;
             }
-            size_t Index = (Address - WidescreenHudCaveStart) / sizeof(uint32_t);
+            size_t Index = 0;
+            if (Address >= WidescreenHudCaveStart && Address <= WidescreenHudCaveEnd &&
+                Count <= (WidescreenHudCaveEnd - Address) / sizeof(uint32_t))
+            {
+                Index = (Address - WidescreenHudCaveStart) / sizeof(uint32_t);
+            }
+            else if (Address >= WidescreenHudReticleStub && Address <= WidescreenHudReticleCaveEnd &&
+                     Count <= (WidescreenHudReticleCaveEnd - Address) / sizeof(uint32_t))
+            {
+                Index = WidescreenHudMainCaveWordCount +
+                    (Address - WidescreenHudReticleStub) / sizeof(uint32_t);
+            }
+            else
+            {
+                // The diagnostic logger between the two segments is not ours.
+                return false;
+            }
             for (size_t i = 0; i < Count; i++)
             {
                 if (Claimed[Index + i])
@@ -4046,7 +4795,15 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
             !PlaceCode(WidescreenHudSpritePositionStub, WidescreenHudSpritePositionCode,
                        sizeof(WidescreenHudSpritePositionCode) / sizeof(WidescreenHudSpritePositionCode[0])) ||
             !PlaceCode(WidescreenHudMatrixTranslateStub, WidescreenHudMatrixTranslateCode,
-                       sizeof(WidescreenHudMatrixTranslateCode) / sizeof(WidescreenHudMatrixTranslateCode[0])))
+                       sizeof(WidescreenHudMatrixTranslateCode) / sizeof(WidescreenHudMatrixTranslateCode[0])) ||
+            !PlaceCode(WidescreenHudAmmoStub, WidescreenHudAmmoCode,
+                       sizeof(WidescreenHudAmmoCode) / sizeof(WidescreenHudAmmoCode[0])) ||
+            !PlaceCode(WidescreenHudReticleStub, WidescreenHudReticleCode,
+                       sizeof(WidescreenHudReticleCode) / sizeof(WidescreenHudReticleCode[0])) ||
+            !PlaceCode(WidescreenHudShotGaugeWrapperStub, WidescreenHudShotGaugeWrapperCode,
+                       sizeof(WidescreenHudShotGaugeWrapperCode) / sizeof(WidescreenHudShotGaugeWrapperCode[0])) ||
+            !PlaceCode(WidescreenHudShotGaugeAnchorStub, WidescreenHudShotGaugeAnchorCode,
+                       sizeof(WidescreenHudShotGaugeAnchorCode) / sizeof(WidescreenHudShotGaugeAnchorCode[0])))
         {
             return false;
         }
@@ -4054,24 +4811,44 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         return true;
     };
 
-    auto ApplyCave = [this, &BuildCaveImage](bool Install) {
+    auto ApplyCave = [this, &BuildCaveImage, &CaveCodeMatches](bool Install) {
         std::vector<uint32_t> HookImage;
         if (!BuildCaveImage(HookImage))
         {
             return false;
         }
 
+        const bool LegacySpritePosition = CaveCodeMatches(
+            WidescreenHudSpritePositionStub, WidescreenHudSpritePositionLegacyCode,
+            sizeof(WidescreenHudSpritePositionLegacyCode) /
+                sizeof(WidescreenHudSpritePositionLegacyCode[0]));
+        const bool LegacyRectangle = CaveCodeMatches(
+            WidescreenHudRectangleStub, WidescreenHudRectangleLegacyCode,
+            sizeof(WidescreenHudRectangleLegacyCode) /
+                sizeof(WidescreenHudRectangleLegacyCode[0]));
         std::vector<GAME_HACK_CODE_WRITE> Writes(WidescreenHudCaveWordCount);
         for (size_t i = 0; i < Writes.size(); i++)
         {
             GAME_HACK_CODE_WRITE & Write = Writes[i];
-            Write.Address = WidescreenHudCaveStart + (uint32_t)(i * sizeof(uint32_t));
+            Write.Address = WidescreenHudCaveWordAddress(i);
             Write.Desired = Install ? HookImage[i] : m_WidescreenHudCaveOriginal[i];
             Write.Allowed[0] = m_WidescreenHudCaveOriginal[i];
             Write.AllowedCount = 1;
             if (HookImage[i] != m_WidescreenHudCaveOriginal[i])
             {
                 Write.Allowed[Write.AllowedCount++] = HookImage[i];
+            }
+            if (LegacySpritePosition && Write.Address >= WidescreenHudSpritePositionStub &&
+                Write.Address < WidescreenHudSpritePositionStub + sizeof(WidescreenHudSpritePositionLegacyCode))
+            {
+                Write.Allowed[Write.AllowedCount++] = WidescreenHudSpritePositionLegacyCode[
+                    (Write.Address - WidescreenHudSpritePositionStub) / sizeof(uint32_t)];
+            }
+            if (LegacyRectangle && Write.Address >= WidescreenHudRectangleStub &&
+                Write.Address < WidescreenHudRectangleStub + sizeof(WidescreenHudRectangleLegacyCode))
+            {
+                Write.Allowed[Write.AllowedCount++] = WidescreenHudRectangleLegacyCode[
+                    (Write.Address - WidescreenHudRectangleStub) / sizeof(uint32_t)];
             }
         }
 
@@ -4080,23 +4857,122 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
                Result != CGameHackCodePatcher::Result_MemoryUnavailable;
     };
 
+    const bool ExactUsRom = IsSupportedRom() && JfgAddresses() == &JfgUsAddresses;
+    if (Enabled)
+    {
+        uint8_t Resolution = 0;
+        // Keep the mode check at the mutation boundary too, so another caller
+        // cannot accidentally install any part of the patch in 4:3.
+        Enabled = ExactUsRom &&
+            m_Memory.ReadU8(WidescreenHudResolutionIndexAddress, Resolution) &&
+            IsWidescreenHudResolution(Resolution);
+    }
+
+    // Recover known saved hooks before handling disable as well as enable.
+    // Otherwise a fresh runtime loading an experimental state in 4:3 (or with
+    // the checkbox off) would leave its unguarded banner/gauge edits installed.
+    // The saved cave is retained as an inert backup; disconnect all references
+    // before restoring it. Unknown ROMs or arbitrary cave writers are not ours.
+    const bool HasNoHudOwnership =
+        m_WidescreenHudCaveOriginal.empty() &&
+        !m_WidescreenHudCaveApplied &&
+        !m_WidescreenHudFixedHooksApplied &&
+        !m_WidescreenHudOverlayHookApplied &&
+        !m_WidescreenHudScopeOwned &&
+        m_WidescreenHudOverlayBase == 0 &&
+        m_WidescreenReticleOverlayBase == 0;
+    if (ExactUsRom && HasNoHudOwnership)
+    {
+        bool AllFixedHooksInstalled = true;
+        for (const GAME_HACK_CODE_PATCH & Patch : LegacyFixedPatches)
+        {
+            uint32_t Current = 0;
+            if (!m_Memory.ReadU32(Patch.Address, Current))
+            {
+                return false;
+            }
+            if (!IsOwnedFixedWord(Patch, Current))
+            {
+                AllFixedHooksInstalled = false;
+                break;
+            }
+        }
+
+        if (AllFixedHooksInstalled)
+        {
+            // The font Y stub is sixteen words of this runtime's own code at a
+            // fixed address: enough to prove the cave belongs to a HUD build
+            // and not to some unrelated writer of the diagnostic region.
+            const bool CompatibleCave = CaveCodeMatches(
+                WidescreenHudFontYStub, WidescreenHudFontYCode,
+                sizeof(WidescreenHudFontYCode) / sizeof(WidescreenHudFontYCode[0]));
+            uint32_t AmmoEntry = 0;
+            const bool CompatibleAmmo = m_Memory.ReadU32(WidescreenHudAmmoEntry, AmmoEntry) &&
+                (AmmoEntry == WidescreenHudAmmoOriginal ||
+                 (AmmoEntry == JumpTo(WidescreenHudAmmoStub) &&
+                  CaveCodeMatches(WidescreenHudAmmoStub, WidescreenHudAmmoCode,
+                                  sizeof(WidescreenHudAmmoCode) / sizeof(WidescreenHudAmmoCode[0]))));
+            if (!CompatibleCave || !CompatibleAmmo || !CaptureCaveImage())
+            {
+                return false;
+            }
+            m_WidescreenHudScopeOriginal = 0;
+            m_WidescreenHudScopeOwned = true;
+            if (!m_Memory.WriteU8(WidescreenHudScopeDepthAddress, 0))
+            {
+                return false;
+            }
+        }
+    }
+
     if (!Enabled)
     {
+        // Old experiments could leave just these four constants behind after
+        // removing the HUD hooks. They have independent exact-US signatures
+        // and must be retired even without any cave ownership.
+        const bool DigitalRemoved = !ExactUsRom || RetireDeadDigitalPatches();
         // A disabled or unsupported ROM reaches this path on every runtime
-        // tick. Never probe the fixed US addresses unless this runtime really
-        // owns a HUD installation: two displaced delay slots are replaced by
-        // NOPs, and a natural NOP in another ROM must not be mistaken for ours.
+        // tick. Only remove fixed words after ownership has been established:
+        // a natural NOP must not be mistaken for a displaced delay slot.
         if (m_WidescreenHudCaveOriginal.empty() &&
             !m_WidescreenHudCaveApplied &&
             !m_WidescreenHudFixedHooksApplied &&
             !m_WidescreenHudOverlayHookApplied &&
             !m_WidescreenHudScopeOwned &&
-            m_WidescreenHudOverlayBase == 0)
+            m_WidescreenHudOverlayBase == 0 &&
+            m_WidescreenReticleOverlayBase == 0)
         {
-            return true;
+            // The old implementation could remove every cave reference while
+            // leaving translated gauge X values behind. Recognize only the
+            // current US overlay renderer before repairing that orphaned data.
+            uint32_t Table = 0, Base = 0;
+            uint32_t Enter = 0, EnterDelay = 0, Exit = 0, ExitDelay = 0;
+            if (ExactUsRom &&
+                m_Memory.ReadU32(OverlayTableAddress, Table) && (Table & 3) == 0 &&
+                m_Memory.IsRdramAddress(Table, (WidescreenHudOverlayModule + 1) * OverlayHeaderSize) &&
+                m_Memory.ReadU32(Table + WidescreenHudOverlayModule * OverlayHeaderSize, Base) &&
+                Base != 0 && (Base & 3) == 0 &&
+                m_Memory.IsRdramAddress(Base, WidescreenHudOverlayExitOffset + 8) &&
+                m_Memory.ReadU32(Base + WidescreenHudOverlayEnterOffset, Enter) &&
+                m_Memory.ReadU32(Base + WidescreenHudOverlayEnterOffset + 4, EnterDelay) &&
+                m_Memory.ReadU32(Base + WidescreenHudOverlayExitOffset, Exit) &&
+                m_Memory.ReadU32(Base + WidescreenHudOverlayExitOffset + 4, ExitDelay) &&
+                (Enter == WidescreenHudOverlayEnterOriginal || Enter == CallTo(WidescreenHudScopeEnterStub)) &&
+                EnterDelay == WidescreenHudOverlayEnterDelayOriginal &&
+                (Exit == WidescreenHudOverlayExitOriginal || Exit == JumpTo(WidescreenHudScopeExitStub)) &&
+                ExitDelay == WidescreenHudOverlayExitDelayOriginal)
+            {
+                return SetWidescreenHudShotGauge(Base, false) && DigitalRemoved;
+            }
+            return DigitalRemoved;
         }
 
-        if (!RemoveWidescreenHudOverlayHooks())
+        // The banner/gauge and reticle are independent allocations. Attempt
+        // both removals even if one signature is unavailable, but keep the
+        // caves until every remaining caller has been disconnected.
+        const bool HudRemoved = RemoveWidescreenHudOverlayHooks();
+        const bool ReticleRemoved = SetWidescreenHudReticle(false);
+        if (!HudRemoved || !ReticleRemoved || !DigitalRemoved)
         {
             return false;
         }
@@ -4110,7 +4986,7 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         }
 
         // Remove only exact references to this cave.
-        for (size_t i = sizeof(FixedPatches) / sizeof(FixedPatches[0]); i > 0; i--)
+        for (size_t i = FixedPatches.size(); i > 0; i--)
         {
             const GAME_HACK_CODE_PATCH & Patch = FixedPatches[i - 1];
             uint32_t Current = 0;
@@ -4163,57 +5039,18 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         return false;
     }
 
-    // Do this before any ownership check: those four words are no longer part
-    // of this runtime's installation, so leaving them patched would be an edit
-    // to a renderer nothing here claims.
-    if (!RetireDeadDigitalPatches())
+    uint32_t AmmoDelay = 0;
+    if (!m_Memory.ReadU32(WidescreenHudAmmoEntry + 4, AmmoDelay) ||
+        AmmoDelay != WidescreenHudAmmoDelayOriginal)
     {
         return false;
     }
 
-    // Loading a save state from the immediately preceding HUD build restores
-    // its fixed redirects and cave bytes, but not this runtime's ownership
-    // bookkeeping. Accept only the two known cave signatures below, retain the
-    // saved cave as the image to restore on disable, then install this build's
-    // image normally. This lets iterative fixes take effect after a state load
-    // without ever adopting an arbitrary redirect into the diagnostic region.
-    const bool HasNoHudOwnership =
-        m_WidescreenHudCaveOriginal.empty() &&
-        !m_WidescreenHudCaveApplied &&
-        !m_WidescreenHudFixedHooksApplied &&
-        !m_WidescreenHudOverlayHookApplied &&
-        !m_WidescreenHudScopeOwned &&
-        m_WidescreenHudOverlayBase == 0;
-    if (HasNoHudOwnership)
+    // Those four words are no longer part of the installation. Retire exact
+    // legacy edits before installing this build, and during owned cleanup above.
+    if (!RetireDeadDigitalPatches())
     {
-        bool AllFixedHooksInstalled = true;
-        for (const GAME_HACK_CODE_PATCH & Patch : FixedPatches)
-        {
-            uint32_t Current = 0;
-            if (!m_Memory.ReadU32(Patch.Address, Current))
-            {
-                return false;
-            }
-            if (!IsOwnedFixedWord(Patch, Current))
-            {
-                AllFixedHooksInstalled = false;
-                break;
-            }
-        }
-
-        if (AllFixedHooksInstalled)
-        {
-            // The font Y stub is fourteen words of this runtime's own code at a
-            // fixed address: enough to prove the cave belongs to a HUD build
-            // and not to some unrelated writer of the diagnostic region.
-            const bool CompatibleCave = CaveCodeMatches(
-                WidescreenHudFontYStub, WidescreenHudFontYCode,
-                sizeof(WidescreenHudFontYCode) / sizeof(WidescreenHudFontYCode[0]));
-            if (!CompatibleCave || !CaptureCaveImage())
-            {
-                return false;
-            }
-        }
+        return false;
     }
 
     // A virgin installation must be atomic from the game's point of view.
@@ -4272,7 +5109,7 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
     }
 
     CGameHackCodePatcher::Result FixedResult = m_CodePatcher.SetEnabled(
-        FixedPatches, sizeof(FixedPatches) / sizeof(FixedPatches[0]), true);
+        FixedPatches.data(), FixedPatches.size(), true);
     if (FixedResult == CGameHackCodePatcher::Result_SignatureMismatch ||
         FixedResult == CGameHackCodePatcher::Result_MemoryUnavailable)
     {
@@ -4349,37 +5186,7 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
     {
         Enter, WidescreenHudOverlayEnterOriginal, EnterReplacement,
     };
-    std::vector<GAME_HACK_CODE_PATCH> ShotGaugePatches;
-    ShotGaugePatches.reserve(
-        sizeof(WidescreenHudShotGaugePatches) /
-        sizeof(WidescreenHudShotGaugePatches[0]));
-    bool ShotGaugeReady = m_Memory.IsRdramAddress(
-        OverlayBase +
-            WidescreenHudShotGaugePatches[
-                sizeof(WidescreenHudShotGaugePatches) /
-                    sizeof(WidescreenHudShotGaugePatches[0]) -
-                1]
-                .Offset,
-        sizeof(uint32_t));
-    for (const WIDESCREEN_HUD_OVERLAY_WORD_PATCH & GaugePatch :
-         WidescreenHudShotGaugePatches)
-    {
-        uint32_t Current = 0;
-        if (!ShotGaugeReady ||
-            !m_Memory.ReadU32(OverlayBase + GaugePatch.Offset, Current) ||
-            (Current != GaugePatch.Original &&
-             Current != GaugePatch.Replacement))
-        {
-            ShotGaugeReady = false;
-            ShotGaugePatches.clear();
-            break;
-        }
-        ShotGaugePatches.push_back(
-            { OverlayBase + GaugePatch.Offset, GaugePatch.Original,
-              GaugePatch.Replacement });
-    }
-
-    // The exit goes live first, followed by the independent gauge table. Only
+    // The exit goes live first, followed by the independent gauge caller. Only
     // once the exit can balance the depth counter may the entry redirect into
     // the scoped renderer.
     CGameHackCodePatcher::Result ExitResult =
@@ -4389,35 +5196,31 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
     {
         return false;
     }
-    if (ShotGaugeReady)
+    if (!SetWidescreenHudShotGauge(OverlayBase, true))
     {
-        CGameHackCodePatcher::Result ShotGaugeResult =
-            m_CodePatcher.SetEnabled(
-                ShotGaugePatches.data(), ShotGaugePatches.size(), true);
-        if (ShotGaugeResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-            ShotGaugeResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-        {
-            m_CodePatcher.SetEnabled(&ExitPatch, 1, false);
-            return false;
-        }
+        m_CodePatcher.SetEnabled(&ExitPatch, 1, false);
+        return false;
+    }
+    if (!SetWidescreenHudBanner(OverlayBase, true))
+    {
+        SetWidescreenHudShotGauge(OverlayBase, false);
+        m_CodePatcher.SetEnabled(&ExitPatch, 1, false);
+        return false;
     }
     CGameHackCodePatcher::Result EnterResult =
         m_CodePatcher.SetEnabled(&EnterPatch, 1, true);
     if (EnterResult == CGameHackCodePatcher::Result_SignatureMismatch ||
         EnterResult == CGameHackCodePatcher::Result_MemoryUnavailable)
     {
-        if (ShotGaugeReady)
-        {
-            m_CodePatcher.SetEnabled(
-                ShotGaugePatches.data(), ShotGaugePatches.size(), false);
-        }
+        SetWidescreenHudBanner(OverlayBase, false);
+        SetWidescreenHudShotGauge(OverlayBase, false);
         m_CodePatcher.SetEnabled(&ExitPatch, 1, false);
         return false;
     }
 
     m_WidescreenHudOverlayHookApplied = true;
     m_WidescreenHudOverlayBase = OverlayBase;
-    return true;
+    return SetWidescreenHudReticle(true);
 }
 
 // True only when the live (scene, setup) is one the landing stub would act on:

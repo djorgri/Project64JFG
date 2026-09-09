@@ -70,7 +70,9 @@ void initialize_tooltips(HWND dialog)
     add_tooltip(tooltip, dialog, IDC_GSH_ENABLE_SPRINT,
         L"Holding Left Shift increases standing movement speed in normal gameplay. It is disabled while aiming, crouching, prone, or in boss modes.");
     add_tooltip(tooltip, dialog, IDC_GSH_WIDESCREEN_HUD,
-        L"Corrects the horizontal proportions of the gameplay HUD when Jet Force Gemini's native widescreen mode is selected. US ROM only.");
+        L"Experimental correction for gameplay HUD proportions, including ammunition digits. Requires the game's native widescreen mode and the US retail ROM.");
+    add_tooltip(tooltip, dialog, IDC_GSH_ALIGN_HUD,
+        L"Aligns the weapon panel and health arc using a 13-unit left margin, with a slight visual adjustment for the arc in widescreen. Centres the health icon inside its arc. Works in 4:3 and widescreen.");
     add_tooltip(tooltip, dialog, IDC_GSH_SHOW_INPUT_RATE,
         L"Shows input and video rates plus Jet Force Gemini diagnostic values at the bottom of the emulator window.");
 }
@@ -120,6 +122,7 @@ void CGameSpecificHacksDialog::LoadSettings(void)
     CheckDlgButton(IDC_GSH_FAST_CUTSCENES, g_Settings->LoadBool(Setting_JfgFastCutscenes) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(IDC_GSH_ENABLE_SPRINT, g_Settings->LoadBool(Setting_JfgEnableSprint) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(IDC_GSH_WIDESCREEN_HUD, g_Settings->LoadBool(Setting_JfgWidescreenHud) ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(IDC_GSH_ALIGN_HUD, g_Settings->LoadBool(Setting_JfgAlignHud) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(IDC_GSH_SHOW_INPUT_RATE, g_Settings->LoadBool(Setting_JfgShowInputRate) ? BST_CHECKED : BST_UNCHECKED);
 
     ::SendMessage(GetDlgItem(IDC_GSH_FRAME_RATE), CB_SETCURSEL,
@@ -189,6 +192,7 @@ LRESULT CGameSpecificHacksDialog::OnCheckBoxClicked(WORD /*wNotifyCode*/, WORD w
     case IDC_GSH_FAST_CUTSCENES: SaveCheckBox(wID, Setting_JfgFastCutscenes); break;
     case IDC_GSH_ENABLE_SPRINT: SaveCheckBox(wID, Setting_JfgEnableSprint); break;
     case IDC_GSH_WIDESCREEN_HUD: SaveCheckBox(wID, Setting_JfgWidescreenHud); break;
+    case IDC_GSH_ALIGN_HUD: SaveCheckBox(wID, Setting_JfgAlignHud); break;
     case IDC_GSH_SHOW_INPUT_RATE:
         SaveCheckBox(wID, Setting_JfgShowInputRate);
         if (IsDlgButtonChecked(wID) != BST_CHECKED)

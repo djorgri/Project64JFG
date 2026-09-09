@@ -725,6 +725,21 @@
     <ClInclude Include="N64System\GameHacks\JetForceGemini.h">
       <Filter>Header Files\N64 System\GameHacks</Filter>
     </ClInclude>
+    <ClInclude Include="N64System\GameHacks\JetForceGeminiHudAlignment.h">
+      <Filter>Header Files\N64 System\GameHacks</Filter>
+    </ClInclude>
+    <ClInclude Include="N64System\GameHacks\JetForceGeminiHudAlignmentCode.h">
+      <Filter>Header Files\N64 System\GameHacks</Filter>
+    </ClInclude>
+    <ClInclude Include="N64System\GameHacks\JetForceGeminiHudAlignmentOriginal.h">
+      <Filter>Header Files\N64 System\GameHacks</Filter>
+    </ClInclude>
+    <ClInclude Include="N64System\GameHacks\JetForceGeminiHudAlignmentRdp.h">
+      <Filter>Header Files\N64 System\GameHacks</Filter>
+    </ClInclude>
+    <ClInclude Include="N64System\GameHacks\JetForceGeminiHudAlignmentSites.h">
+      <Filter>Header Files\N64 System\GameHacks</Filter>
+    </ClInclude>
     <ClInclude Include="N64System\GameHacks\JetForceGeminiAddresses.h">
       <Filter>Header Files\N64 System\GameHacks</Filter>
     </ClInclude>

@@ -68,6 +68,10 @@ private:
     bool PatchLandingCinematicSkip(bool Enabled);
     bool PatchIntroCinematicSkip(bool Enabled);
     bool PatchWidescreenHud(bool Enabled);
+    bool PatchHudAlignment(bool Enabled, bool WidescreenCorrected);
+    bool SetWidescreenHudBanner(uint32_t OverlayBase, bool Enabled);
+    bool SetWidescreenHudShotGauge(uint32_t OverlayBase, bool Enabled);
+    bool SetWidescreenHudReticle(bool Enabled);
     bool RemoveWidescreenHudOverlayHooks(void);
     void DisplayCinematicProbe(void);
     bool CurrentSceneIsCinematicSkippable(void);
@@ -218,8 +222,14 @@ private:
     bool m_WidescreenHudOverlayHookApplied;
     bool m_WidescreenHudScopeOwned;
     uint32_t m_WidescreenHudOverlayBase;
+    uint32_t m_WidescreenReticleOverlayBase;
     uint32_t m_WidescreenHudScopeOriginal;
     std::vector<uint32_t> m_WidescreenHudCaveOriginal;
+    std::vector<uint32_t> m_HudAlignmentCaveOriginal;
+    std::vector<uint32_t> m_HudAlignmentImage;
+    uint32_t m_HudAlignmentOverlay6Base;
+    uint32_t m_HudAlignmentOverlay14Base;
+    bool m_HudAlignmentScopeOwned;
     bool m_CinematicProbeDown;
 
     // Live FPS switch edge state, see Fps60ToggleKey / Fps30ToggleKey
