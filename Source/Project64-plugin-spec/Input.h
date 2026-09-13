@@ -105,6 +105,61 @@ typedef struct
 } KEYBOARD_MOUSE_STATE;
 
 /*
+Generic gamepad layout, in the order SDL_GameControllerButton uses. Every
+supported controller is normalised to this Xbox style layout by the input
+plugin, so Xbox, PlayStation, Switch Pro and most third party pads all present
+the same buttons and axes to game-specific runtimes.
+*/
+enum GamepadButton
+{
+    GamepadButton_A = 0,
+    GamepadButton_B = 1,
+    GamepadButton_X = 2,
+    GamepadButton_Y = 3,
+    GamepadButton_Back = 4,
+    GamepadButton_Guide = 5,
+    GamepadButton_Start = 6,
+    GamepadButton_LeftStick = 7,
+    GamepadButton_RightStick = 8,
+    GamepadButton_LeftShoulder = 9,
+    GamepadButton_RightShoulder = 10,
+    GamepadButton_DpadUp = 11,
+    GamepadButton_DpadDown = 12,
+    GamepadButton_DpadLeft = 13,
+    GamepadButton_DpadRight = 14,
+    GamepadButton_Misc1 = 15,
+    GamepadButton_Paddle1 = 16,
+    GamepadButton_Paddle2 = 17,
+    GamepadButton_Paddle3 = 18,
+    GamepadButton_Paddle4 = 19,
+    GamepadButton_Touchpad = 20,
+};
+
+enum
+{
+    GamepadMaxCount = 4,
+    GamepadAxisMax = 32767,
+    GamepadNameLength = 64,
+};
+
+typedef struct
+{
+    uint32_t Size;
+    int32_t Connected;
+    // Sticks run -32768..32767 with up and left negative, as SDL reports them.
+    int16_t LeftX;
+    int16_t LeftY;
+    int16_t RightX;
+    int16_t RightY;
+    // Triggers run 0..32767, released to fully pressed.
+    int16_t LeftTrigger;
+    int16_t RightTrigger;
+    // Bit (1 << GamepadButton_X) is set while that button is held.
+    uint32_t Buttons;
+    char Name[GamepadNameLength];
+} GAMEPAD_STATE;
+
+/*
 Function: ControllerCommand
 Purpose: To process the raw data that has just been sent to a
 specific controller.
@@ -139,6 +194,14 @@ EXPORT int32_t CALL GetKeyboardMouseState(KEYBOARD_MOUSE_STATE * State);
 
 /* Optional companion extension controlling relative mouse capture. */
 EXPORT void CALL SetKeyboardMouseCapture(int32_t Capture);
+
+/*
+Optional Project64 extension used by game-specific input runtimes.
+Index selects the Nth connected gamepad (0 based) in the plugin's enumeration
+order. Returns non-zero and fills State when the call is supported; State
+reports Connected == 0 when no gamepad occupies that index.
+*/
+EXPORT int32_t CALL GetGamepadState(int32_t Index, GAMEPAD_STATE * State);
 
 /*
 Function: InitiateControllers

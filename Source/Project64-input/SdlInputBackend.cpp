@@ -3,8 +3,10 @@
 #include "Win32KeyboardScan.h"
 #include <Common/StdString.h>
 #include <cstddef>
+#include <algorithm>
 #include <cstring>
 #include <set>
+#include <vector>
 
 // Match dinput.h device type low bytes used by existing scan routing.
 static const uint32_t kDevTypeKeyboard = 0x13;
@@ -567,6 +569,99 @@ bool CSdlInput::GetKeyboardMouseState(KEYBOARD_MOUSE_STATE & State)
     State.MouseWheel = Mouse->second.State.Mouse.lZ / MOUSESCALEVALUE;
     memcpy(State.MouseButtons, Mouse->second.State.Mouse.rgbButtons, sizeof(State.MouseButtons));
     memcpy(State.Keys, Keyboard->second.State.Keyboard, sizeof(State.Keys));
+    return true;
+}
+
+// Game-specific runtimes address gamepads by their position among the pads SDL
+// recognises as game controllers, so "gamepad 1" is the first one in device
+// order regardless of how many plain joysticks sit in between. Only devices
+// with a game controller mapping qualify: those are the ones SDL can normalise
+// to the Xbox style layout the GAMEPAD_STATE contract promises.
+bool CSdlInput::GetGamepadState(int32_t Index, GAMEPAD_STATE & State)
+{
+    const uint32_t Size = State.Size;
+    memset(&State, 0, sizeof(State));
+    State.Size = Size;
+    if (!m_SdlInited || Index < 0 || Index >= GamepadMaxCount)
+    {
+        return true;
+    }
+
+    CGuard Guard(m_DeviceCS);
+    SDL_PumpEvents();
+
+    // The map is keyed by GUID, so order the pads by SDL device index instead
+    // to keep the numbering stable between calls.
+    std::vector<const DEVICE_ENTRY *> Pads;
+    for (DEVICE_MAP::const_iterator itr = m_Devices.begin(); itr != m_Devices.end(); ++itr)
+    {
+        if (itr->second.gamecontroller != nullptr)
+        {
+            Pads.push_back(&itr->second);
+        }
+    }
+    std::sort(Pads.begin(), Pads.end(), [](const DEVICE_ENTRY * Left, const DEVICE_ENTRY * Right) {
+        return Left->sdlJoystickIndex < Right->sdlJoystickIndex;
+    });
+    if ((size_t)Index >= Pads.size())
+    {
+        return true;
+    }
+    const DEVICE_ENTRY * Match = Pads[Index];
+    if (!SDL_GameControllerGetAttached(Match->gamecontroller))
+    {
+        return true;
+    }
+
+    SDL_GameController * gc = Match->gamecontroller;
+    State.Connected = 1;
+    State.LeftX = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTX);
+    State.LeftY = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_LEFTY);
+    State.RightX = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTX);
+    State.RightY = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_RIGHTY);
+    State.LeftTrigger = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERLEFT);
+    State.RightTrigger = SDL_GameControllerGetAxis(gc, SDL_CONTROLLER_AXIS_TRIGGERRIGHT);
+
+    static const SDL_GameControllerButton Buttons[] =
+        {
+            SDL_CONTROLLER_BUTTON_A,
+            SDL_CONTROLLER_BUTTON_B,
+            SDL_CONTROLLER_BUTTON_X,
+            SDL_CONTROLLER_BUTTON_Y,
+            SDL_CONTROLLER_BUTTON_BACK,
+            SDL_CONTROLLER_BUTTON_GUIDE,
+            SDL_CONTROLLER_BUTTON_START,
+            SDL_CONTROLLER_BUTTON_LEFTSTICK,
+            SDL_CONTROLLER_BUTTON_RIGHTSTICK,
+            SDL_CONTROLLER_BUTTON_LEFTSHOULDER,
+            SDL_CONTROLLER_BUTTON_RIGHTSHOULDER,
+            SDL_CONTROLLER_BUTTON_DPAD_UP,
+            SDL_CONTROLLER_BUTTON_DPAD_DOWN,
+            SDL_CONTROLLER_BUTTON_DPAD_LEFT,
+            SDL_CONTROLLER_BUTTON_DPAD_RIGHT,
+            SDL_CONTROLLER_BUTTON_MISC1,
+            SDL_CONTROLLER_BUTTON_PADDLE1,
+            SDL_CONTROLLER_BUTTON_PADDLE2,
+            SDL_CONTROLLER_BUTTON_PADDLE3,
+            SDL_CONTROLLER_BUTTON_PADDLE4,
+            SDL_CONTROLLER_BUTTON_TOUCHPAD,
+        };
+    static_assert(sizeof(Buttons) / sizeof(Buttons[0]) == GamepadButton_Touchpad + 1,
+                  "GamepadButton order must follow SDL_GameControllerButton");
+    for (size_t i = 0; i < sizeof(Buttons) / sizeof(Buttons[0]); i++)
+    {
+        if (SDL_GameControllerGetButton(gc, Buttons[i]))
+        {
+            State.Buttons |= 1u << i;
+        }
+    }
+
+    const char * Name = SDL_GameControllerName(gc);
+    if (Name == nullptr || Name[0] == '\0')
+    {
+        Name = Match->ProductName.c_str();
+    }
+    strncpy(State.Name, Name, sizeof(State.Name) - 1);
     return true;
 }
 

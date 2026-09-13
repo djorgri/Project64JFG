@@ -77,6 +77,7 @@ public:
     bool IsButtonPressed(BUTTON & Button);
     void GetAxis(N64CONTROLLER & Controller, BUTTONS * Keys);
     bool GetKeyboardMouseState(KEYBOARD_MOUSE_STATE & State);
+    bool GetGamepadState(int32_t Index, GAMEPAD_STATE & State);
     void SetKeyboardMouseCapture(bool Capture);
     void SetRawMouseCapture(bool Capture);
     void UpdateDeviceData(void);

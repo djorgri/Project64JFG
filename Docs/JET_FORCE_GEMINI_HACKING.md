@@ -59,9 +59,12 @@ the implementation still validates the live instructions before modifying them.
 
 `CJetForceGeminiRuntime` has three relevant paths:
 
-1. `ProcessController()` maps the live keyboard/mouse state to controller one.
+1. `ProcessController()` maps the sources routed to a port, keyboard/mouse and
+   up to two gamepads, to that N64 controller. Port one gets the full scheme;
+   ports two to four get `MapSecondaryPort()`, the button layout alone.
 2. `ProcessVideoFrame()` performs camera work and applies timing/gameplay
-   patches once the level has a valid player object.
+   patches once the level has a valid player object. It also turns the right
+   stick into mouse counts, see `BankStickCamera()`.
 3. `StateSaving()` and `StateLoaded()` remove hooks or discard local state when
    needed so that a save state cannot preserve an unsafe injected hook.
 
@@ -122,14 +125,48 @@ verified free region if the existing layout cannot accommodate a hook.
 
 ## Implemented feature groups
 
-### Keyboard and mouse controller replacement
+### Keyboard, mouse and gamepad controller replacement
 
-When `Setting_JfgKeyboardMouse` is enabled, `UsesExclusiveInput()` suppresses
-the normal controller-one plugin input. `MapController()` starts from a neutral
-`BUTTONS` value and generates the complete N64 state from the custom scheme.
-It supports both WASD and ZQSD physical/printed layouts, context-sensitive
-camera modes, mouse aiming, Floyd handling, Q/D posture behaviour, Floyd
-lateral flight on C-left/C-right, and wheel impulses for A/B weapon cycling.
+`CControl_Plugin` reads the keyboard/mouse snapshot and up to two gamepads from
+the input plugin once per controller sweep (`RefreshJfgInput()`), then routes
+each source to the port chosen by `Setting_JfgKeyboardMousePort`,
+`Setting_JfgGamepad1Port` and `Setting_JfgGamepad2Port` as a `JFG_PORT_INPUT`.
+A gamepad only counts while `Setting_JfgGamepad1`/`2` is on and the pad is
+attached, so a port routed to an absent pad falls back to the plugin. A port
+with at least one source makes `UsesExclusiveInput()` true: its plugin input is
+suppressed, and `ApplyJfgPortPresence()` reports it to the PIF as a plugged-in
+standard controller for as long as a source feeds it.
+
+`ReadControls()` merges the sources of a port into `JFG_CONTROLS`: keys give
+full stick deflection, a stick gives its analogue value and also reads as the
+matching keys past `GamepadDigitalThreshold`, and the axis pushed furthest
+wins. `MapController()` starts from a neutral `BUTTONS` value and generates the
+complete N64 state from those controls. It supports both WASD and ZQSD
+physical/printed layouts, context-sensitive camera modes, mouse and right stick
+aiming, Floyd handling, Q/D posture behaviour, Floyd lateral flight on
+C-left/C-right, and wheel or X/Y impulses for A/B weapon cycling. The game
+keeps two button layouts, selected per player by the byte at `0x800FF38D + n`
+(US) through a mask table at `0x800A18B4` / `0x800A18D8`; the saved games seen
+so far use the second, where C-up/C-down jump and crouch and the N64 A/B cycle
+weapons on their press edge. Both the keyboard scheme (Space/Ctrl) and the
+gamepad scheme (pad A/B on C-up/C-down, X/Y as the weapon notches, LB/RB on
+C-left/C-right) are written for that layout. With
+`Setting_JfgGamepadStockAim`, an aim held from the trigger alone (`StockAim`
+in `MapController()`) hands the manual aim back to the game: `SetCameraCode()`
+restores the reticle cursor and velocity stores, the angle helper calls and the
+overlay `BoyAimPatches` to their original words, `ApplyManualAimMouse()` is
+skipped, and the right stick is written straight to the N64 stick so
+`controlGetManualAim` places the reticle and turns the view itself. The right
+stick otherwise joins the mouse bank through `BankStickCamera()`, at
+`GamepadCameraCountsPerSpeed` mouse counts per video frame per step of
+`Setting_JfgGamepadCameraSpeed`, so every camera path reads it as mouse travel.
+The runtime's camera, sprint and drone work is bound to the first player's
+objects, which is why only port one runs it.
+
+The gamepad itself comes from the `GetGamepadState` plugin extension in
+`Project64-plugin-spec/Input.h`. The Project64 input plugin fills it from
+`SDL_GameController`, so any pad SDL has a mapping for presents the same Xbox
+style layout.
 
 When `Setting_JfgDroneLateralMovement` is enabled during a robot mission, the
 runtime requests native forward thrust while Q or D is held. Floyd has no
@@ -206,9 +243,9 @@ approach reported correct flags and hook hits while Floyd kept flying straight.
 
 Mouse movement is sampled through both controller polling and video interrupts.
 `BankMouseDelta()` prevents the first consumer from losing movement needed by
-the other path; `QueueMouseWheel()` preserves a wheel notch until a controller
-poll can return its one-shot A/B impulse. Keep that separation if new input
-paths are introduced.
+the other path; `QueueMouseWheel()` and `QueueGamepadScroll()` preserve a wheel
+notch or an X/Y press until a controller poll can return its one-shot A/B
+impulse. Keep that separation if new input paths are introduced.
 
 Relevant player-data offsets include `+0x568` (camera mode), `+0x104` (orbit
 yaw), `+0x10A` (camera yaw), `+0x11C` (movement yaw), and the manual-aim fields
@@ -306,8 +343,10 @@ Useful findings so far:
 
 For any change to this runtime, at minimum test:
 
-- keyboard/mouse disabled: ordinary controller-plugin input still works;
+- every JFG source disabled: ordinary controller-plugin input still works;
 - keyboard/mouse enabled: only the custom port-one input reaches the game;
+- a gamepad enabled on player 1 with and without the keyboard/mouse, then
+  routed to player 2 for the secondary mapping, then unplugged;
 - normal play, manual aim, crouch, prone, boss aim and Floyd, with Floyd strafe
   disabled and enabled in both directions;
 - entering and leaving a level, then toggling the relevant option;

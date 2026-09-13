@@ -17,11 +17,15 @@ CControl_Plugin::CControl_Plugin(void) :
     m_AllocatedControllers(false),
     m_GetKeyboardMouseState(nullptr),
     m_SetKeyboardMouseCapture(nullptr),
+    m_GetGamepadState(nullptr),
     m_JfgRuntime(nullptr),
     m_GameInputCaptured(false)
 {
     memset(&m_PluginControllers, 0, sizeof(m_PluginControllers));
     memset(&m_Controllers, 0, sizeof(m_Controllers));
+    memset(&m_JfgInput, 0, sizeof(m_JfgInput));
+    memset(&m_PluginPresent, 0, sizeof(m_PluginPresent));
+    memset(&m_JfgForcedPresent, 0, sizeof(m_JfgForcedPresent));
 }
 
 CControl_Plugin::~CControl_Plugin()
@@ -44,6 +48,7 @@ bool CControl_Plugin::LoadFunctions(void)
     LoadFunction(WM_KillFocus);
     _LoadFunction("GetKeyboardMouseState", m_GetKeyboardMouseState);
     _LoadFunction("SetKeyboardMouseCapture", m_SetKeyboardMouseCapture);
+    _LoadFunction("GetGamepadState", m_GetGamepadState);
 
     // Make sure DLL had all needed functions
     if (InitiateControllers == nullptr)
@@ -143,6 +148,13 @@ bool CControl_Plugin::Initiate(CN64System * System, RenderWindow * Window)
             m_Initialized = true;
         }
     }
+    // Remember what the plugin plugged in before any JFG source overrides it
+    for (int32_t i = 0; i < 4; i++)
+    {
+        m_PluginPresent[i] = m_PluginControllers[i].Present;
+        m_JfgForcedPresent[i] = false;
+    }
+    memset(&m_JfgInput, 0, sizeof(m_JfgInput));
     if (m_Initialized && System != nullptr && !System->m_SyncSystem)
     {
         m_JfgRuntime = new CJetForceGeminiRuntime(System->m_MMU_VM, System->m_Recomp);
@@ -173,6 +185,7 @@ void CControl_Plugin::UnloadPluginDetails(void)
     GetKeys = nullptr;
     m_GetKeyboardMouseState = nullptr;
     m_SetKeyboardMouseCapture = nullptr;
+    m_GetGamepadState = nullptr;
     ReadController = nullptr;
     WM_KeyDown = nullptr;
     WM_KeyUp = nullptr;
@@ -221,10 +234,12 @@ void CControl_Plugin::GetControllerState(int32_t Control, BUTTONS * Keys)
     if (Control == 0 && m_JfgRuntime != nullptr)
     {
         m_JfgRuntime->ProcessRuntimeFrame();
+        RefreshJfgInput();
     }
 
+    const JFG_PORT_INPUT PortInput = JfgPortInput(Control);
     const bool JfgExclusiveInput =
-        Control == 0 && m_JfgRuntime != nullptr && m_JfgRuntime->UsesExclusiveInput();
+        m_JfgRuntime != nullptr && m_JfgRuntime->UsesExclusiveInput(PortInput);
     if (JfgExclusiveInput)
     {
         Keys->Value = 0;
@@ -238,18 +253,17 @@ void CControl_Plugin::GetControllerState(int32_t Control, BUTTONS * Keys)
         GetKeys(Control, Keys);
     }
 
-    if (Control != 0 || m_JfgRuntime == nullptr || m_GetKeyboardMouseState == nullptr)
+    if (m_JfgRuntime == nullptr)
     {
         return;
     }
-
-    KEYBOARD_MOUSE_STATE State = {};
-    State.Size = sizeof(State);
-    if (m_GetKeyboardMouseState(&State))
+    // Port one goes through even without a source so the runtime can stand
+    // its patches down once every source routed to it is gone.
+    if (JfgExclusiveInput || Control == 0)
     {
-        m_JfgRuntime->ProcessController(Control, State, *Keys);
+        m_JfgRuntime->ProcessController(Control, PortInput, *Keys);
     }
-    SetGameInputCapture(m_JfgRuntime->UsesExclusiveInput());
+    SetGameInputCapture(m_JfgRuntime->UsesKeyboardMouse());
 }
 
 // Runs on the video interrupt so the mouse camera keeps up with the render rate
@@ -265,12 +279,14 @@ void CControl_Plugin::UpdateGameHackInput(void)
     // input plugin does not expose the optional keyboard/mouse API.
     m_JfgRuntime->ProcessRuntimeFrame();
 
-    if (m_GetKeyboardMouseState == nullptr)
+    if (m_GetKeyboardMouseState == nullptr && m_GetGamepadState == nullptr)
     {
         return;
     }
 
-    const bool JfgExclusiveInput = m_JfgRuntime->UsesExclusiveInput();
+    RefreshJfgInput();
+    const JFG_PORT_INPUT PortInput = JfgPortInput(0);
+    const bool JfgExclusiveInput = m_JfgRuntime->UsesExclusiveInput(PortInput);
     if (!JfgExclusiveInput && GetKeys == nullptr)
     {
         return;
@@ -281,14 +297,86 @@ void CControl_Plugin::UpdateGameHackInput(void)
     {
         GetKeys(0, &Buttons);
     }
+    m_JfgRuntime->ProcessVideoFrame(PortInput, Buttons);
+    SetGameInputCapture(m_JfgRuntime->UsesKeyboardMouse());
+}
 
-    KEYBOARD_MOUSE_STATE State = {};
-    State.Size = sizeof(State);
-    if (m_GetKeyboardMouseState(&State))
+// One plugin poll per controller sweep: reading the mouse consumes its delta,
+// so every port has to be served from the same snapshot. A gamepad only counts
+// while it is switched on in the settings and actually attached, otherwise a
+// port it is routed to would go dead instead of falling back to the plugin.
+void CControl_Plugin::RefreshJfgInput(void)
+{
+    m_JfgInput.KeyboardMouseValid = false;
+    if (m_GetKeyboardMouseState != nullptr && g_Settings->LoadBool(Setting_JfgKeyboardMouse))
     {
-        m_JfgRuntime->ProcessVideoFrame(State, Buttons);
+        KEYBOARD_MOUSE_STATE & State = m_JfgInput.KeyboardMouse;
+        memset(&State, 0, sizeof(State));
+        State.Size = sizeof(State);
+        m_JfgInput.KeyboardMouseValid = m_GetKeyboardMouseState(&State) != 0;
     }
-    SetGameInputCapture(m_JfgRuntime->UsesExclusiveInput());
+
+    const SettingID GamepadEnabled[] = {Setting_JfgGamepad1, Setting_JfgGamepad2};
+    for (int32_t i = 0; i < 2; i++)
+    {
+        GAMEPAD_STATE & State = m_JfgInput.Gamepads[i];
+        memset(&State, 0, sizeof(State));
+        State.Size = sizeof(State);
+        if (m_GetGamepadState == nullptr || !g_Settings->LoadBool(GamepadEnabled[i]) ||
+            !m_GetGamepadState(i, &State))
+        {
+            State.Connected = 0;
+        }
+    }
+    ApplyJfgPortPresence();
+}
+
+// Routes the snapshot's active sources to one N64 port following the port
+// settings. Sources sharing a port are merged by the runtime.
+JFG_PORT_INPUT CControl_Plugin::JfgPortInput(int32_t Control) const
+{
+    JFG_PORT_INPUT Input = {};
+    if (m_JfgInput.KeyboardMouseValid &&
+        (int32_t)g_Settings->LoadDword(Setting_JfgKeyboardMousePort) == Control)
+    {
+        Input.KeyboardMouse = &m_JfgInput.KeyboardMouse;
+    }
+    const SettingID GamepadPort[] = {Setting_JfgGamepad1Port, Setting_JfgGamepad2Port};
+    for (int32_t i = 0; i < 2; i++)
+    {
+        if (m_JfgInput.Gamepads[i].Connected != 0 &&
+            (int32_t)g_Settings->LoadDword(GamepadPort[i]) == Control)
+        {
+            Input.Gamepads[i] = &m_JfgInput.Gamepads[i];
+        }
+    }
+    return Input;
+}
+
+// A JFG source can be routed to a port the input plugin left unplugged. The
+// PIF answers the game's controller status from the plugin's CONTROL array, so
+// plug a standard controller in there for as long as a source feeds the port
+// and hand the plugin's own value back once none does.
+void CControl_Plugin::ApplyJfgPortPresence(void)
+{
+    const bool Supported = m_JfgRuntime != nullptr && m_JfgRuntime->SupportsCurrentRom();
+    for (int32_t Control = 0; Control < 4; Control++)
+    {
+        const bool Fed = Supported && JfgPortInput(Control).HasSource();
+        CONTROL & Port = m_PluginControllers[Control];
+        if (Fed && Port.Present != PRESENT_CONT)
+        {
+            Port.Present = PRESENT_CONT;
+            Port.RawData = false;
+            Port.Plugin = PLUGIN_NONE;
+            m_JfgForcedPresent[Control] = true;
+        }
+        else if (!Fed && m_JfgForcedPresent[Control])
+        {
+            Port.Present = m_PluginPresent[Control];
+            m_JfgForcedPresent[Control] = false;
+        }
+    }
 }
 
 void CControl_Plugin::GameStateSaving(void)

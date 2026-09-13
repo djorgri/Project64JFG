@@ -356,6 +356,13 @@ enum SettingID
     Setting_JfgDroneLateralMovement,
     Setting_JfgWidescreenHud,
     Setting_JfgAlignHud,
+    Setting_JfgKeyboardMousePort,
+    Setting_JfgGamepad1,
+    Setting_JfgGamepad1Port,
+    Setting_JfgGamepad2,
+    Setting_JfgGamepad2Port,
+    Setting_JfgGamepadCameraSpeed,
+    Setting_JfgGamepadStockAim,
 
     FirstUISettings = MaxPluginSetting + 1,
     LastUISettings = FirstUISettings + MaxPluginSetting,

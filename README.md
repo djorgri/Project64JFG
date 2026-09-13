@@ -7,8 +7,8 @@
 *Project64 – Jet Force Gemini Edition*
 
 A Windows fork of [Project64](https://github.com/project64/project64) focused on
-**Jet Force Gemini**, with a dedicated mouse-and-keyboard scheme and an optional
-60 FPS mode.
+**Jet Force Gemini**, with a dedicated mouse-and-keyboard scheme, modern gamepad
+support and an optional 60 FPS mode.
 
 > This is a personal project, not affiliated with or endorsed by Rare, Nintendo,
 > or the Project64 team. **No ROM is included.**
@@ -42,6 +42,17 @@ A Windows fork of [Project64](https://github.com/project64/project64) focused on
   during certain cinematics to skip them
 - QWERTY and AZERTY layouts
 
+### Gamepad gameplay
+
+- Modern gamepads on the same scheme: left stick moves, right stick looks and
+  aims, triggers fire and aim, X/Y cycle weapons
+- Any controller SDL recognises works with the same layout: Xbox (including the
+  Elite series), PlayStation, Switch Pro and most third-party pads
+- Keyboard/mouse and up to two gamepads can be switched on separately and each
+  routed to N64 controller port 1, 2, 3 or 4; sources sharing a port are merged
+- Adjustable right stick camera speed, and an option to aim from the trigger
+  with the game's own reticle and view turn instead of the mouse-style aim
+
 ### Performance and accuracy
 
 - 30 FPS is the default for predictable performance. The 60 FPS mode is
@@ -71,8 +82,10 @@ A Windows fork of [Project64](https://github.com/project64/project64) focused on
 
 ## Controls
 
-The following mappings apply when **Keyboard/mouse controls** is enabled in the
-Jet Force Gemini settings:
+The Jet Force Gemini settings list three input sources, **Keyboard/mouse**,
+**Gamepad 1** and **Gamepad 2**, each with its own on/off switch and a player
+(N64 controller port) it feeds. The following keyboard/mouse mappings apply when
+**Keyboard/mouse** is enabled:
 
 | Input | Action |
 | --- | --- |
@@ -88,14 +101,70 @@ Jet Force Gemini settings:
 | E / Enter | Skip certain cinematics, when Fast Cutscenes is on |
 | Numpad + / Numpad − | Switch to 60 / 30 FPS live |
 
-When this option is enabled, the JFG scheme has exclusive control of N64
-controller port 1: its regular plugin bindings are not sent to the game.
-
 During crouch, Q/D are routed to N64 C-left/C-right. The equivalent prone
 behaviour is configurable in the **Controls** tab. Floyd lateral movement is
 still in development; its current contextual flight controls use W/S (or E/F)
 for A/B throttle, while the mouse controls its reticle or camera according to
 the selected Floyd option.
+
+### Gamepad
+
+**Gamepad 1** and **Gamepad 2** are the first and second gamepads connected,
+in the order Windows lists them. The following mappings apply to either when it
+is enabled. Xbox names are used; PlayStation and Switch pads are read through
+the same layout (Cross/Circle/Square/Triangle for A/B/X/Y, L2/R2 for the
+triggers).
+
+| Input | Action |
+| --- | --- |
+| Left stick | Move |
+| Right stick | Look / aim |
+| Right trigger | Fire (N64 Z) |
+| Left trigger | Aim mode (N64 R) |
+| A | Jump (N64 C-up, like Space) |
+| B | Crouch (N64 C-down, like Ctrl) |
+| Y / X | N64 B / A impulse — next / previous weapon, like the wheel |
+| LB / RB | Sidestep (N64 C-left / C-right) |
+| Left stick click | Sprint, when enabled |
+| Start | Start |
+| D-pad | N64 D-pad |
+| A / Start | Skip certain cinematics, when Fast Cutscenes is on |
+
+Like the keyboard scheme, this follows the game's own control setup as saved
+in your game, where C-up and C-down jump and crouch and the N64 A and B
+buttons cycle weapons.
+
+By default the left trigger aims the way the right mouse button does: the
+reticle stays centred and the right stick turns the view, at twice the speed
+it turns the camera outside the aim. With **Gamepad aim uses the game's
+reticle** enabled, aiming from the trigger instead keeps the game's own aiming:
+the right stick moves the reticle inside its box while the camera holds still,
+and the view turns once the reticle is pinned at the edge, exactly as with the
+N64 stick; pushing the stick up moves the reticle up. Aiming with the right
+mouse button keeps the mouse behaviour either way, and the boss sections keep
+their mouse-driven version of the same rule.
+
+The right stick drives the same camera code as the mouse, so the aim, the boss
+reticle and Floyd's camera all follow it; its speed is set with **Right stick
+camera speed** in the settings. Pushing the left stick past halfway counts as
+the matching movement key, so crouch and prone strafing, the aim-mode C
+buttons and Floyd's A/B throttle behave as they do from the keyboard.
+
+
+### Players
+
+Each enabled source is routed to the player it is assigned to. When the
+keyboard/mouse and a gamepad share a player, their inputs are merged and either
+can be used at any moment. A port fed by any source is owned exclusively by the
+JFG scheme: its regular plugin bindings are not sent to the game, and the port
+is reported to the game as plugged in even when the input plugin leaves it
+empty. A gamepad that is switched on but not connected leaves its port to the
+input plugin.
+
+Mouse look and the right stick camera are only available on player 1: the
+game-specific camera hooks are bound to the first player's objects. On players
+2 to 4 the buttons, the left stick and the D-pad map as above, while the right
+stick and mouse travel are ignored.
 
 ## Requirements
 
@@ -162,9 +231,10 @@ Either byte order loads: the emulator identifies the ROM by its internal CRC.
 
 The release includes the Project64 Parallel-RDP and Parallel-RSP pair, built
 from the vendored sources and selects them by default. The initial JFG profile
-uses English, keyboard/mouse controls, and 30 FPS with the recommended Jet Force
-Gemini defaults — fast cutscenes, crouch/prone stick-strafing, and sprint. 60
-FPS and its game-speed corrections remain available under
+uses English, keyboard/mouse controls plus the first connected gamepad on
+player 1, and 30 FPS with the recommended Jet Force Gemini defaults — fast
+cutscenes, crouch/prone stick-strafing, and sprint. 60 FPS and its game-speed
+corrections remain available under
 *Options → Game-specific hacks → Jet Force Gemini*.
 
 ### Experimental widescreen HUD
@@ -217,7 +287,6 @@ coordinates and validation limits.
 These items are planned work, not promises for a particular release:
 
 - Support the PAL and Japanese releases of Jet Force Gemini.
-- Add support for modern gamepads.
 - Continue improving 60 FPS performance and timing accuracy.
 - Add Floyd lateral movement and direct aiming.
 - Validate the experimental widescreen HUD correction across resolutions and

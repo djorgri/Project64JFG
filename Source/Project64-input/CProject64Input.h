@@ -23,6 +23,7 @@ public:
     void InitiateControllers(CONTROL_INFO * ControlInfo);
     void GetKeys(int32_t Control, BUTTONS * Keys);
     bool GetKeyboardMouseState(KEYBOARD_MOUSE_STATE & State);
+    bool GetGamepadState(int32_t Index, GAMEPAD_STATE & State);
     void SetKeyboardMouseCapture(bool Capture);
     void StartScanDevices(int32_t DisplayCtrlId);
     void EndScanDevices(void);

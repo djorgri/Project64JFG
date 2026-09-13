@@ -133,6 +133,16 @@ bool CProject64Input::GetKeyboardMouseState(KEYBOARD_MOUSE_STATE & State)
     return m_Input->GetKeyboardMouseState(State);
 }
 
+bool CProject64Input::GetGamepadState(int32_t Index, GAMEPAD_STATE & State)
+{
+    CGuard guard(m_CS);
+    if (m_Input.get() == nullptr)
+    {
+        return false;
+    }
+    return m_Input->GetGamepadState(Index, State);
+}
+
 void CProject64Input::SetKeyboardMouseCapture(bool Capture)
 {
     CGuard guard(m_CS);

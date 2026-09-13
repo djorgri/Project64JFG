@@ -133,6 +133,15 @@ EXPORT void CALL SetKeyboardMouseCapture(int32_t Capture)
     }
 }
 
+EXPORT int32_t CALL GetGamepadState(int32_t Index, GAMEPAD_STATE * State)
+{
+    if (g_InputPlugin == nullptr || State == nullptr || State->Size < sizeof(GAMEPAD_STATE))
+    {
+        return false;
+    }
+    return g_InputPlugin->GetGamepadState(Index, *State) ? true : false;
+}
+
 /*
 Function: InitiateControllers
 Purpose: This function initializes how each of the controllers

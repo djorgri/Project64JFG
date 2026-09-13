@@ -9,6 +9,7 @@
 #include <math.h>
 #include <algorithm>
 #include <cstdio>
+#include <cstdlib>
 
 namespace
 {
@@ -68,6 +69,22 @@ const uint32_t DronePitchSourceOffsetA = 0x1042;
 const uint32_t DronePitchSourceOffsetB = 0x115A;
 const int32_t MouseCameraYawSensitivity = 64;
 const float MouseCameraHeightSensitivity = 1.5f;
+// Gamepad sticks. Deflection below the dead zone is rest; past the digital
+// threshold a stick direction also counts as the matching held key, which is
+// what the C button strafes and the drone throttle read. Triggers fire a
+// quarter of the way in. The right stick feeds the mouse bank at a rate of
+// GamepadCameraCountsPerSpeed mouse counts per video frame for each step of
+// Setting_JfgGamepadCameraSpeed, at full deflection.
+const float GamepadStickDeadZone = 0.2f;
+const float GamepadDigitalThreshold = 0.5f;
+const int16_t GamepadTriggerThreshold = GamepadAxisMax / 4;
+const float GamepadCameraCountsPerSpeed = 2.0f;
+const uint32_t GamepadCameraSpeedMin = 1;
+const uint32_t GamepadCameraSpeedMax = 10;
+// The manual aim spends the same counts at half the camera's sensitivity, and
+// a stick cannot make up the difference the way a mouse flick does, so the
+// stick's counts are doubled while the trigger aims through the mouse scheme.
+const float GamepadAimRateMultiplier = 2.0f;
 const float MouseCameraHeightLimit = 200.0f;
 const float CameraElevationMinTangent = 0.087488664f;
 const float CameraElevationMaxTangent = 1.732050808f;
@@ -2477,6 +2494,14 @@ bool IsManualAimAnglePatch(uint32_t Address)
     return Address == CameraYawHelperCall || Address == CameraPitchHelperCall;
 }
 
+// The four words that take the reticle away from the game's stick: the cursor
+// stores and the velocity stores of controlGetManualAim.
+bool IsManualAimStorePatch(uint32_t Address)
+{
+    return Address == ManualAimCursorXStore || Address == ManualAimCursorYStore ||
+           Address == ManualAimXVelocityStore || Address == ManualAimYVelocityStore;
+}
+
 bool GetLegacyCameraHeightInstruction(uint32_t Address, uint32_t & Instruction)
 {
     // Switching on the offset keeps these labels compile-time constants
@@ -3116,6 +3141,8 @@ CJetForceGeminiRuntime::CJetForceGeminiRuntime(CMipsMemoryVM & MMU, CRecompiler 
     m_MouseDeltaX(0),
     m_MouseDeltaY(0),
     m_QueuedMouseWheel(0),
+    m_StickCameraCarryX(0.0f),
+    m_StickCameraCarryY(0.0f),
     m_FramePacingPatchApplied(false),
     m_FramePacing60PatchApplied(false),
     m_SchedulerReleasePatchApplied(false),
@@ -3202,6 +3229,8 @@ CJetForceGeminiRuntime::CJetForceGeminiRuntime(CMipsMemoryVM & MMU, CRecompiler 
     m_LastCurrentScreen(0)
 {
     memset(m_HalvedEnemySlots, 0, sizeof(m_HalvedEnemySlots));
+    memset(&m_ScrollButtons, 0, sizeof(m_ScrollButtons));
+    memset(m_SecondaryScrollButtons, 0, sizeof(m_SecondaryScrollButtons));
     if (CinematicProbeEnabled)
     {
         OpenCinematicProbeLogSession();
@@ -3342,10 +3371,17 @@ bool CJetForceGeminiRuntime::IsEnabled(void) const
     return m_Enabled;
 }
 
-// The mouse/keyboard option owns controller one completely. Query the setting
-// directly instead of m_Enabled so the input plugin is suppressed from the
-// first poll, before a level has made the runtime active.
-bool CJetForceGeminiRuntime::UsesExclusiveInput(void) const
+// A port fed by any JFG source is owned completely by the scheme. Query the
+// routed sources rather than m_Enabled so the input plugin is suppressed from
+// the first poll, before a level has made the runtime active.
+bool CJetForceGeminiRuntime::UsesExclusiveInput(const JFG_PORT_INPUT & Input) const
+{
+    return Input.HasSource() && IsSupportedRom();
+}
+
+// Mouse capture follows the keyboard/mouse option alone: a gamepad-only setup
+// leaves the pointer free.
+bool CJetForceGeminiRuntime::UsesKeyboardMouse(void) const
 {
     return g_Settings->LoadBool(Setting_JfgKeyboardMouse) && IsSupportedRom();
 }
@@ -3451,36 +3487,47 @@ void CJetForceGeminiRuntime::ProcessRuntimeFrame(void)
 // consecutive reads land on the same value often enough to swallow the edge.
 // The mouse delta is banked here because reading it also consumes it.
 void CJetForceGeminiRuntime::ProcessController(
-    int32_t Control, const KEYBOARD_MOUSE_STATE & Input, BUTTONS & Buttons)
+    int32_t Control, const JFG_PORT_INPUT & Input, BUTTONS & Buttons)
 {
-    if (!UpdateEnabledState())
+    // The camera, sprint and drone work below is bound to the first player's
+    // objects, so only port one gets the full scheme.
+    if (Control != 0)
+    {
+        MapSecondaryPort(Control, Input, Buttons);
+        return;
+    }
+    if (!UpdateEnabledState(Input))
     {
         return;
     }
-    if (Control == 0 && Input.Size >= sizeof(KEYBOARD_MOUSE_STATE))
-    {
-        // Arm the guest hook in the same controller-read path that maps E and
-        // Return, and publish those physical keys for the MIPS stub before the
-        // game reaches its next joyGetButtons call.
-        const bool CinematicSkipRequested =
-            g_Settings->LoadBool(Setting_JfgFastCutscenes) &&
-            (KeyDown(Input, KeyboardMouseKey_E) || KeyDown(Input, KeyboardMouseKey_Return));
-        // The landing stub is spliced into the shared button-combine point and
-        // its table walk clobbers $t8 - the register the displaced
-        // `andi $t8, $s1, 0x1000` uses for START. Left armed during ordinary
-        // play, a held E (the A / fire key) or Return returns from the no-match
-        // path with $t8 non-zero, which the game reads as a phantom START. Only
-        // arm it once the current scene is one the table can actually skip, so
-        // the controller path is untouched everywhere else.
-        const bool LandingSkipArmed =
-            CinematicSkipRequested && CurrentSceneIsCinematicSkippable();
-        m_Memory.WriteU32(LandingCinematicSkipInputAddress, LandingSkipArmed ? 1 : 0);
-        PatchLandingCinematicSkip(LandingSkipArmed);
-        PatchIntroCinematicSkip(CinematicSkipRequested);
+    JFG_CONTROLS Controls;
+    ReadControls(Input, Controls);
 
+    // Arm the guest hook in the same controller-read path that maps the skip
+    // keys, and publish them for the MIPS stub before the game reaches its
+    // next joyGetButtons call.
+    const bool CinematicSkipRequested =
+        g_Settings->LoadBool(Setting_JfgFastCutscenes) && Controls.SkipCinematic;
+    // The landing stub is spliced into the shared button-combine point and
+    // its table walk clobbers $t8 - the register the displaced
+    // `andi $t8, $s1, 0x1000` uses for START. Left armed during ordinary
+    // play, a held E (the A / fire key) or Return returns from the no-match
+    // path with $t8 non-zero, which the game reads as a phantom START. Only
+    // arm it once the current scene is one the table can actually skip, so
+    // the controller path is untouched everywhere else.
+    const bool LandingSkipArmed =
+        CinematicSkipRequested && CurrentSceneIsCinematicSkippable();
+    m_Memory.WriteU32(LandingCinematicSkipInputAddress, LandingSkipArmed ? 1 : 0);
+    PatchLandingCinematicSkip(LandingSkipArmed);
+    PatchIntroCinematicSkip(CinematicSkipRequested);
+
+    // The diagnostic and live-switch keys are keyboard only
+    if (Input.KeyboardMouse != nullptr)
+    {
+        const KEYBOARD_MOUSE_STATE & Keyboard = *Input.KeyboardMouse;
         if (CinematicProbeEnabled)
         {
-            const bool CinematicProbeDown = KeyDown(Input, CinematicProbeKey);
+            const bool CinematicProbeDown = KeyDown(Keyboard, CinematicProbeKey);
             if (CinematicProbeDown && !m_CinematicProbeDown)
             {
                 DisplayCinematicProbe();
@@ -3488,7 +3535,7 @@ void CJetForceGeminiRuntime::ProcessController(
             m_CinematicProbeDown = CinematicProbeDown;
         }
 
-        const bool ScopeForceDown = KeyDown(Input, WidescreenHudScopeForceKey);
+        const bool ScopeForceDown = KeyDown(Keyboard, WidescreenHudScopeForceKey);
         if (ScopeForceDown && !m_WidescreenHudScopeForceDown)
         {
             m_WidescreenHudScopeForced = !m_WidescreenHudScopeForced;
@@ -3501,7 +3548,7 @@ void CJetForceGeminiRuntime::ProcessController(
         // Numpad +/- switch the frame-rate target live. Flip the setting only on
         // the key's rising edge, and only when it actually changes, so a held
         // key does not spam saves; the notification still confirms every press.
-        const bool Fps60ToggleDown = KeyDown(Input, Fps60ToggleKey);
+        const bool Fps60ToggleDown = KeyDown(Keyboard, Fps60ToggleKey);
         if (Fps60ToggleDown && !m_Fps60ToggleDown)
         {
             if (!g_Settings->LoadBool(Setting_JfgTarget60Fps))
@@ -3512,7 +3559,7 @@ void CJetForceGeminiRuntime::ProcessController(
         }
         m_Fps60ToggleDown = Fps60ToggleDown;
 
-        const bool Fps30ToggleDown = KeyDown(Input, Fps30ToggleKey);
+        const bool Fps30ToggleDown = KeyDown(Keyboard, Fps30ToggleKey);
         if (Fps30ToggleDown && !m_Fps30ToggleDown)
         {
             if (g_Settings->LoadBool(Setting_JfgTarget60Fps))
@@ -3523,31 +3570,31 @@ void CJetForceGeminiRuntime::ProcessController(
         }
         m_Fps30ToggleDown = Fps30ToggleDown;
 
-        BankMouseDelta(Input);
-        QueueMouseWheel(Input);
-
-        KEYBOARD_MOUSE_STATE ControllerInput = Input;
-        ControllerInput.MouseWheel = m_QueuedMouseWheel;
-        m_QueuedMouseWheel = 0;
-        MapController(ControllerInput, Buttons, false);
+        BankMouseDelta(Keyboard);
+        QueueMouseWheel(Keyboard);
     }
+    QueueGamepadScroll(Input);
+
+    Controls.Scroll = m_QueuedMouseWheel;
+    m_QueuedMouseWheel = 0;
+    MapController(Controls, Buttons, false);
 }
 
 // Called once per video interrupt, so the mouse camera runs at the render rate
 // even while the game polls the controller at its own logic rate.
-void CJetForceGeminiRuntime::ProcessVideoFrame(const KEYBOARD_MOUSE_STATE & Input, BUTTONS & Buttons)
+void CJetForceGeminiRuntime::ProcessVideoFrame(const JFG_PORT_INPUT & Input, BUTTONS & Buttons)
 {
-    if (!UpdateEnabledState())
-    {
-        return;
-    }
-    if (Input.Size < sizeof(KEYBOARD_MOUSE_STATE))
+    if (!UpdateEnabledState(Input))
     {
         return;
     }
 
-    BankMouseDelta(Input);
-    QueueMouseWheel(Input);
+    if (Input.KeyboardMouse != nullptr)
+    {
+        BankMouseDelta(*Input.KeyboardMouse);
+        QueueMouseWheel(*Input.KeyboardMouse);
+    }
+    QueueGamepadScroll(Input);
     UpdateInputRate();
 
     const bool Target60Fps = g_Settings->LoadBool(Setting_JfgTarget60Fps);
@@ -3590,11 +3637,16 @@ void CJetForceGeminiRuntime::ProcessVideoFrame(const KEYBOARD_MOUSE_STATE & Inpu
         return;
     }
 
+    // The stick is banked only once a level is live, so holding it through a
+    // menu or cinematic cannot pile up a turn to spend on the first frame back.
+    BankStickCamera(Input);
+
     // A wheel notch is a one-poll A/B impulse. The video path can run before
     // that poll, so it queues the event but never consumes it itself.
-    KEYBOARD_MOUSE_STATE VideoInput = Input;
-    VideoInput.MouseWheel = 0;
-    MapController(VideoInput, Buttons, true);
+    JFG_CONTROLS Controls;
+    ReadControls(Input, Controls);
+    Controls.Scroll = 0;
+    MapController(Controls, Buttons, true);
     UpdateSprintBlend();
     ApplySprint(PlayerObject);
     bool HalveEnemySpeed = Target60Fps && g_Settings->LoadBool(Setting_JfgHalveEnemySpeed);
@@ -3644,9 +3696,9 @@ void CJetForceGeminiRuntime::ProcessVideoFrame(const KEYBOARD_MOUSE_STATE & Inpu
     UpdateWaterWakeDrawTarget();
 }
 
-bool CJetForceGeminiRuntime::UpdateEnabledState(void)
+bool CJetForceGeminiRuntime::UpdateEnabledState(const JFG_PORT_INPUT & Input)
 {
-    if (!g_Settings->LoadBool(Setting_JfgKeyboardMouse) || !IsSupportedRom())
+    if (!Input.HasSource() || !IsSupportedRom())
     {
         Deactivate();
         return false;
@@ -3673,6 +3725,277 @@ void CJetForceGeminiRuntime::QueueMouseWheel(const KEYBOARD_MOUSE_STATE & Input)
     {
         m_QueuedMouseWheel = Input.MouseWheel > 0 ? 1 : -1;
     }
+}
+
+// X and Y are wheel notches on a gamepad: the rising edge of either queues the
+// same one-poll impulse the wheel does. Both sampling paths call this with the
+// shared edge state, so whichever sees the press first is the one to queue it.
+void CJetForceGeminiRuntime::QueueGamepadScroll(const JFG_PORT_INPUT & Input)
+{
+    const int32_t Scroll = ReadScrollButtons(Input, m_ScrollButtons);
+    if (Scroll != 0)
+    {
+        m_QueuedMouseWheel = Scroll;
+    }
+}
+
+namespace
+{
+bool GamepadButtonDown(const GAMEPAD_STATE & Pad, GamepadButton Button)
+{
+    return (Pad.Buttons & (1u << Button)) != 0;
+}
+
+bool GamepadTriggerDown(int16_t Trigger)
+{
+    return Trigger >= GamepadTriggerThreshold;
+}
+
+// Radial dead zone, rescaled so the first live position sits just off centre
+// rather than jumping to the dead zone's edge. Output is -1..1 on each axis
+// with SDL's sign convention, up and left negative.
+void NormaliseStick(int16_t RawX, int16_t RawY, float & X, float & Y)
+{
+    X = (float)RawX / (float)GamepadAxisMax;
+    Y = (float)RawY / (float)GamepadAxisMax;
+    const float Magnitude = sqrtf(X * X + Y * Y);
+    if (Magnitude <= GamepadStickDeadZone)
+    {
+        X = 0.0f;
+        Y = 0.0f;
+        return;
+    }
+    float Scale = (Magnitude - GamepadStickDeadZone) / (1.0f - GamepadStickDeadZone);
+    Scale = Scale > 1.0f ? 1.0f : Scale;
+    X *= Scale / Magnitude;
+    Y *= Scale / Magnitude;
+}
+
+int8_t StickToN64(float Deflection)
+{
+    const float Value = Deflection * (float)JfgStickLimit;
+    return (int8_t)(Value >= 0.0f ? (int32_t)(Value + 0.5f) : -(int32_t)(-Value + 0.5f));
+}
+} // namespace
+
+// The right stick stands in for the mouse: its deflection becomes a per video
+// frame delta in mouse counts and joins the bank the camera paths already
+// spend, so on foot, aiming, the boss camera and the drone all follow it
+// without further wiring. The response is squared for fine control near the
+// centre, and the truncated fraction carries to the next frame so slow pans
+// still move. The pads sharing the port contribute whichever is pushed further.
+void CJetForceGeminiRuntime::BankStickCamera(const JFG_PORT_INPUT & Input)
+{
+    float X = 0.0f;
+    float Y = 0.0f;
+    bool PadAiming = false;
+    for (size_t i = 0; i < sizeof(Input.Gamepads) / sizeof(Input.Gamepads[0]); i++)
+    {
+        if (Input.Gamepads[i] == nullptr)
+        {
+            continue;
+        }
+        PadAiming = PadAiming || GamepadTriggerDown(Input.Gamepads[i]->LeftTrigger);
+        float PadX;
+        float PadY;
+        NormaliseStick(Input.Gamepads[i]->RightX, Input.Gamepads[i]->RightY, PadX, PadY);
+        if (fabsf(PadX) > fabsf(X))
+        {
+            X = PadX;
+        }
+        if (fabsf(PadY) > fabsf(Y))
+        {
+            Y = PadY;
+        }
+    }
+    if (X == 0.0f && Y == 0.0f)
+    {
+        m_StickCameraCarryX = 0.0f;
+        m_StickCameraCarryY = 0.0f;
+        return;
+    }
+
+    uint32_t Speed = g_Settings->LoadDword(Setting_JfgGamepadCameraSpeed);
+    Speed = Speed < GamepadCameraSpeedMin ? GamepadCameraSpeedMin : Speed;
+    Speed = Speed > GamepadCameraSpeedMax ? GamepadCameraSpeedMax : Speed;
+    float Rate = (float)Speed * GamepadCameraCountsPerSpeed;
+    // With the game's own reticle the stick bypasses the bank while aiming, so
+    // the boost only concerns the mouse-style aim; see MapController.
+    if (PadAiming && !g_Settings->LoadBool(Setting_JfgGamepadStockAim))
+    {
+        Rate *= GamepadAimRateMultiplier;
+    }
+
+    const float AmountX = X * fabsf(X) * Rate + m_StickCameraCarryX;
+    const int32_t StepX = (int32_t)AmountX;
+    m_StickCameraCarryX = AmountX - (float)StepX;
+    const float AmountY = Y * fabsf(Y) * Rate + m_StickCameraCarryY;
+    const int32_t StepY = (int32_t)AmountY;
+    m_StickCameraCarryY = AmountY - (float)StepY;
+    m_MouseDeltaX += StepX;
+    m_MouseDeltaY += StepY;
+}
+
+// Merges every source routed to a port into the scheme's own controls. Keys
+// give full stick deflection; a gamepad's stick gives its analogue value and
+// also reads as the matching keys past the digital threshold. Where both push
+// an axis the further one wins, so a key held beside a resting stick still
+// moves at full speed.
+void CJetForceGeminiRuntime::ReadControls(const JFG_PORT_INPUT & Input, JFG_CONTROLS & Controls)
+{
+    memset(&Controls, 0, sizeof(Controls));
+    int32_t StickX = 0;
+    int32_t StickY = 0;
+
+    if (Input.KeyboardMouse != nullptr)
+    {
+        const KEYBOARD_MOUSE_STATE & Keyboard = *Input.KeyboardMouse;
+        // The input backend exposes physical keys. Keep the usual ZQSD and WASD
+        // positions, then accept their printed-letter counterparts too so either
+        // layout stays usable when Windows and the physical keyboard differ.
+        Controls.Forward = KeyDown(Keyboard, KeyboardMouseKey_W) || KeyDown(Keyboard, KeyboardMouseKey_Z);
+        Controls.Backward = KeyDown(Keyboard, KeyboardMouseKey_S);
+        Controls.Left = KeyDown(Keyboard, KeyboardMouseKey_A) || KeyDown(Keyboard, KeyboardMouseKey_Q);
+        Controls.Right = KeyDown(Keyboard, KeyboardMouseKey_D);
+        Controls.CUp = KeyDown(Keyboard, KeyboardMouseKey_Space);
+        Controls.CDown = KeyDown(Keyboard, KeyboardMouseKey_LeftControl) ||
+                         KeyDown(Keyboard, KeyboardMouseKey_RightControl);
+        Controls.Sprint = KeyDown(Keyboard, KeyboardMouseKey_LeftShift);
+        Controls.A = KeyDown(Keyboard, KeyboardMouseKey_E);
+        Controls.B = KeyDown(Keyboard, KeyboardMouseKey_F);
+        Controls.Start = KeyDown(Keyboard, KeyboardMouseKey_Return);
+        Controls.SkipCinematic = Controls.A || Controls.Start;
+        Controls.Fire = MouseButtonDown(Keyboard, MouseButtonLeft);
+        Controls.AimMouse = MouseButtonDown(Keyboard, MouseButtonRight);
+        StickX = (Controls.Right ? JfgStickLimit : 0) - (Controls.Left ? JfgStickLimit : 0);
+        StickY = (Controls.Forward ? JfgStickLimit : 0) - (Controls.Backward ? JfgStickLimit : 0);
+    }
+
+    for (size_t i = 0; i < sizeof(Input.Gamepads) / sizeof(Input.Gamepads[0]); i++)
+    {
+        if (Input.Gamepads[i] == nullptr)
+        {
+            continue;
+        }
+        const GAMEPAD_STATE & Pad = *Input.Gamepads[i];
+        float X;
+        float Y;
+        NormaliseStick(Pad.LeftX, Pad.LeftY, X, Y);
+        Controls.Forward = Controls.Forward || Y < -GamepadDigitalThreshold;
+        Controls.Backward = Controls.Backward || Y > GamepadDigitalThreshold;
+        Controls.Left = Controls.Left || X < -GamepadDigitalThreshold;
+        Controls.Right = Controls.Right || X > GamepadDigitalThreshold;
+        // The N64 stick reads up as positive, the opposite of SDL
+        const int32_t PadX = StickToN64(X);
+        const int32_t PadY = StickToN64(-Y);
+        if (abs(PadX) > abs(StickX))
+        {
+            StickX = PadX;
+        }
+        if (abs(PadY) > abs(StickY))
+        {
+            StickY = PadY;
+        }
+
+        // The game's control setup jumps and crouches on C-up and C-down, the
+        // keyboard's Space and Ctrl, and spends the N64 A and B on weapon
+        // cycling, so the pad's A and B land on the C buttons and X/Y on the
+        // weapon notches; see ReadScrollButtons.
+        const bool PadA = GamepadButtonDown(Pad, GamepadButton_A);
+        const bool PadStart = GamepadButtonDown(Pad, GamepadButton_Start);
+        Controls.CUp = Controls.CUp || PadA;
+        Controls.CDown = Controls.CDown || GamepadButtonDown(Pad, GamepadButton_B);
+        Controls.CLeft = Controls.CLeft || GamepadButtonDown(Pad, GamepadButton_LeftShoulder);
+        Controls.CRight = Controls.CRight || GamepadButtonDown(Pad, GamepadButton_RightShoulder);
+        Controls.Start = Controls.Start || PadStart;
+        Controls.SkipCinematic = Controls.SkipCinematic || PadA || PadStart;
+        Controls.Fire = Controls.Fire || GamepadTriggerDown(Pad.RightTrigger);
+        Controls.AimPad = Controls.AimPad || GamepadTriggerDown(Pad.LeftTrigger);
+        Controls.Sprint = Controls.Sprint || GamepadButtonDown(Pad, GamepadButton_LeftStick);
+
+        float CameraX;
+        float CameraY;
+        NormaliseStick(Pad.RightX, Pad.RightY, CameraX, CameraY);
+        if (fabsf(CameraX) > fabsf(Controls.CameraX))
+        {
+            Controls.CameraX = CameraX;
+        }
+        if (fabsf(CameraY) > fabsf(Controls.CameraY))
+        {
+            Controls.CameraY = CameraY;
+        }
+        Controls.DpadUp = Controls.DpadUp || GamepadButtonDown(Pad, GamepadButton_DpadUp);
+        Controls.DpadDown = Controls.DpadDown || GamepadButtonDown(Pad, GamepadButton_DpadDown);
+        Controls.DpadLeft = Controls.DpadLeft || GamepadButtonDown(Pad, GamepadButton_DpadLeft);
+        Controls.DpadRight = Controls.DpadRight || GamepadButtonDown(Pad, GamepadButton_DpadRight);
+    }
+
+    Controls.StickX = (int8_t)StickX;
+    Controls.StickY = (int8_t)StickY;
+    Controls.Aim = Controls.AimMouse || Controls.AimPad;
+}
+
+// Rising edges of Y (next weapon, the wheel-up B impulse) and X (previous
+// weapon, the wheel-down A impulse) across the pads on a port. State keeps the
+// last seen level per pad slot so a held button is one notch, not one per poll.
+int32_t CJetForceGeminiRuntime::ReadScrollButtons(const JFG_PORT_INPUT & Input, SCROLL_BUTTON_STATE & State)
+{
+    int32_t Scroll = 0;
+    for (size_t i = 0; i < sizeof(Input.Gamepads) / sizeof(Input.Gamepads[0]); i++)
+    {
+        const bool PreviousDown =
+            Input.Gamepads[i] != nullptr && GamepadButtonDown(*Input.Gamepads[i], GamepadButton_X);
+        const bool NextDown =
+            Input.Gamepads[i] != nullptr && GamepadButtonDown(*Input.Gamepads[i], GamepadButton_Y);
+        if (NextDown && !State.NextDown[i])
+        {
+            Scroll = 1;
+        }
+        else if (PreviousDown && !State.PreviousDown[i])
+        {
+            Scroll = -1;
+        }
+        State.PreviousDown[i] = PreviousDown;
+        State.NextDown[i] = NextDown;
+    }
+    return Scroll;
+}
+
+// Ports two to four get the button layout alone: the camera work is bound to
+// the first player's objects, so the right stick has nothing to drive there and
+// mouse travel has nowhere to go.
+void CJetForceGeminiRuntime::MapSecondaryPort(
+    int32_t Control, const JFG_PORT_INPUT & Input, BUTTONS & Buttons)
+{
+    Buttons.Value = 0;
+    if (Control < 1 || Control > 3 || !Input.HasSource())
+    {
+        return;
+    }
+
+    JFG_CONTROLS Controls;
+    ReadControls(Input, Controls);
+    int32_t Scroll = ReadScrollButtons(Input, m_SecondaryScrollButtons[Control - 1]);
+    if (Scroll == 0 && Input.KeyboardMouse != nullptr && Input.KeyboardMouse->MouseWheel != 0)
+    {
+        Scroll = Input.KeyboardMouse->MouseWheel > 0 ? 1 : -1;
+    }
+
+    Buttons.A_BUTTON = Controls.A || Scroll < 0;
+    Buttons.B_BUTTON = Controls.B || Scroll > 0;
+    Buttons.Z_TRIG = Controls.Fire;
+    Buttons.R_TRIG = Controls.Aim;
+    Buttons.START_BUTTON = Controls.Start;
+    Buttons.U_CBUTTON = Controls.CUp;
+    Buttons.D_CBUTTON = Controls.CDown;
+    Buttons.L_CBUTTON = Controls.CLeft;
+    Buttons.R_CBUTTON = Controls.CRight;
+    Buttons.U_DPAD = Controls.DpadUp;
+    Buttons.D_DPAD = Controls.DpadDown;
+    Buttons.L_DPAD = Controls.DpadLeft;
+    Buttons.R_DPAD = Controls.DpadRight;
+    Buttons.X_AXIS = Controls.StickX;
+    Buttons.Y_AXIS = Controls.StickY;
 }
 
 // Removes the 30fps -> 20fps escalation in viFrameSync, see FramePacingPatches.
@@ -7955,7 +8278,7 @@ void CJetForceGeminiRuntime::Deactivate(void)
     PatchFramePacing(false);
     if (m_Enabled || m_CameraPatchApplied || IsSupportedRom())
     {
-        SetCameraCode(false, false, false);
+        SetCameraCode(false, false, false, false);
         m_Memory.WriteF32(CameraHeightOffsetAddress, 0.0f);
     }
     m_Enabled = false;
@@ -7996,6 +8319,10 @@ void CJetForceGeminiRuntime::ClearCameraState(void)
     m_MouseDeltaX = 0;
     m_MouseDeltaY = 0;
     m_QueuedMouseWheel = 0;
+    m_StickCameraCarryX = 0.0f;
+    m_StickCameraCarryY = 0.0f;
+    memset(&m_ScrollButtons, 0, sizeof(m_ScrollButtons));
+    memset(m_SecondaryScrollButtons, 0, sizeof(m_SecondaryScrollButtons));
     m_FramePacingPatchApplied = false;
     m_FramePacing60PatchApplied = false;
     m_SchedulerReleasePatchApplied = false;
@@ -8068,12 +8395,16 @@ bool CJetForceGeminiRuntime::MouseButtonDown(const KEYBOARD_MOUSE_STATE & Input,
     return Button < KeyboardMouseButtonCount && (Input.MouseButtons[Button] & 0x80) != 0;
 }
 
+// StockAim hands the manual aim back to the game while the runtime stays
+// installed: the reticle cursor and velocity stores, the angle helpers and the
+// overlay aim patches all return to their original words, so the N64 stick
+// places the reticle and turns the view exactly as the unmodified game does.
 bool CJetForceGeminiRuntime::SetCameraCode(
-    bool EnableFreeOrbit, bool EnableManualAim, bool InstallRuntime)
+    bool EnableFreeOrbit, bool EnableManualAim, bool InstallRuntime, bool StockAim)
 {
     if (InstallRuntime)
     {
-        PatchManualAimCode(true);
+        PatchManualAimCode(!StockAim);
     }
 
     const size_t PatchCount = sizeof(CameraCodePatches) / sizeof(CameraCodePatches[0]);
@@ -8126,6 +8457,10 @@ bool CJetForceGeminiRuntime::SetCameraCode(
         else if (IsManualAimAnglePatch(Patch.Address) && EnableManualAim)
         {
             Writes[i].Desired = 0x00A01025;
+        }
+        else if (IsManualAimStorePatch(Patch.Address) && StockAim)
+        {
+            Writes[i].Desired = Patch.Original;
         }
         else
         {
@@ -8592,7 +8927,7 @@ float CJetForceGeminiRuntime::ClampCameraElevation(
     return ClampCameraHeight(HeightOffset);
 }
 
-bool CJetForceGeminiRuntime::ApplyMouseCamera(int32_t MouseX, int32_t MouseY, bool AimMode)
+bool CJetForceGeminiRuntime::ApplyMouseCamera(int32_t MouseX, int32_t MouseY, bool AimMode, bool StockAim)
 {
     uint32_t PlayerObject = 0;
     uint32_t PlayerData = 0;
@@ -8624,10 +8959,10 @@ bool CJetForceGeminiRuntime::ApplyMouseCamera(int32_t MouseX, int32_t MouseY, bo
     bool EnableFreeOrbit =
         FreeCameraStateAllowed && !AimMode;
     bool EnableManualAim = BasicCameraStateAvailable && JoyDisabled == 0 && IsManualAimCameraMode(CameraMode) &&
-                           (AimMode || CameraMode == PlayerCameraModeBossAim);
+                           (AimMode || CameraMode == PlayerCameraModeBossAim) && !StockAim;
     bool CameraInputEnabled =
         FreeCameraStateAllowed;
-    SetCameraCode(EnableFreeOrbit, EnableManualAim, true);
+    SetCameraCode(EnableFreeOrbit, EnableManualAim, true, StockAim);
 
     if (!m_CameraPatchApplied || !BasicCameraStateAvailable)
     {
@@ -8761,34 +9096,36 @@ int8_t DroneStickAxis(int32_t MouseDelta)
 }
 
 void CJetForceGeminiRuntime::MapController(
-    const KEYBOARD_MOUSE_STATE & Input, BUTTONS & Buttons, bool ApplyCamera)
+    const JFG_CONTROLS & Controls, BUTTONS & Buttons, bool ApplyCamera)
 {
-    // Keyboard/mouse mode replaces controller one rather than adding to the
-    // active plugin mapping. Clear it first so an empty custom-input frame is
-    // also a neutral N64 controller state.
+    // The scheme replaces controller one rather than adding to the active
+    // plugin mapping. Clear it first so an empty custom-input frame is also a
+    // neutral N64 controller state.
     Buttons.Value = 0;
 
-    // The input backend exposes physical keys. Keep the usual ZQSD and WASD
-    // positions, then accept their printed-letter counterparts too so either
-    // layout stays usable when Windows and the physical keyboard differ.
-    bool Forward = KeyDown(Input, KeyboardMouseKey_W) || KeyDown(Input, KeyboardMouseKey_Z);
-    bool Backward = KeyDown(Input, KeyboardMouseKey_S);
-    bool Left = KeyDown(Input, KeyboardMouseKey_A) || KeyDown(Input, KeyboardMouseKey_Q);
-    bool Right = KeyDown(Input, KeyboardMouseKey_D);
-    bool CUp = KeyDown(Input, KeyboardMouseKey_Space);
-    bool CDown = KeyDown(Input, KeyboardMouseKey_LeftControl) ||
-                 KeyDown(Input, KeyboardMouseKey_RightControl);
-    bool Sprint = KeyDown(Input, KeyboardMouseKey_LeftShift);
-    bool A = KeyDown(Input, KeyboardMouseKey_E);
-    bool B = KeyDown(Input, KeyboardMouseKey_F);
+    const bool Forward = Controls.Forward;
+    const bool Backward = Controls.Backward;
+    const bool Left = Controls.Left;
+    const bool Right = Controls.Right;
+    const bool CUp = Controls.CUp;
+    const bool CDown = Controls.CDown;
+    const bool Sprint = Controls.Sprint;
+    const bool A = Controls.A;
+    const bool B = Controls.B;
     // Weapon cycling uses the same A/B buttons in all on-foot gameplay states.
-    // Keep the wheel out of drone mode below, where A/B are the throttle.
-    bool ScrollUp = Input.MouseWheel > 0;
-    bool ScrollDown = Input.MouseWheel < 0;
-    bool Start = KeyDown(Input, KeyboardMouseKey_Return);
-    bool MouseLeft = MouseButtonDown(Input, MouseButtonLeft);
-    bool MouseRight = MouseButtonDown(Input, MouseButtonRight);
-    bool AimMode = MouseRight;
+    // Keep the notches out of drone mode below, where A/B are the throttle.
+    const bool ScrollUp = Controls.Scroll > 0;
+    const bool ScrollDown = Controls.Scroll < 0;
+    const bool Start = Controls.Start;
+    const bool Fire = Controls.Fire;
+    bool AimMode = Controls.Aim;
+    // With the option on, aiming from the trigger leaves the game's own aim
+    // in place: the right stick goes to the N64 stick, the reticle travels its
+    // box and the view turns once it is pinned at the edge, as the stock game
+    // does. The mouse button keeps the mouse scheme even with the trigger held,
+    // and the boss section keeps its mouse-driven copy of that same rule.
+    const bool StockAim = AimMode && Controls.AimPad && !Controls.AimMouse &&
+                          g_Settings->LoadBool(Setting_JfgGamepadStockAim);
     bool CameraRelativeLateralMovement =
         false;
 
@@ -8910,7 +9247,7 @@ void CJetForceGeminiRuntime::MapController(
         }
         else
         {
-            bool CameraInputEnabled = ApplyMouseCamera(MouseX, MouseY, AimMode);
+            bool CameraInputEnabled = ApplyMouseCamera(MouseX, MouseY, AimMode, StockAim);
             if (CameraInputEnabled && !AimMode && CameraRelativeLateralMovement && Left != Right)
             {
                 ApplyCameraRelativeStrafe();
@@ -8918,21 +9255,29 @@ void CJetForceGeminiRuntime::MapController(
         }
     }
 
+    const bool DpadActive =
+        Controls.DpadUp || Controls.DpadDown || Controls.DpadLeft || Controls.DpadRight;
     bool InputActive =
-        Forward || Backward || Left || Right || CUp || CDown || A || B || Start ||
-        MouseLeft || MouseRight || MouseX != 0 || MouseY != 0 || Input.MouseWheel != 0;
+        Forward || Backward || Left || Right || CUp || CDown || Controls.CLeft || Controls.CRight ||
+        A || B || Start || Fire || Controls.Aim || MouseX != 0 || MouseY != 0 ||
+        Controls.Scroll != 0 || Controls.StickX != 0 || Controls.StickY != 0 || DpadActive;
     if (!InputActive)
     {
         return;
     }
+
+    // The game leaves the D pad alone on foot, so it passes straight through
+    Buttons.U_DPAD = Controls.DpadUp;
+    Buttons.D_DPAD = Controls.DpadDown;
+    Buttons.L_DPAD = Controls.DpadLeft;
+    Buttons.R_DPAD = Controls.DpadRight;
 
     // The drone flies with the stick steering its reticle and the camera turning
     // to follow, so the mouse pushes the stick rather than writing an angle, and
     // A and B become the throttle.
     if (DroneMode)
     {
-        Buttons.Value = 0;
-        Buttons.Z_TRIG = MouseLeft;
+        Buttons.Z_TRIG = Fire;
         Buttons.START_BUTTON = Start;
         // Strafing deliberately does not request the throttle. It did while the
         // hack rotated the velocity the engine produced, since there had to be
@@ -8953,7 +9298,7 @@ void CJetForceGeminiRuntime::MapController(
         return;
     }
 
-    Buttons.Z_TRIG = MouseLeft;
+    Buttons.Z_TRIG = Fire;
     Buttons.R_TRIG = AimMode;
     Buttons.A_BUTTON = A || ScrollDown;
     Buttons.B_BUTTON = B || ScrollUp;
@@ -8971,34 +9316,42 @@ void CJetForceGeminiRuntime::MapController(
          g_Settings->LoadBool(Setting_JfgCrouchProneStickStrafe));
     bool StrafeOnCButtons =
         AimMode || CameraRelativeLateralMovement || BossCam || PostureStrafe;
-    if (Left && StrafeOnCButtons)
-    {
-        Buttons.L_CBUTTON = true;
-    }
-    if (Right && StrafeOnCButtons)
-    {
-        Buttons.R_CBUTTON = true;
-    }
+    // The pad's shoulder buttons sidestep on those same C buttons in any state
+    Buttons.L_CBUTTON = Controls.CLeft || (Left && StrafeOnCButtons);
+    Buttons.R_CBUTTON = Controls.CRight || (Right && StrafeOnCButtons);
 
     if (AimMode)
     {
-        if (ApplyCamera)
+        if (StockAim)
         {
-            ApplyManualAimMouse(MouseX, MouseY);
+            // controlGetManualAim pins the reticle at half deflection and
+            // starts turning just past it, so the stick goes through as it is.
+            // Its Y runs the other way from the camera's, so the stick is not
+            // flipped into N64 up-positive here: pushing up moves the reticle
+            // up. The camera bank outside the aim keeps its own sign.
+            Buttons.X_AXIS = StickToN64(Controls.CameraX);
+            Buttons.Y_AXIS = StickToN64(Controls.CameraY);
+        }
+        else
+        {
+            if (ApplyCamera)
+            {
+                ApplyManualAimMouse(MouseX, MouseY);
+            }
+            Buttons.X_AXIS = 0;
+            Buttons.Y_AXIS = 0;
         }
         Buttons.U_CBUTTON = Forward || CUp;
         Buttons.D_CBUTTON = Backward || CDown;
-        Buttons.X_AXIS = 0;
-        Buttons.Y_AXIS = 0;
         return;
     }
 
     Buttons.U_CBUTTON = CUp;
     Buttons.D_CBUTTON = CDown;
-    Buttons.Y_AXIS = (Forward ? JfgStickLimit : 0) - (Backward ? JfgStickLimit : 0);
+    Buttons.Y_AXIS = Controls.StickY;
     if (!StrafeOnCButtons)
     {
-        Buttons.X_AXIS = (Right ? JfgStickLimit : 0) - (Left ? JfgStickLimit : 0);
+        Buttons.X_AXIS = Controls.StickX;
     }
 }
 

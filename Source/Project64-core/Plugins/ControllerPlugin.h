@@ -4,6 +4,7 @@
 
 class CControl_Plugin;
 class CJetForceGeminiRuntime;
+struct JFG_PORT_INPUT;
 
 class CCONTROL
 {
@@ -41,6 +42,7 @@ public:
     typedef void(CALL * fnGetKeys)(int32_t Control, BUTTONS * Keys);
     typedef int32_t(CALL * fnGetKeyboardMouseState)(KEYBOARD_MOUSE_STATE * State);
     typedef void(CALL * fnSetKeyboardMouseCapture)(int32_t Capture);
+    typedef int32_t(CALL * fnGetGamepadState)(int32_t Index, GAMEPAD_STATE * State);
 
     CControl_Plugin(void);
     ~CControl_Plugin();
@@ -90,6 +92,19 @@ private:
     bool LoadFunctions(void);
     void UnloadPluginDetails(void);
     void SetGameInputCapture(bool Capture);
+    void RefreshJfgInput(void);
+    JFG_PORT_INPUT JfgPortInput(int32_t Control) const;
+    void ApplyJfgPortPresence(void);
+
+    // The JFG input sources as last read from the plugin. Gamepad entries
+    // report Connected == 0 when that pad is absent or the plugin lacks the
+    // extension; see RefreshJfgInput.
+    struct JFG_INPUT_SNAPSHOT
+    {
+        bool KeyboardMouseValid;
+        KEYBOARD_MOUSE_STATE KeyboardMouse;
+        GAMEPAD_STATE Gamepads[2];
+    };
 
     bool m_AllocatedControllers;
 
@@ -97,6 +112,12 @@ private:
     CCONTROL * m_Controllers[4];
     fnGetKeyboardMouseState m_GetKeyboardMouseState;
     fnSetKeyboardMouseCapture m_SetKeyboardMouseCapture;
+    fnGetGamepadState m_GetGamepadState;
     CJetForceGeminiRuntime * m_JfgRuntime;
     bool m_GameInputCaptured;
+    JFG_INPUT_SNAPSHOT m_JfgInput;
+    // Presence the plugin itself reported for each port, restored when a port
+    // stops being fed by a JFG source; see ApplyJfgPortPresence.
+    int32_t m_PluginPresent[4];
+    bool m_JfgForcedPresent[4];
 };

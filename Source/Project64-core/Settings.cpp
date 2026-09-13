@@ -150,6 +150,18 @@ void CSettings::AddHowToHandleSetting(const char * BaseDirectory)
     AddHandler(Setting_JfgDroneLateralMovement, new CSettingTypeApplication("Game Specific Hacks", "JFG Drone Lateral Movement", false));
     AddHandler(Setting_JfgWidescreenHud, new CSettingTypeApplication("Game Specific Hacks", "JFG Widescreen HUD", false));
     AddHandler(Setting_JfgAlignHud, new CSettingTypeApplication("Game Specific Hacks", "JFG Align HUD", false));
+    // Each JFG input source is switched on separately and routed to one N64
+    // controller port (0 based). Sources sharing a port are merged.
+    AddHandler(Setting_JfgKeyboardMousePort, new CSettingTypeApplication("Game Specific Hacks", "JFG Keyboard Mouse Port", (uint32_t)0));
+    AddHandler(Setting_JfgGamepad1, new CSettingTypeApplication("Game Specific Hacks", "JFG Gamepad 1", true));
+    AddHandler(Setting_JfgGamepad1Port, new CSettingTypeApplication("Game Specific Hacks", "JFG Gamepad 1 Port", (uint32_t)0));
+    AddHandler(Setting_JfgGamepad2, new CSettingTypeApplication("Game Specific Hacks", "JFG Gamepad 2", false));
+    AddHandler(Setting_JfgGamepad2Port, new CSettingTypeApplication("Game Specific Hacks", "JFG Gamepad 2 Port", (uint32_t)1));
+    // Right stick camera speed, 1 (slowest) to 10 (fastest); see GamepadCameraRate.
+    AddHandler(Setting_JfgGamepadCameraSpeed, new CSettingTypeApplication("Game Specific Hacks", "JFG Gamepad Camera Speed", (uint32_t)5));
+    // Aiming from the trigger leaves the game's own reticle and view turn in
+    // place, with the right stick on the N64 stick; see MapController.
+    AddHandler(Setting_JfgGamepadStockAim, new CSettingTypeApplication("Game Specific Hacks", "JFG Gamepad Stock Aim", false));
 
     AddHandler(Default_RDRamSizeUnknown, new CSettingTypeApplication("Defaults", "Unknown RDRAM Size", 0x800000u));
     AddHandler(Default_RDRamSizeKnown, new CSettingTypeApplication("Defaults", "Known RDRAM Size", 0x400000u));

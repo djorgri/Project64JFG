@@ -8,6 +8,20 @@
 class CMipsMemoryVM;
 class CRecompiler;
 
+// The sources feeding one N64 controller port. A null entry is a source that
+// is switched off, absent, or routed to another port; CControl_Plugin fills
+// this from the port settings before every controller poll.
+struct JFG_PORT_INPUT
+{
+    const KEYBOARD_MOUSE_STATE * KeyboardMouse;
+    const GAMEPAD_STATE * Gamepads[2];
+
+    bool HasSource(void) const
+    {
+        return KeyboardMouse != nullptr || Gamepads[0] != nullptr || Gamepads[1] != nullptr;
+    }
+};
+
 class CJetForceGeminiRuntime
 {
 public:
@@ -18,23 +32,79 @@ public:
     void StateSaving(void);
     void StateLoaded(void);
     void ProcessRuntimeFrame(void);
-    void ProcessController(int32_t Control, const KEYBOARD_MOUSE_STATE & Input, BUTTONS & Buttons);
-    void ProcessVideoFrame(const KEYBOARD_MOUSE_STATE & Input, BUTTONS & Buttons);
+    void ProcessController(int32_t Control, const JFG_PORT_INPUT & Input, BUTTONS & Buttons);
+    void ProcessVideoFrame(const JFG_PORT_INPUT & Input, BUTTONS & Buttons);
     bool IsEnabled(void) const;
-    bool UsesExclusiveInput(void) const;
+    bool UsesExclusiveInput(const JFG_PORT_INPUT & Input) const;
+    bool UsesKeyboardMouse(void) const;
     bool SupportsCurrentRom(void) const;
 
 private:
+    // What the scheme reads once keyboard, mouse and gamepads routed to the
+    // same port have been merged; see ReadControls. Forward/Backward/Left/
+    // Right are the held-key view of movement, StickX/StickY the analogue one
+    // in N64 units, so a stick and the keys can share a port.
+    struct JFG_CONTROLS
+    {
+        bool Forward;
+        bool Backward;
+        bool Left;
+        bool Right;
+        int8_t StickX;
+        int8_t StickY;
+        // The C buttons as the game's control setup reads them: up jumps,
+        // down crouches, left and right sidestep. A and B are the N64 buttons,
+        // which that setup spends on weapon cycling; see MapController.
+        bool CUp;
+        bool CDown;
+        bool CLeft;
+        bool CRight;
+        bool Sprint;
+        bool A;
+        bool B;
+        bool Fire;
+        // Aim is either source; the two below say which, since the trigger
+        // can hand the aim to the game's own code while the mouse button
+        // keeps the mouse scheme, see MapController
+        bool Aim;
+        bool AimMouse;
+        bool AimPad;
+        bool Start;
+        bool SkipCinematic;
+        bool DpadUp;
+        bool DpadDown;
+        bool DpadLeft;
+        bool DpadRight;
+        // +1 next weapon (a B impulse), -1 previous weapon (an A impulse)
+        int32_t Scroll;
+        // Right stick, -1..1 with SDL's signs (up and left negative), the
+        // pad pushed furthest winning each axis
+        float CameraX;
+        float CameraY;
+    };
+
+    // Rising-edge bookkeeping for the X/Y weapon buttons, one slot per gamepad
+    struct SCROLL_BUTTON_STATE
+    {
+        bool PreviousDown[2];
+        bool NextDown[2];
+    };
+
     static bool IsSupportedRom(void);
     static bool KeyDown(const KEYBOARD_MOUSE_STATE & Input, KeyboardMouseKey Key);
     static bool MouseButtonDown(const KEYBOARD_MOUSE_STATE & Input, uint32_t Button);
-    void MapController(const KEYBOARD_MOUSE_STATE & Input, BUTTONS & Buttons, bool ApplyCamera);
-    bool UpdateEnabledState(void);
+    static void ReadControls(const JFG_PORT_INPUT & Input, JFG_CONTROLS & Controls);
+    static int32_t ReadScrollButtons(const JFG_PORT_INPUT & Input, SCROLL_BUTTON_STATE & State);
+    void MapController(const JFG_CONTROLS & Controls, BUTTONS & Buttons, bool ApplyCamera);
+    void MapSecondaryPort(int32_t Control, const JFG_PORT_INPUT & Input, BUTTONS & Buttons);
+    bool UpdateEnabledState(const JFG_PORT_INPUT & Input);
     void BankMouseDelta(const KEYBOARD_MOUSE_STATE & Input);
+    void BankStickCamera(const JFG_PORT_INPUT & Input);
     void QueueMouseWheel(const KEYBOARD_MOUSE_STATE & Input);
+    void QueueGamepadScroll(const JFG_PORT_INPUT & Input);
     void Deactivate(void);
     void ClearCameraState(void);
-    bool SetCameraCode(bool EnableFreeOrbit, bool EnableManualAim, bool InstallRuntime);
+    bool SetCameraCode(bool EnableFreeOrbit, bool EnableManualAim, bool InstallRuntime, bool StockAim);
     void PatchManualAimCode(bool Enabled);
     bool GetPlayerData(uint32_t & PlayerObject, uint32_t & PlayerData) const;
     bool GetCameraBaseYaw(uint32_t PlayerObject, uint32_t PlayerData, int16_t & BaseYaw) const;
@@ -43,7 +113,7 @@ private:
     bool GetNormalCameraState(
         uint32_t PlayerData, bool & NormalCamera, bool & MouseCameraAllowed);
     float ClampCameraElevation(uint32_t PlayerObject, uint32_t Camera, float HeightOffset) const;
-    bool ApplyMouseCamera(int32_t MouseX, int32_t MouseY, bool AimMode);
+    bool ApplyMouseCamera(int32_t MouseX, int32_t MouseY, bool AimMode, bool StockAim);
     void ApplyManualAimMouse(int32_t MouseX, int32_t MouseY);
     void ApplyBossAimCameraTurn(uint32_t PlayerObject, int32_t Reticle);
     void ApplyDroneCamera(int32_t MouseX, int32_t MouseY);
@@ -132,6 +202,14 @@ private:
     int32_t m_MouseDeltaX;
     int32_t m_MouseDeltaY;
     int32_t m_QueuedMouseWheel;
+
+    // Right stick camera: the sub-count fraction left over each video frame,
+    // see BankStickCamera. The scroll states track the X/Y weapon buttons for
+    // port one and for the three secondary ports respectively.
+    float m_StickCameraCarryX;
+    float m_StickCameraCarryY;
+    SCROLL_BUTTON_STATE m_ScrollButtons;
+    SCROLL_BUTTON_STATE m_SecondaryScrollButtons[3];
 
     bool m_FramePacingPatchApplied;
     bool m_FramePacing60PatchApplied;
