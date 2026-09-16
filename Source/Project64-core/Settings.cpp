@@ -135,7 +135,7 @@ void CSettings::AddHowToHandleSetting(const char * BaseDirectory)
     AddHandler(Setting_JfgPreserveCameraInGameLimits, new CSettingTypeApplication("Game Specific Hacks", "JFG Preserve Camera In Game Limits", true));
     AddHandler(Setting_JfgFreeCameraInJump, new CSettingTypeApplication("Game Specific Hacks", "JFG Free Camera In Jump", true));
     AddHandler(Setting_JfgUncapFramePacing, new CSettingTypeApplication("Game Specific Hacks", "JFG Uncap Frame Pacing", true));
-    AddHandler(Setting_JfgTarget60Fps, new CSettingTypeApplication("Game Specific Hacks", "JFG Target 60fps", false));
+    AddHandler(Setting_JfgTarget60Fps, new CSettingTypeApplication("Game Specific Hacks", "JFG Target 60fps", true));
     AddHandler(Setting_JfgShowInputRate, new CSettingTypeApplication("Game Specific Hacks", "JFG Show Input Rate", false));
     AddHandler(Setting_JfgSchedulerRelease, new CSettingTypeApplication("Game Specific Hacks", "JFG Scheduler Release", true));
     AddHandler(Setting_JfgBoostViBudget, new CSettingTypeApplication("Game Specific Hacks", "JFG Boost VI Budget", true));
@@ -148,8 +148,8 @@ void CSettings::AddHowToHandleSetting(const char * BaseDirectory)
     AddHandler(Setting_JfgBoostViBudget30, new CSettingTypeApplication("Game Specific Hacks", "JFG Boost VI Budget 30fps", true));
     AddHandler(Setting_JfgSyncAudio, new CSettingTypeApplication("Game Specific Hacks", "JFG Sync Audio", true));
     AddHandler(Setting_JfgDroneLateralMovement, new CSettingTypeApplication("Game Specific Hacks", "JFG Drone Lateral Movement", false));
-    AddHandler(Setting_JfgWidescreenHud, new CSettingTypeApplication("Game Specific Hacks", "JFG Widescreen HUD", false));
-    AddHandler(Setting_JfgAlignHud, new CSettingTypeApplication("Game Specific Hacks", "JFG Align HUD", false));
+    AddHandler(Setting_JfgWidescreenHud, new CSettingTypeApplication("Game Specific Hacks", "JFG Widescreen HUD", true));
+    AddHandler(Setting_JfgAlignHud, new CSettingTypeApplication("Game Specific Hacks", "JFG Align HUD", true));
     // Each JFG input source is switched on separately and routed to one N64
     // controller port (0 based). Sources sharing a port are merged.
     AddHandler(Setting_JfgKeyboardMousePort, new CSettingTypeApplication("Game Specific Hacks", "JFG Keyboard Mouse Port", (uint32_t)0));
@@ -161,7 +161,7 @@ void CSettings::AddHowToHandleSetting(const char * BaseDirectory)
     AddHandler(Setting_JfgGamepadCameraSpeed, new CSettingTypeApplication("Game Specific Hacks", "JFG Gamepad Camera Speed", (uint32_t)5));
     // Aiming from the trigger leaves the game's own reticle and view turn in
     // place, with the right stick on the N64 stick; see MapController.
-    AddHandler(Setting_JfgGamepadStockAim, new CSettingTypeApplication("Game Specific Hacks", "JFG Gamepad Stock Aim", false));
+    AddHandler(Setting_JfgGamepadStockAim, new CSettingTypeApplication("Game Specific Hacks", "JFG Gamepad Stock Aim", true));
 
     AddHandler(Default_RDRamSizeUnknown, new CSettingTypeApplication("Defaults", "Unknown RDRAM Size", 0x800000u));
     AddHandler(Default_RDRamSizeKnown, new CSettingTypeApplication("Defaults", "Known RDRAM Size", 0x400000u));

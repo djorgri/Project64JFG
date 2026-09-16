@@ -21,6 +21,7 @@ CGfxPlugin::CGfxPlugin() :
     ViStatusChanged(nullptr),
     ViWidthChanged(nullptr),
     SoftReset(nullptr),
+    JfgReticleCommand(nullptr),
     GetRomBrowserMenu(nullptr),
     OnRomBrowserMenuItem(nullptr)
 {
@@ -47,6 +48,7 @@ bool CGfxPlugin::LoadFunctions(void)
     LoadFunction(ViStatusChanged);
     LoadFunction(ViWidthChanged);
     LoadFunction(SoftReset);
+    LoadFunction(JfgReticleCommand);
 #ifdef ANDROID
     LoadFunction(SurfaceCreated);
     LoadFunction(SurfaceChanged);
@@ -525,6 +527,7 @@ void CGfxPlugin::UnloadPluginDetails(void)
     ProcessRDPList = nullptr;
     ShowCFB = nullptr;
     UpdateScreen = nullptr;
+    JfgReticleCommand = nullptr;
     ViStatusChanged = nullptr;
     ViWidthChanged = nullptr;
     GetRomBrowserMenu = nullptr;

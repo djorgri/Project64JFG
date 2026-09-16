@@ -1,4 +1,4 @@
-GIT_VERSION := "0.9.1"
+GIT_VERSION := "0.9.2"
 VERSION_BUILD := 0
 
 

@@ -3,6 +3,7 @@
 
 #include <Video.h>
 #include "Settings.h"
+#include "JfgReticleOverlay.h"
 
 #include <context.hpp>
 #include <device.hpp>
@@ -140,13 +141,16 @@ std::vector<RDP::RGBA> g_last_visible_scanout;
 unsigned g_last_visible_width = 0;
 unsigned g_last_visible_height = 0;
 unsigned g_consecutive_black_scanouts = 0;
+JfgReticleOverlay::Queue g_reticle_queue;
+JfgReticleOverlay::View g_reticle_view, g_last_reticle_view;
 // Reading a VI image back to the CPU is needed by the current GDI presenter,
 // but it must not make the emulation thread wait for the GPU. Keep a small
 // ring of host-visible copies and present the newest completed image instead.
 struct AsyncScanout
 {
-	RDP::VIScanoutBuffer buffer;
-	uint64_t sequence = 0;
+    RDP::VIScanoutBuffer buffer;
+    uint64_t sequence = 0;
+    JfgReticleOverlay::View reticle;
 };
 constexpr size_t AsyncScanoutCount = 3;
 constexpr size_t RdpCommandBatchFlushWords = 1024;
@@ -387,6 +391,9 @@ void report_performance_if_due()
 
 void destroy_renderer()
 {
+    g_reticle_queue.clear();
+    g_reticle_view = {};
+    g_last_reticle_view = {};
 	g_pending_rdp_words.clear();
 	g_pending_rdp_command_batch.clear();
 	for (auto &scanout : g_async_scanouts)
@@ -395,7 +402,8 @@ void destroy_renderer()
 		scanout.buffer.buffer.reset();
 		scanout.buffer.width = 0;
 		scanout.buffer.height = 0;
-		scanout.sequence = 0;
+        scanout.sequence = 0;
+        scanout.reticle = {};
 	}
 	g_next_scanout_sequence = 1;
 	g_scanout_colors.clear();
@@ -606,10 +614,40 @@ void blit_scanout()
 
 	if (const auto dc = GetDC(window))
 	{
-		SetStretchBltMode(dc, COLORONCOLOR);
-		StretchDIBits(dc, target_x, target_y, target_width, target_height, 0, 0,
-			g_scanout_width, g_scanout_height, g_display_pixels.data(), &bitmap,
-			DIB_RGB_COLORS, SRCCOPY);
+		// Compose the optional reticle into the scaled image before one final
+		// window blit. Painting it in a second visible pass can flicker with DWM.
+		HDC composition = nullptr;
+		HBITMAP surface = nullptr;
+		HGDIOBJ old_surface = nullptr;
+		void *surface_pixels = nullptr;
+		if (!g_reticle_view.frame.lines.empty())
+		{
+			BITMAPINFO output = bitmap;
+			output.bmiHeader.biWidth = target_width;
+			output.bmiHeader.biHeight = -target_height;
+			composition = CreateCompatibleDC(dc);
+			surface = CreateDIBSection(dc, &output, DIB_RGB_COLORS, &surface_pixels, nullptr, 0);
+			if (composition && surface)
+			{
+				old_surface = SelectObject(composition, surface);
+				SetStretchBltMode(composition, COLORONCOLOR);
+				StretchDIBits(composition, 0, 0, target_width, target_height, 0, 0,
+					g_scanout_width, g_scanout_height, g_display_pixels.data(), &bitmap, DIB_RGB_COLORS, SRCCOPY);
+				GdiFlush(); // DIB writes below must follow the queued GDI stretch.
+				JfgReticleOverlay::composite(g_reticle_view, static_cast<uint32_t *>(surface_pixels), target_width, target_height);
+				BitBlt(dc, target_x, target_y, target_width, target_height, composition, 0, 0, SRCCOPY);
+			}
+		}
+		if (!old_surface)
+		{
+			SetStretchBltMode(dc, COLORONCOLOR);
+			StretchDIBits(dc, target_x, target_y, target_width, target_height, 0, 0,
+				g_scanout_width, g_scanout_height, g_display_pixels.data(), &bitmap,
+				DIB_RGB_COLORS, SRCCOPY);
+		}
+		if (old_surface) SelectObject(composition, old_surface);
+		if (surface) DeleteObject(surface);
+		if (composition) DeleteDC(composition);
 		// Do not clear the whole client area before StretchDIBits. With the
 		// larger scanout produced by internal upscaling, DWM can occasionally
 		// composite the window between those two GDI operations and reveal a
@@ -643,7 +681,8 @@ bool is_completely_black(const std::vector<RDP::RGBA> &colors)
 	});
 }
 
-void select_scanout_for_presentation(std::vector<RDP::RGBA> &&colors, unsigned width, unsigned height)
+void select_scanout_for_presentation(std::vector<RDP::RGBA> &&colors, unsigned width, unsigned height,
+                                    const JfgReticleOverlay::View &reticle)
 {
 	if (colors.empty() || width == 0 || height == 0)
 		return;
@@ -658,12 +697,14 @@ void select_scanout_for_presentation(std::vector<RDP::RGBA> &&colors, unsigned w
 		g_scanout_colors = g_last_visible_scanout;
 		g_scanout_width = g_last_visible_width;
 		g_scanout_height = g_last_visible_height;
+		g_reticle_view = g_last_reticle_view;
 		return;
 	}
 
 	g_scanout_colors = std::move(colors);
 	g_scanout_width = width;
 	g_scanout_height = height;
+	g_reticle_view = black ? JfgReticleOverlay::View{} : reticle;
 	if (black)
 	{
 		g_consecutive_black_scanouts++;
@@ -673,6 +714,7 @@ void select_scanout_for_presentation(std::vector<RDP::RGBA> &&colors, unsigned w
 		g_last_visible_scanout = g_scanout_colors;
 		g_last_visible_width = width;
 		g_last_visible_height = height;
+		g_last_reticle_view = g_reticle_view;
 		g_consecutive_black_scanouts = 0;
 	}
 }
@@ -700,7 +742,7 @@ bool consume_completed_scanout()
 		const void *mapped = g_device->map_host_buffer(*newest->buffer.buffer, Vulkan::MEMORY_ACCESS_READ_BIT);
 		std::memcpy(colors.data(), mapped, colors.size() * sizeof(RDP::RGBA));
 		g_device->unmap_host_buffer(*newest->buffer.buffer, Vulkan::MEMORY_ACCESS_READ_BIT);
-		select_scanout_for_presentation(std::move(colors), newest->buffer.width, newest->buffer.height);
+		select_scanout_for_presentation(std::move(colors), newest->buffer.width, newest->buffer.height, newest->reticle);
 	}
 
 	// All older completed readbacks are obsolete once the newest image has been
@@ -739,6 +781,19 @@ void queue_async_scanout(const RDP::ScanoutOptions &options)
 
 	g_processor->begin_frame_context();
 	g_processor->scanout_async_buffer(free_scanout->buffer, options);
+	free_scanout->reticle = {};
+	if (g_gfx.VI_ORIGIN_REG && g_gfx.VI_X_SCALE_REG &&
+		g_gfx.VI_Y_SCALE_REG && g_gfx.VI_H_START_REG && g_gfx.VI_V_START_REG)
+	{
+		auto &r = free_scanout->reticle;
+		r.origin = *g_gfx.VI_ORIGIN_REG;
+		r.frame = g_reticle_queue.find(r.origin);
+		r.xscale = *g_gfx.VI_X_SCALE_REG;
+		r.yscale = *g_gfx.VI_Y_SCALE_REG;
+		r.hstart = *g_gfx.VI_H_START_REG;
+		r.vstart = *g_gfx.VI_V_START_REG;
+		r.crop = options.crop_overscan_pixels;
+	}
 	if (free_scanout->buffer.fence)
 	{
 		free_scanout->sequence = g_next_scanout_sequence++;
@@ -1004,6 +1059,23 @@ EXPORT void CALL ShowCFB()
 
 EXPORT void CALL SoftReset()
 {
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_reticle_queue.clear();
+    g_reticle_view = {};
+    g_last_reticle_view = {};
+    for (auto &scanout : g_async_scanouts) scanout.reticle = {};
+}
+
+EXPORT void CALL JfgReticleCommand(uint32_t command, uint32_t packet)
+{
+    std::lock_guard<std::mutex> lock(g_mutex);
+    g_reticle_queue.command(command, packet, g_gfx.RDRAM, g_gfx.RDRAM_SIZE);
+    if (command == 0)
+    {
+        g_reticle_view = {};
+        g_last_reticle_view = {};
+        for (auto &scanout : g_async_scanouts) scanout.reticle = {};
+    }
 }
 
 EXPORT void CALL UpdateScreen()

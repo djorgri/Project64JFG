@@ -5,6 +5,9 @@
 #include <Common/path.h>
 #include <Project64-core\N64System\N64Rom.h>
 #include <Project64-core\N64System\N64System.h>
+#include <Project64-core/Plugins/Plugin.h>
+#include <Project64-core/Plugins/GFXPlugin.h>
+#include <Project64-core/N64System/SystemGlobals.h>
 
 ISViewerHandler::ISViewerHandler(CN64System & System, RomMemoryHandler & RomHandler, CN64Rom & Rom) :
     m_RomMemoryHandler(RomHandler),
@@ -35,6 +38,16 @@ bool ISViewerHandler::Read32(uint32_t Address, uint32_t & Value)
 
 bool ISViewerHandler::Write32(uint32_t Address, uint32_t Value, uint32_t Mask)
 {
+    // Private bridge used only by the signature-checked US JFG trampolines.
+    // Keep the ordinary ISViewer text protocol and all other ROMs unchanged.
+    const auto rom = reinterpret_cast<const uint32_t *>(m_Rom.GetRomAddress());
+    if ((Address == 0x13FF7FF0 || Address == 0x13FF7FF4) && Mask == 0xFFFFFFFF &&
+        m_Rom.GetRomSize() >= 0x40 && rom[4] == 0x8A6009B6 && rom[5] == 0x94ACE150)
+    {
+        if (g_Plugins && g_Plugins->Gfx() && g_Plugins->Gfx()->JfgReticleCommand)
+            g_Plugins->Gfx()->JfgReticleCommand(Address == 0x13FF7FF0 ? 1 : 2, Value);
+        return true;
+    }
     uint32_t MaskedValue = Value & Mask;
     if (m_Data.empty())
     {

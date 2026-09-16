@@ -211,6 +211,69 @@ La correction intervient après les rotations/symétries et avant le découpage 
 le moteur de lignes conserve son trait natif. Les coordonnées Y, couleurs,
 arguments de pile et calculs de collision/visée restent inchangés.
 
+Depuis le 16 septembre, à la demande de l'utilisateur, le lance-roquettes
+(Tri-Rocket Launcher, index 5) et les missiles téléguidés (Homing Missiles,
+index 1) sont exclus de la compression. Le filtre lit l'index sauvegardé par
+`frontDrawTarget` à `sp+0x50` à chaque appel : il suit immédiatement les
+changements d'arme et conserve les coordonnées d'origine des deux viseurs.
+Les autres réticules gardent leur correction actuelle. Le filtre occupe les
+20 octets libres à `0x8006738C`, sans déplacer les autres stubs.
+
+Essai suivant du 16 septembre : les deux exclusions proposent désormais leurs
+segments natifs à une couche de présentation de Parallel-RDP. En solo, avec
+**Correct widescreen HUD** et un mode jeu 16/9, le plugin accepte les traits
+et le jeu ne les inscrit plus dans son
+framebuffer. Sans cette prise en charge, le chemin d'origine reste utilisé.
+Le centre vient de `s4/s3`, les couleurs et le verrouillage des arguments du
+jeu. Les chiffres de distance/angle restent dans le rendu d'origine.
+
+Le diagnostic `cpuXYPrintf` est retiré à son entrée et son image US exacte
+est conservée pour restauration (`0x800682F0..0x800683D4`). Deux écritures
+privées ISViewer transmettent le paquet sur pile et la fin de file à un export
+optionnel du plugin. Celui-ci associe les segments à la file CPU puis à
+l'adresse du framebuffer traité par `fxOutputLines`. Chaque lecture GPU
+asynchrone emporte sa copie des traits et des registres VI ; le maintien d'une
+image précédente maintient aussi son viseur. Le chargement d'état vide les
+copies hôte. Les traits sont composés après l'étirement, à échelle X/Y uniforme,
+avant une seule copie vers la fenêtre. Aucun BMP de remplacement n'est requis.
+
+Les tests exécutent les trampolines acceptés/refusés, les transitions et
+restaurations, comparent le raster hôte au raster MIPS natif et contrôlent les
+files alternées, le changement d'image et les pixels carrés hors centre.
+La compilation x64 de l'émulateur et de Parallel-RDP est vérifiée. Le rendu
+en jeu reste à valider par essai utilisateur, notamment en verrouillage et
+en haute résolution. Le multijoueur conserve les viseurs d'origine.
+
+Correction après le premier essai : l'activation ne dépend plus de l'option
+vidéo **Force widescreen**, qui était désactivée dans la configuration de test
+et provoquait systématiquement le retour au dessin étiré d'origine. Le mode
+du jeu et les hooks HUD suffisent, y compris après chargement d'état ; le
+format global de la fenêtre reste contrôlé par les réglages vidéo existants.
+
+Après validation visuelle des deux lance-roquettes par l'utilisateur, le même
+chemin est étendu à tous les index d'arme de `frontDrawTarget` (0 à 13). Les
+segments locaux passent sans compression au dessinateur hôte : styles 0/2,
+traits épais de style 1 et motifs de pixels 4 à 7. Ces derniers sont copiés
+depuis les tables du jeu au moment du dessin, avec leur symétrie et couleur,
+puis conservés avec l'image présentée. Les cadres du sniper ancrés aux bords
+(types 5/6), les chiffres et la géométrie 3D conservent leur traitement actuel.
+Les sauvegardes du prototype limité aux roquettes sont reconnues et migrées.
+La comparaison automatisée avec le dessinateur MIPS couvre les segments des
+14 tables d'arme, les rotations et les motifs inversés ; la validation visuelle
+des autres armes reste à effectuer en jeu.
+
+L'essai de correction du dessinateur de diagonales de style 2 a été retiré,
+son rendu ayant été jugé insatisfaisant. Ses anciennes instructions sont
+restaurées aussi lorsqu'une sauvegarde contient encore ce patch. Les notes
+précédentes identifiaient à tort le viseur concerné comme celui du sniper.
+
+Un masque monochrome éditable du lance-roquettes est disponible dans
+`Exports/Viseur-lance-roquettes/viseur-lance-roquettes.bmp` : 65 × 65 pixels,
+centre en (32, 32), tracé blanc sur fond noir, rendu d'origine sans texte
+variable. `Source/Script/export_jfg_reticle.py` reconstruit ce masque depuis
+une sauvegarde utilisateur avec les instructions du dessinateur d'origine.
+Le BMP est une référence pour retouche, pas encore une texture chargée en jeu.
+
 Les quatre appels des cadres ancrés aux bords (types 5/6) et les petites formes
 3D restent intacts. Il ne faut pas appliquer la compression à la projection 3D
 du réticule, que l'utilisateur a validée. Le mode 4/3 et la désactivation de
@@ -231,8 +294,8 @@ Le script [`jfg-reticle-trace.js`](../Source/Script/jfg-reticle-trace.js), à la
 manuellement avec le cœur Interpreter, compare les coordonnées à l'entrée du
 stub et à celle du moteur de découpe. Il écrit au maximum 512 relevés distincts
 dans `JfgReticleTrace.log` près de l'exécutable, sans modifier la mémoire ni les
-registres du jeu. Les tests automatiques du réticule couvrent 11 920 scénarios
-(modes, portée, centre décentré, arrondis, symétrie, arguments et découpe) ; ils
+registres du jeu. Les tests automatiques du réticule couvrent les modes, la portée, le centre
+décentré, les arrondis, les arguments, la découpe et les exclusions par arme ; ils
 ne remplacent pas cette observation du rendu.
 
 ## Bandeau de ramassage

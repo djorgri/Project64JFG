@@ -49,6 +49,7 @@ def translation_unit():
     declarations = memory_header[memory_header.index("struct GAME_HACK_CODE_PATCH"):]
     floyd_header = HACKS / "JetForceGeminiFloydHud.h"
     floyd_include = '\n#include "' + floyd_header.as_posix() + '"\n'
+    floyd_include += '\n#include "' + (HACKS / "JetForceGeminiRocketOverlay.h").as_posix() + '"\n'
     return MOCKS + declarations + floyd_include + constants + "\n" + helper + RUNTIME + patcher + "\n" + methods + \
         "\nstd::vector<GAME_HACK_CODE_PATCH> FixedFixture() {\n" + fixed_fixture + \
         "\nreturn FixedPatches;\n}\n" + CASES
@@ -147,7 +148,10 @@ void Stock(CGameHackMemory &m, uint8_t mode) {
         m.WriteU32(WidescreenHudCaveWordAddress(i), 0x34000000 | uint32_t(i));
     for (size_t i = 0; i < sizeof(JfgFloydHud::OriginalDiagnosticCode) / sizeof(uint32_t); ++i)
         m.WriteU32(0x800678C4 + uint32_t(i * 4), JfgFloydHud::OriginalDiagnosticCode[i]);
+    for (size_t i = 0; i < sizeof(JfgRocketOverlay::Original) / 4; ++i)
+        m.WriteU32(JfgRocketOverlay::Start + uint32_t(i * 4), JfgRocketOverlay::Original[i]);
     for (const auto &p : FixedFixture()) m.WriteU32(p.Address, p.Original);
+    for (const auto &p : WidescreenHudReticleRasterRetired) m.WriteU32(p.Address, p.Original);
     m.WriteU32(WidescreenHudAmmoEntry + 4, WidescreenHudAmmoDelayOriginal);
     for (const auto &p : WidescreenHudDigitalRetired) m.WriteU32(p.Address, p.Original);
     m.WriteU32(Overlay14 + WidescreenHudOverlayEnterOffset, WidescreenHudOverlayEnterOriginal);
@@ -168,6 +172,9 @@ void Stock(CGameHackMemory &m, uint8_t mode) {
     }
 }
 void CheckFloydDiagnosticStock(const CGameHackMemory &m) {
+    for (size_t i = 0; i < sizeof(JfgRocketOverlay::Original) / 4; ++i)
+        Require(m.Word(JfgRocketOverlay::Start + uint32_t(i * 4)) == JfgRocketOverlay::Original[i],
+                "Rocket diagnostic was not restored");
     for (size_t i = 0; i < sizeof(JfgFloydHud::OriginalDiagnosticCode) / sizeof(uint32_t); ++i)
         Require(m.Word(0x800678C4 + uint32_t(i * 4)) == JfgFloydHud::OriginalDiagnosticCode[i],
                 "Floyd diagnostic prologue/body was not fully restored");
@@ -184,6 +191,8 @@ void CheckOverlay14Stock(const CGameHackMemory &m, uint32_t base = Overlay14) {
 }
 void CheckAllStock(const CGameHackMemory &m, uint32_t base13 = Overlay13, uint32_t base14 = Overlay14) {
     CheckOverlay14Stock(m, base14);
+    for (const auto &p : WidescreenHudReticleRasterRetired)
+        Require(m.Word(p.Address) == p.Original, "experimental reticle raster remains installed");
     CheckFloydDiagnosticStock(m);
     for (const auto &p : FixedFixture()) Require(m.Word(p.Address) == p.Original, "fixed hook remains active");
     for (const auto &p : WidescreenHudDigitalRetired)
@@ -237,7 +246,44 @@ int main(int argc, char **argv) {
         CGameHackMemory m;
         Stock(m, mode);
         CJetForceGeminiRuntime live(m);
-        if (scenario == "gauge_legacy_transition") {
+        if (scenario == "rocket_exclusion_snapshot" || scenario == "rocket_exclusion_snapshot_disabled" ||
+            scenario == "rocket_overlay_snapshot" || scenario == "rocket_overlay_snapshot_disabled") {
+            Require(live.PatchWidescreenHud(true), "initial fixture failed");
+            const bool overlay = scenario.find("rocket_overlay") == 0;
+            m.WriteU32(WidescreenHudReticleWeaponStub + 4, overlay ? 0x112803DB : 0x11280116);
+            if (!overlay) {
+                m.WriteU32(0x8006E1C0, 0x3C058010);
+                m.WriteU32(0x8006E1C4, 0x24A53B90);
+                for (unsigned i=0;i<sizeof(JfgRocketOverlay::Original)/4;++i)
+                    m.WriteU32(JfgRocketOverlay::Start+i*4,JfgRocketOverlay::Original[i]);
+            }
+            CJetForceGeminiRuntime fresh(m);
+            const bool enable = scenario == "rocket_exclusion_snapshot" || scenario == "rocket_overlay_snapshot";
+            Require(fresh.PatchWidescreenHud(enable), "excluded reticle snapshot migration failed");
+            if (enable) {
+                Require(m.Word(WidescreenHudReticleWeaponStub+4)==0x100003DB,"capture branch missing");
+                Require(fresh.PatchWidescreenHud(false),"disable migrated overlay failed");
+            }
+            CheckAllStock(m);
+        } else if (scenario == "reticle_old_snapshot" || scenario == "reticle_old_snapshot_disabled") {
+            Require(live.PatchWidescreenHud(true), "initial reticle fixture failed");
+            for (const auto &p : WidescreenHudReticleRasterRetired) m.WriteU32(p.Address, p.Replacement);
+            for (unsigned i = 0; i < sizeof(WidescreenHudReticleLegacyCode) / sizeof(uint32_t); ++i)
+                m.WriteU32(WidescreenHudReticleStub + i * 4, WidescreenHudReticleLegacyCode[i]);
+            CJetForceGeminiRuntime fresh(m);
+            const bool enabled = scenario == "reticle_old_snapshot";
+            Require(fresh.PatchWidescreenHud(enabled), "legacy reticle migration failed");
+            for (const auto &p : WidescreenHudReticleRasterRetired)
+                Require(m.Word(p.Address) == p.Original, "legacy raster was not restored");
+            if (enabled) {
+                CheckInstalled(m, mode);
+                for (unsigned i = 0; i < sizeof(WidescreenHudReticleCode) / sizeof(uint32_t); ++i)
+                    Require(m.Word(WidescreenHudReticleStub + i * 4) == WidescreenHudReticleCode[i],
+                            "legacy snapshot did not acquire the weapon guard");
+                Require(fresh.PatchWidescreenHud(false), "reticle migrated disable failed");
+            }
+            CheckAllStock(m);
+        } else if (scenario == "gauge_legacy_transition") {
             Require(live.PatchWidescreenHud(true), "initial gauge installation failed");
             SeedGaugeTable(m, true);
             m.WriteU8(WidescreenHudResolutionIndexAddress, mode & ~1);
@@ -473,6 +519,12 @@ def compiler_command(directory, source, executable):
 
 
 class JfgWidescreenLifecycleTests(unittest.TestCase):
+    def test_previous_rocket_exclusion_snapshot_is_migrated_and_restored(self):
+        self.scenario("rocket_exclusion_snapshot", (1, 3))
+        self.scenario("rocket_exclusion_snapshot_disabled", (1, 3))
+        self.scenario("rocket_overlay_snapshot", (1, 3))
+        self.scenario("rocket_overlay_snapshot_disabled", (1, 3))
+
     @classmethod
     def setUpClass(cls):
         build = WORKSPACE / "build"
@@ -494,6 +546,10 @@ class JfgWidescreenLifecycleTests(unittest.TestCase):
             with self.subTest(scenario=name, mode=mode):
                 result = subprocess.run([str(self.executable), name, str(mode)], capture_output=True, text=True, timeout=20)
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_previous_reticle_raster_is_retired_on_enable_and_disable(self):
+        self.scenario("reticle_old_snapshot", (1, 3))
+        self.scenario("reticle_old_snapshot_disabled", (1, 3))
 
     def test_existing_installation_tracks_widescreen_to_four_three(self):
         self.scenario("transition", (1, 3))

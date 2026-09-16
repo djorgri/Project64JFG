@@ -269,20 +269,16 @@ void EnsureCpu()
     }
 }
 
-void ResetCpuState()
-{
-    if (HasRegisters())
-    {
-        *g_RspInfo.SP_PC_REG = 0;
-    }
-}
-
 void ClearHostState()
 {
-    // CloseDLL can run during Project64's final application cleanup, after
-    // the N64 register storage has already been released. Do not dereference
-    // any host-owned pointers there; RomClosed is the last safe callback to
-    // reset the RSP program counter.
+    // CloseDLL and RomClosed can both run during Project64's final application
+    // cleanup, after the N64 register storage has already been released: when
+    // the emulation thread does not stop within CloseCpu's timeout it is
+    // terminated before it notifies the plugins, and CPlugins' destructor then
+    // delivers RomClosed with dangling RSP_INFO pointers. Never dereference a
+    // host-owned pointer from either callback. The core clears the SP
+    // registers itself on every ROM start, so nothing is lost by not touching
+    // SP_PC_REG here.
     g_Initialized = false;
     g_RspInfo = {};
     g_HostProcessRdpList = nullptr;
@@ -493,7 +489,7 @@ EXPORT void CALL RomOpen(void)
 
 EXPORT void CALL RomClosed(void)
 {
-    ResetCpuState();
+    // Intentionally host-free: see ClearHostState.
 }
 
 EXPORT void CALL PluginLoaded(void)

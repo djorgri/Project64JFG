@@ -55,9 +55,9 @@ support and an optional 60 FPS mode.
 
 ### Performance and accuracy
 
-- 30 FPS is the default for predictable performance. The 60 FPS mode is
-  playable, but certain areas can still have animation-speed or enemy-behaviour
-  issues, as well as sound or music stutters
+- 60 FPS is the default. Certain areas can still have animation-speed or
+  enemy-behaviour issues, as well as sound or music stutters; switch to 30 FPS
+  for predictable performance
 - Switch between 60 and 30 FPS live in-game with **Numpad +** / **Numpad −**
 - 60 FPS gameplay-speed corrections for enemies (movement and animation),
   Squaddies, race opponents, projectiles, and the water wake
@@ -134,13 +134,14 @@ Like the keyboard scheme, this follows the game's own control setup as saved
 in your game, where C-up and C-down jump and crouch and the N64 A and B
 buttons cycle weapons.
 
-By default the left trigger aims the way the right mouse button does: the
-reticle stays centred and the right stick turns the view, at twice the speed
-it turns the camera outside the aim. With **Gamepad aim uses the game's
-reticle** enabled, aiming from the trigger instead keeps the game's own aiming:
-the right stick moves the reticle inside its box while the camera holds still,
-and the view turns once the reticle is pinned at the edge, exactly as with the
-N64 stick; pushing the stick up moves the reticle up. Aiming with the right
+By default (**Gamepad aim uses the game's reticle** enabled), aiming from the
+trigger keeps the game's own aiming: the right stick moves the reticle inside
+its box while the camera holds still, and the view turns once the reticle is
+pinned at the edge, exactly as with the N64 stick; pushing the stick up moves
+the reticle up. With the option disabled, the left trigger instead aims the way
+the right mouse button does: the reticle stays centred and the right stick
+turns the view, at one and a half times the speed it turns the camera outside
+the aim. Aiming with the right
 mouse button keeps the mouse behaviour either way, and the boss sections keep
 their mouse-driven version of the same rule.
 
@@ -232,16 +233,18 @@ Either byte order loads: the emulator identifies the ROM by its internal CRC.
 The release includes the Project64 Parallel-RDP and Parallel-RSP pair, built
 from the vendored sources and selects them by default. The initial JFG profile
 uses English, keyboard/mouse controls plus the first connected gamepad on
-player 1, and 30 FPS with the recommended Jet Force Gemini defaults — fast
-cutscenes, crouch/prone stick-strafing, and sprint. 60 FPS and its game-speed
-corrections remain available under
+player 1, and 60 FPS with the recommended Jet Force Gemini defaults — fast
+cutscenes, crouch/prone stick-strafing, sprint, the game's reticle for gamepad
+aiming, and the widescreen HUD correction and HUD alignment. 30 FPS and every
+other option remain available under
 *Options → Game-specific hacks → Jet Force Gemini*.
 
 ### Experimental widescreen HUD
 
 For the USA retail ROM, select widescreen in the game's own options, enable
 *Force 16:9 display (stretches image)* in the Parallel-RDP graphics settings,
-then check *Correct widescreen HUD* under *Options → Game-specific hacks*.
+and keep *Correct widescreen HUD* checked under *Options → Game-specific hacks*
+(it is on by default).
 The HUD correction includes both ammunition counters, the green shot-capacity
 bars, the pickup message banner (cap position, text alignment and clipping),
 the line-based aiming reticles, and the outline around Floyd's lower-right icon.
@@ -258,8 +261,8 @@ for measured results, remaining limitations, and the developer trace script.
 
 ### HUD alignment
 
-For the USA retail ROM in single-player, enable *Align HUD elements* under
-*Options → Game-specific hacks → Jet Force Gemini*. It gives the weapon frame
+For the USA retail ROM in single-player, *Align HUD elements* under
+*Options → Game-specific hacks → Jet Force Gemini* is on by default. It gives the weapon frame
 and health arc a base left margin of 13 logical units and centres the health
 icon's placement point within the arc. In widescreen, a small optical adjustment
 moves the arc and icon about two logical units further left to align their
@@ -401,7 +404,7 @@ changes carried on top are recorded in
 [Docs/PARALLEL_VENDOR_PROVENANCE.md](./Docs/PARALLEL_VENDOR_PROVENANCE.md).
 Every public binary release must identify its immutable release tag as the
 corresponding source; that tag contains the adapters, vendored sources, and
-build scripts. Binary version metadata is fixed at `0.9.1`; it never incorporates
+build scripts. Binary version metadata is fixed at `0.9.2`; it never incorporates
 a Git commit, build number, or worktree state. The notices and the documented
 rebuild path for the GNU
 Lightning-linked RSP plugin are in [Licenses/](./Licenses).

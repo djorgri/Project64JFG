@@ -4,6 +4,7 @@
 #include "JetForceGeminiAddresses.h"
 #include "JetForceGeminiHudAlignment.h"
 #include "JetForceGeminiFloydHud.h"
+#include "JetForceGeminiRocketOverlay.h"
 #include <Common/DateTime.h>
 #include <Common/path.h>
 #include <math.h>
@@ -83,8 +84,10 @@ const uint32_t GamepadCameraSpeedMin = 1;
 const uint32_t GamepadCameraSpeedMax = 10;
 // The manual aim spends the same counts at half the camera's sensitivity, and
 // a stick cannot make up the difference the way a mouse flick does, so the
-// stick's counts are doubled while the trigger aims through the mouse scheme.
-const float GamepadAimRateMultiplier = 2.0f;
+// stick's counts are boosted while the trigger aims through the mouse scheme.
+// Doubling them made the aim too twitchy; 1.5x keeps the boost noticeable
+// without overshooting.
+const float GamepadAimRateMultiplier = 1.5f;
 const float MouseCameraHeightLimit = 200.0f;
 const float CameraElevationMinTangent = 0.087488664f;
 const float CameraElevationMaxTangent = 1.732050808f;
@@ -614,12 +617,17 @@ const size_t WidescreenHudMainCaveWordCount =
 // The original report is restored in full, including after loading a saved hook.
 // Keep the intervening diCpuLogMessage code entirely outside our memory image.
 const uint32_t WidescreenHudReticleStub = 0x80067790;
+const uint32_t WidescreenHudReticleWeaponStub = 0x8006738C;
 const uint32_t WidescreenHudReticleCaveEnd = 0x80067950;
-const size_t WidescreenHudCaveWordCount = WidescreenHudMainCaveWordCount +
+const size_t WidescreenHudOldCaveWordCount = WidescreenHudMainCaveWordCount +
     (WidescreenHudReticleCaveEnd - WidescreenHudReticleStub) / sizeof(uint32_t);
+const size_t WidescreenHudCaveWordCount = WidescreenHudOldCaveWordCount +
+    sizeof(JfgRocketOverlay::Code) / sizeof(uint32_t);
 
 uint32_t WidescreenHudCaveWordAddress(size_t Index)
 {
+    if (Index >= WidescreenHudOldCaveWordCount)
+        return JfgRocketOverlay::Start + (uint32_t)((Index - WidescreenHudOldCaveWordCount) * 4);
     return Index < WidescreenHudMainCaveWordCount ?
         WidescreenHudCaveStart + (uint32_t)(Index * sizeof(uint32_t)) :
         WidescreenHudReticleStub + (uint32_t)((Index - WidescreenHudMainCaveWordCount) * sizeof(uint32_t));
@@ -691,15 +699,38 @@ const WIDESCREEN_HUD_RETICLE_CALL WidescreenHudReticleCalls[] =
     { 0xE98, 0xAFB10010 },
 };
 
-// frontDrawTarget passes already projected/rotated endpoints, with its aim
-// centre in s4. Compress each X offset around that centre BEFORE clipping and
-// CPU line rasterization; never rescale the centre or thin a bitmap afterwards.
-// Round 3*dx/4 to nearest, ties away from zero, to keep mirrored lines symmetric.
+// Recognition/removal only: retire the previous experimental style-2 slope
+// patch, including snapshots made by that build. All CPU line styles now use
+// the original renderer. Local reticle segments now use the host overlay.
+const GAME_HACK_CODE_PATCH WidescreenHudReticleRasterRetired[] =
+{
+    { 0x8006E8B0, 0x02602025, 0x02602025 }, // move a0,s3 ; current pixel
+    { 0x8006E8B4, 0x026F082B, 0x026F082B },
+    { 0x8006E8B8, 0x1420007E, 0x00000000 }, // endpoints were already clipped
+    { 0x8006E8BC, 0x33C500FF, 0x33C500FF }, // andi a1,fp,255 ; native red
+    { 0x8006E8C0, 0x0010C040, 0x0010C040 }, // s0 is now the general major stride
+    { 0x8006E8C4, 0xAFB80048, 0xAFB80048 },
+    { 0x8006E8C8, 0x0C01B6BA, 0x0C01B6BA }, // jal PlotAddRG
+    { 0x8006E8CC, 0x32E600FF, 0x32E600FF }, // andi a2,s7,255 ; native green
+    { 0x8006E8D0, 0x8FAA00CC, 0x0801B9FC }, // j general slope advance
+    { 0x8006E8D4, 0x8FB90048, 0x8FA800D4 }, // lw t0,0xd4(sp) ; restore accumulator
+    { 0x8006E4C0, 0x102000CB, 0x102000FB }, // style 2 uses the thin pixel call
+    { 0x8006E4C4, 0x000B5880, 0x000B5880 }, // preserve other styles' table index
+    { 0x8006E840, 0x00035B00, 0x00035B00 }, // original entry delay is harmless
+    { 0x8006E83C, 0x8FB800A0, 0x0801B8D4 }, // j general slope setup
+};
+
+// frontDrawTarget passes projected/rotated endpoints and its aim centre in s4.
+// The legacy image compressed each X offset by 3/4 before clipping. Keep that
+// image and the current stub's layout recognizable for saved-code migration.
+// The live dispatcher below now captures native endpoints for every weapon;
+// its old compression arithmetic is unreachable.
 // The original call delay has run; this tail call preserves ra, stack arguments,
 // Y, colour, all saved registers, HI/LO and the FPU. t0/t1 are caller-saved.
 // Normal reticles run outside the HUD scope. If a diagnostic forces that scope
 // open, leave the existing fxDrawLine correction to act once, not twice.
-const uint32_t WidescreenHudReticleCode[] =
+// Keep the old full image recognizable if a state replaces an owned cave.
+const uint32_t WidescreenHudReticleLegacyCode[] =
 {
     0x3C088010, // lui   t0, 0x8010
     0x91092553, // lbu   t1, 0x2553(t0) ; scope depth
@@ -727,6 +758,48 @@ const uint32_t WidescreenHudReticleCode[] =
     0x0801B563, // stock: j fxDrawLineInWindow (original entry/prologue)
     0x00000000, // nop
 };
+const uint32_t WidescreenHudReticleCode[] =
+{
+    0x3C088010, // lui   t0, 0x8010
+    0x91092553, // lbu   t1, 0x2553(t0) ; scope depth
+    0x15200014, // bne   t1, zero, stock
+    0x9108ECA8, // lbu   t0, -0x1358(t0) ; resolution index
+    0x31080001, // andi  t0, t0, 1
+    0x11000011, // beq   t0, zero, stock
+    0x8FA90050, // lw    t1,0x50(sp) ; frontDrawTarget's saved weapon index
+    0x08019CE3, // j     weapon filter in the unused FontDtdy slot tail
+    0x24080005, // addiu t0,zero,5
+    0x01094021, // addu  t0, t0, t1 ; 3*dx
+    0x00084FC3, // sra   t1, t0, 31 ; -1 for negative, 0 otherwise
+    0x25080002, // addiu t0, t0, 2
+    0x01094021, // addu  t0, t0, t1 ; symmetric rounding before /4
+    0x00084083, // sra   t0, t0, 2
+    0x01142021, // addu  a0, t0, s4
+    0x00D44023, // subu  t0, a2, s4 ; second endpoint
+    0x00084840, // sll   t1, t0, 1
+    0x01094021, // addu  t0, t0, t1
+    0x00084FC3, // sra   t1, t0, 31
+    0x25080002, // addiu t0, t0, 2
+    0x01094021, // addu  t0, t0, t1
+    0x00084083, // sra   t0, t0, 2
+    0x01143021, // addu  a2, t0, s4
+    0x0801B563, // stock: j fxDrawLineInWindow (original entry/prologue)
+    0x00000000, // nop
+};
+// All frontDrawTarget weapon indices now offer their uncompressed segments to
+// the host overlay. Keep the five-word slot and unused arithmetic tail stable
+// for old save states; the branch is unconditional instead of filtering 1/5.
+// A plugin without the overlay still uses the game's original line renderer.
+const uint32_t WidescreenHudReticleWeaponCode[] =
+{
+    0x35290004, // ori   t1,t1,4
+    0x100003DB, // b     0x80068300 ; optional host capture for every weapon
+    0x00944023, // subu  t0,a0,s4
+    0x08019DED, // j     0x800677B4 ; continue first endpoint's 3*dx
+    0x00084840, // sll   t1,t0,1
+};
+static_assert(WidescreenHudReticleWeaponStub + sizeof(WidescreenHudReticleWeaponCode) == WidescreenHudSpriteScaleStub,
+              "Reticle weapon filter must fit the unused font slot tail");
 static_assert(WidescreenHudReticleStub + sizeof(WidescreenHudReticleCode) == WidescreenHudShotGaugeWrapperStub,
               "Reticle and shot-gauge stubs must not overlap");
 static_assert(WidescreenHudReticleStub >= 0x80067790 && WidescreenHudReticleCaveEnd <= 0x80067950,
@@ -5051,6 +5124,9 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
     {
         FixedPatches.push_back({ Patch.Address, Patch.Original, Patch.Replacement });
     }
+    // fxOutputLines has obtained the dimensions but has not flipped its queue.
+    FixedPatches.push_back({ 0x8006E1C4, 0x24A53B90, 0x3C058010 });
+    FixedPatches.push_back({ 0x8006E1C0, 0x3C058010, JumpTo(JfgRocketOverlay::Submit) });
 
     // Earlier builds patched the framebuffer digit renderer, one of them
     // through a cave trampoline. Both forms are returned to stock below before
@@ -5114,6 +5190,11 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
     };
 
     auto CaptureCaveImage = [this, &CaveCodeMatches]() {
+        const bool SavedRocket = CaveCodeMatches(JfgRocketOverlay::Start,
+            JfgRocketOverlay::Code, sizeof(JfgRocketOverlay::Code) / sizeof(uint32_t));
+        if (!SavedRocket && !CaveCodeMatches(JfgRocketOverlay::Start,
+            JfgRocketOverlay::Original, sizeof(JfgRocketOverlay::Original) / sizeof(uint32_t)))
+            return false;
         // A fresh runtime may adopt a snapshot containing our raster helpers.
         // Reopening the original diagnostic entry over that saved helper body
         // would be unsafe. Normalize this entire recognizable function to its
@@ -5144,6 +5225,9 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
                 return false;
             }
             const uint32_t Address = WidescreenHudCaveWordAddress(i);
+            if (Address >= JfgRocketOverlay::Start && Address < JfgRocketOverlay::End)
+                m_WidescreenHudCaveOriginal[i] = JfgRocketOverlay::Original[
+                    (Address - JfgRocketOverlay::Start) / 4];
             if (SavedFloydDiagnostic && Address >= JfgFloydHud::GuardStub &&
                 Address < JfgFloydHud::GuardStub + sizeof(JfgFloydHud::OriginalDiagnosticCode))
             {
@@ -5185,6 +5269,10 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
                 Index = WidescreenHudMainCaveWordCount +
                     (Address - WidescreenHudReticleStub) / sizeof(uint32_t);
             }
+            else if (Address == JfgRocketOverlay::Start && Count == sizeof(JfgRocketOverlay::Code) / 4)
+            {
+                Index = WidescreenHudOldCaveWordCount;
+            }
             else
             {
                 // The diagnostic logger between the two segments is not ours.
@@ -5205,7 +5293,8 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
             return true;
         };
 
-        if (!PlaceCode(WidescreenHudScopeEnterStub, WidescreenHudScopeEnterCode,
+        if (!PlaceCode(JfgRocketOverlay::Start, JfgRocketOverlay::Code, sizeof(JfgRocketOverlay::Code) / 4) ||
+            !PlaceCode(WidescreenHudScopeEnterStub, WidescreenHudScopeEnterCode,
                        sizeof(WidescreenHudScopeEnterCode) / sizeof(WidescreenHudScopeEnterCode[0])) ||
             !PlaceCode(WidescreenHudScopeExitStub, WidescreenHudScopeExitCode,
                        sizeof(WidescreenHudScopeExitCode) / sizeof(WidescreenHudScopeExitCode[0])) ||
@@ -5231,6 +5320,8 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
                        sizeof(WidescreenHudAmmoCode) / sizeof(WidescreenHudAmmoCode[0])) ||
             !PlaceCode(WidescreenHudReticleStub, WidescreenHudReticleCode,
                        sizeof(WidescreenHudReticleCode) / sizeof(WidescreenHudReticleCode[0])) ||
+            !PlaceCode(WidescreenHudReticleWeaponStub, WidescreenHudReticleWeaponCode,
+                       sizeof(WidescreenHudReticleWeaponCode) / sizeof(WidescreenHudReticleWeaponCode[0])) ||
             !PlaceCode(WidescreenHudShotGaugeWrapperStub, WidescreenHudShotGaugeWrapperCode,
                        sizeof(WidescreenHudShotGaugeWrapperCode) / sizeof(WidescreenHudShotGaugeWrapperCode[0])) ||
             !PlaceCode(WidescreenHudShotGaugeAnchorStub, WidescreenHudShotGaugeAnchorCode,
@@ -5267,6 +5358,9 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
             WidescreenHudRectangleStub, WidescreenHudRectangleLegacyCode,
             sizeof(WidescreenHudRectangleLegacyCode) /
                 sizeof(WidescreenHudRectangleLegacyCode[0]));
+        const bool LegacyReticle = CaveCodeMatches(
+            WidescreenHudReticleStub, WidescreenHudReticleLegacyCode,
+            sizeof(WidescreenHudReticleLegacyCode) / sizeof(uint32_t));
         std::vector<GAME_HACK_CODE_WRITE> Writes(WidescreenHudCaveWordCount);
         for (size_t i = 0; i < Writes.size(); i++)
         {
@@ -5275,6 +5369,12 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
             Write.Desired = Install ? HookImage[i] : m_WidescreenHudCaveOriginal[i];
             Write.Allowed[0] = m_WidescreenHudCaveOriginal[i];
             Write.AllowedCount = 1;
+            // Recognize both the stock rocket exclusion and the rocket-only overlay.
+            if (Write.Address == WidescreenHudReticleWeaponStub + 4)
+            {
+                Write.Allowed[Write.AllowedCount++] = 0x11280116;
+                Write.Allowed[Write.AllowedCount++] = 0x112803DB;
+            }
             if (HookImage[i] != m_WidescreenHudCaveOriginal[i])
             {
                 Write.Allowed[Write.AllowedCount++] = HookImage[i];
@@ -5284,6 +5384,12 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
             {
                 Write.Allowed[Write.AllowedCount++] = WidescreenHudSpritePositionLegacyCode[
                     (Write.Address - WidescreenHudSpritePositionStub) / sizeof(uint32_t)];
+            }
+            if (LegacyReticle && Write.Address >= WidescreenHudReticleStub &&
+                Write.Address < WidescreenHudReticleStub + sizeof(WidescreenHudReticleLegacyCode))
+            {
+                Write.Allowed[Write.AllowedCount++] = WidescreenHudReticleLegacyCode[
+                    (Write.Address - WidescreenHudReticleStub) / sizeof(uint32_t)];
             }
             if (LegacyRectangle && Write.Address >= WidescreenHudRectangleStub &&
                 Write.Address < WidescreenHudRectangleStub + sizeof(WidescreenHudRectangleLegacyCode))
@@ -5307,6 +5413,17 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         Enabled = ExactUsRom &&
             m_Memory.ReadU8(WidescreenHudResolutionIndexAddress, Resolution) &&
             IsWidescreenHudResolution(Resolution);
+    }
+
+    if (ExactUsRom)
+    {
+        const auto Result = m_CodePatcher.SetEnabled(WidescreenHudReticleRasterRetired,
+            sizeof(WidescreenHudReticleRasterRetired) / sizeof(WidescreenHudReticleRasterRetired[0]), false);
+        if (Result == CGameHackCodePatcher::Result_SignatureMismatch ||
+            Result == CGameHackCodePatcher::Result_MemoryUnavailable)
+        {
+            return false;
+        }
     }
 
     // Recover known saved hooks before handling disable as well as enable.

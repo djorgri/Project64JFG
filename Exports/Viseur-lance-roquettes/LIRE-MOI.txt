@@ -1,0 +1,10 @@
+Viseur du lance-roquettes (Tri-Rocket Launcher), rendu d'origine sans correction 16/9.
+
+Fichier a modifier : viseur-lance-roquettes.bmp (65 x 65 pixels, monochrome).
+Blanc = trait ; noir = fond vide. Centre de visee : x=32, y=32 (origine en haut a gauche).
+Un pixel du fichier correspond a un pixel du framebuffer d'origine.
+Conserver les dimensions et le centre ; dessiner au crayon sans lissage.
+Le PNG contient le meme masque. apercu-x8.png est uniquement un agrandissement de lecture.
+Les chiffres de distance/angle et les changements de couleur ne sont pas inclus.
+Les intensites vertes du jeu sont volontairement reunies en blanc pour obtenir un masque editable.
+Cet export n'est pas encore charge par l'emulateur : modifier le BMP ne change pas le jeu.

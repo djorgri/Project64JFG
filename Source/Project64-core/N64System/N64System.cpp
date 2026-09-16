@@ -2209,6 +2209,10 @@ bool CN64System::LoadState(const char * FileName)
     }
     m_Plugins->Audio()->DacrateChanged(g_GameSettings.systemType);
 
+    // Host reticle queues are deliberately not guest save-state data.
+    if (m_Plugins->Gfx()->JfgReticleCommand)
+        m_Plugins->Gfx()->JfgReticleCommand(0, 0);
+
     // Fix random register
     while ((int)m_Reg.RANDOM_REGISTER < (int)m_Reg.WIRED_REGISTER)
     {

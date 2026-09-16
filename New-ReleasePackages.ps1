@@ -34,6 +34,46 @@ function Remove-BuildArtifacts {
         Remove-Item -Recurse -Force
 }
 
+function Remove-RuntimeData {
+    param([Parameter(Mandatory)][string] $Directory)
+
+    # Running the emulator from bin\<platform>\<configuration> fills it with
+    # personal data: save states, logs, screenshots, probe dumps, caches. None
+    # of that belongs in a distribution, and the emulator recreates the
+    # directories it needs on first launch.
+    foreach ($name in 'Logs', 'Roms', 'Save', 'Screenshots', 'Scripts', 'Textures') {
+        $path = Join-Path $Directory $name
+        if (Test-Path -LiteralPath $path) {
+            Remove-Item -LiteralPath $path -Recurse -Force
+        }
+    }
+
+    Get-ChildItem -LiteralPath $Directory -Force -File |
+        Where-Object { $_.Extension -in '.log', '.dump' } |
+        Remove-Item -Force
+
+    # The Parallel-RDP plugin keeps its settings next to its DLL and falls
+    # back to the defaults when the file is absent.
+    $rdpSettings = Join-Path $Directory 'Plugin\GFX\Project64-ParallelRDP.ini'
+    if (Test-Path -LiteralPath $rdpSettings) {
+        Remove-Item -LiteralPath $rdpSettings -Force
+    }
+
+    $configDirectory = Join-Path $Directory 'Config'
+    if (Test-Path -LiteralPath $configDirectory) {
+        Get-ChildItem -LiteralPath $configDirectory -Force -File |
+            Where-Object { $_.Extension -in '.cache3', '.rdn', '.sc3', '.zcache' } |
+            Remove-Item -Force
+
+        foreach ($name in 'Cheats-User', 'Enhancements-User') {
+            $path = Join-Path $configDirectory $name
+            if (Test-Path -LiteralPath $path) {
+                Remove-Item -LiteralPath $path -Recurse -Force
+            }
+        }
+    }
+}
+
 function Reset-DistributionConfiguration {
     param([Parameter(Mandatory)][string] $ConfigFile)
 
@@ -135,6 +175,7 @@ foreach ($build in $builds) {
         New-Item -ItemType Directory -Path $packageRoot | Out-Null
         Copy-Item -Path (Join-Path $source '*') -Destination $packageRoot -Recurse -Force
         Remove-BuildArtifacts -Directory $packageRoot
+        Remove-RuntimeData -Directory $packageRoot
 
         Copy-Item -LiteralPath $configTemplate -Destination (Join-Path $packageRoot 'Config\Project64.cfg') -Force
         Reset-DistributionConfiguration -ConfigFile (Join-Path $packageRoot 'Config\Project64.cfg')

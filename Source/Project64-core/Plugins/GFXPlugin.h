@@ -22,6 +22,8 @@ public:
     void(CALL * ViStatusChanged)(void);
     void(CALL * ViWidthChanged)(void);
     void(CALL * SoftReset)(void);
+    // Optional JFG presentation layer. Packet addresses refer to guest RDRAM.
+    void(CALL * JfgReticleCommand)(uint32_t Command, uint32_t Packet);
 #ifdef ANDROID
     void(CALL * SurfaceCreated)(void);
     void(CALL * SurfaceChanged)(int w, int h);
