@@ -104,6 +104,8 @@ The Jet Force Gemini settings list three input sources, **Keyboard/mouse**,
 During crouch, Q/D are routed to N64 C-left/C-right. The equivalent prone
 behaviour is configurable in the **Controls** tab. Floyd lateral movement is
 experimental and enabled by default; Q/D move sideways during Floyd missions.
+Jump/Crouch (Space/Ctrl on keyboard, A/B on gamepad) accelerate upward/downward
+with the same inertia and gradual braking. Opposite inputs cancel the thrust.
 Its contextual flight controls use W/S (or E/F) for A/B throttle, while the
 mouse controls its reticle or camera according to the selected Floyd option.
 

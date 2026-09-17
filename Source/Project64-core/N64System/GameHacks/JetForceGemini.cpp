@@ -290,6 +290,10 @@ uint32_t DroneLateralMaxSpeedAddress = 0x8009FCA4;
 // Our lateral velocity. The engine has none to borrow, since it stores movement
 // as heading times speed, so this is the one piece of state the stub owns.
 uint32_t DroneLateralVelocityAddress = 0x8009FCAC;
+// Reuse the position-delta words of the retired movement hooks. The active
+// flight hook owns these as vertical thrust and persistent vertical velocity.
+uint32_t DroneVerticalThrustAddress = 0x8009FCD0;
+uint32_t DroneVerticalVelocityAddress = 0x8009FCD4;
 // The axis the thrust pushes along, from the camera rather than from
 // sk->0x28/0x30: that pair is the direction Floyd is travelling, which drifts
 // away from where the player is looking.
@@ -320,7 +324,7 @@ const float DroneLateralAngleScale = 6.283185307f / 65536.0f;
 // the two update rates from diverging.
 const float DroneLateralSideThrust = 0.15f;
 const float DroneLateralDrag = 0.975f;
-// Also the cap on the forward and lateral speeds combined, matching the value
+// Also the cap on forward, lateral and vertical speeds combined, matching the value
 // the engine sets for its own forward axis at 0x8003045C.
 const float DroneLateralMaxSpeed = 8.0f;
 
@@ -422,12 +426,11 @@ uint32_t SidekickStrafeEntry = 0x80030060;
 uint32_t SidekickStrafeDelay = 0x80030064;
 const uint32_t SidekickStrafeEntryOriginal = 0xC7A400AC; // lwc1 $f4, 0xAC($sp)
 const uint32_t SidekickStrafeDelayOriginal = 0xC6080000; // lwc1 $f8, 0x0($s0)
-// Reuses the address the retired sidekickpadMovePlayer stub occupied. That one
-// ran over a hundred times per drone session without faulting, so this is the
-// one spot in diCpuTraceInit proven dead by execution rather than by arithmetic
-// on neighbouring stub sizes. It is 28 words of proven room and this stub is
-// 27. PlayerVelocityStub shares the address but is never installed.
+// The lateral half reuses the retired sidekickpadMovePlayer cave. The vertical
+// half uses the retired camera/velocity hook cave, keeping both clear of the
+// active pad probe and object-movement dispatcher on US and Kiosk.
 uint32_t SidekickStrafeStub = 0x80066C00;
+uint32_t SidekickVerticalStub = 0x80066F00;
 uint32_t SidekickStrafeJump = 0x08019B00; // j SidekickStrafeStub
 uint32_t SidekickStrafeResumeJump = 0x0800C01A; // j 0x80030068
 uint32_t SidekickPadProbeStub = 0x80066D80;
@@ -2340,7 +2343,7 @@ const uint32_t SidekickStrafeHookCode[] =
     0xE722FCC4, // swc1  $f2, 0xFCC4($t9)    published to compare the two ramps
     0x8F29FCE4, // lw    $t1, 0xFCE4($t9)
     0x312A0001, // andi  $t2, $t1, 1
-    0x11400028, // beq   $t2, $zero, done
+    0x1140001A, // beq   $t2, $zero, vertical (its inactive path replays $f8)
     0x00000000, // nop
     0x8F2BFCE8, // lw    $t3, 0xFCE8($t9)    diagnostic: hook hit count
     0x256B0001, // addiu $t3, $t3, 1
@@ -2367,26 +2370,60 @@ const uint32_t SidekickStrafeHookCode[] =
     0x46023180, // add.s $f6, $f6, $f2       velocity X += lateral * rightX
     0xC7020024, // lwc1  $f2, 0x24($t8)
     0x46121080, // add.s $f2, $f2, $f18      velocity Z += lateral * rightZ, signed
-    // Bound the sum, not each axis: turning hard at full speed otherwise lets
-    // the lateral drift ride on top of the forward speed.
-    0x46063282, // mul.s $f10, $f6, $f6
-    0x46021382, // mul.s $f14, $f2, $f2
-    0x460E5380, // add.s $f14, $f10, $f14
-    0x46007384, // sqrt.s $f14, $f14         combined horizontal speed
+    0x08019BC0, // j     SidekickVerticalStub (relocated when installed)
+    0x00000000, // nop
+};
+
+// Continue with world-up thrust, independent of camera pitch/yaw. $f6/$f2
+// carry X/Z from the lateral half; $f4 is still the native frame step. The
+// engine reads object+0x20 for Y immediately after this hook, then applies its
+// normal position/collision work. Both axes share acceleration, drag and cap.
+const uint32_t SidekickVerticalHookCode[] =
+{
+    0x11400024, // beq   $t2, $zero, done
+    0x00000000, // nop
+    0xC730FCD4, // lwc1  $f16, 0xFCD4($t9)   vertical velocity
+    0xC732FCC0, // lwc1  $f18, 0xFCC0($t9)   drag
+    0x46128402, // mul.s $f16, $f16, $f18
+    0xC732FCD0, // lwc1  $f18, 0xFCD0($t9)   signed vertical thrust
+    0x46049482, // mul.s $f18, $f18, $f4
+    0x46128400, // add.s $f16, $f16, $f18
+    0xC732FCA4, // lwc1  $f18, 0xFCA4($t9)   speed cap
+    0x46008385, // abs.s $f14, $f16
+    0x4612703E, // c.le.s $f14, $f18
+    0x00000000, // nop
+    0x45010003, // bc1t  store vertical velocity
+    0x00000000, // nop
+    0x460E8403, // div.s $f16, $f16, $f14
+    0x46128402, // mul.s $f16, $f16, $f18
+    0xE730FCD4, // swc1  $f16, 0xFCD4($t9)
+    0xC70A0020, // lwc1  $f10, 0x20($t8)     native vertical velocity
+    0x46105280, // add.s $f10, $f10, $f16
+    // Bound all three components together, including native forward flight.
+    0x46063382, // mul.s $f14, $f6, $f6
+    0x46021482, // mul.s $f18, $f2, $f2
+    0x46127380, // add.s $f14, $f14, $f18
+    0x460A5482, // mul.s $f18, $f10, $f10
+    0x46127380, // add.s $f14, $f14, $f18
+    0x46007384, // sqrt.s $f14, $f14
     0xC730FCA4, // lwc1  $f16, 0xFCA4($t9)
     0x4610703E, // c.le.s $f14, $f16
     0x00000000, // nop
-    0x45010004, // bc1t  within the cap
+    0x45010005, // bc1t  store velocity
     0x00000000, // nop
-    0x460E8403, // div.s $f16, $f16, $f14    cap / magnitude, magnitude > cap > 0
+    0x460E8403, // div.s $f16, $f16, $f14
     0x46103182, // mul.s $f6, $f6, $f16
     0x46101082, // mul.s $f2, $f2, $f16
+    0x46105282, // mul.s $f10, $f10, $f16
     0xE706001C, // swc1  $f6, 0x1C($t8)
+    0xE70A0020, // swc1  $f10, 0x20($t8)
     0xE7020024, // swc1  $f2, 0x24($t8)
     SidekickStrafeDelayOriginal, // done: replay the overwritten lwc1 $f8, 0x0($s0)
-    SidekickStrafeResumeJump,
+    0x0800C01A, // j     SidekickStrafeResumeJump (relocated when installed)
     0x00000000, // nop
 };
+static_assert(sizeof(SidekickStrafeHookCode) <= 0xC0, "Floyd lateral cave overflow");
+static_assert(sizeof(SidekickVerticalHookCode) <= 0xC4, "Floyd vertical cave overflow");
 
 // sidekickpadCamera writes the mission camera position in the delay slot of
 // this call. The trampoline therefore runs after its native X/Z calculation,
@@ -2808,6 +2845,7 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     PlayerVelocityStub = A.PlayerVelocityStub;
     FloydMoveHookStub = A.FloydMoveHookStub;
     SidekickStrafeStub = A.SidekickStrafeStub;
+    SidekickVerticalStub = A.SidekickVerticalStub;
     SidekickControlProbeStub = A.SidekickControlProbeStub;
     SidekickPadProbeStub = A.SidekickPadProbeStub;
     ObjectMoveStub = A.ObjectMoveStub;
@@ -2828,6 +2866,8 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     DroneLateralMaxSpeedAddress = A.DroneLateralMaxSpeedAddress;
     DroneLateralSideFactorAddress = A.DroneLateralSideFactorAddress;
     DroneLateralVelocityAddress = A.DroneLateralVelocityAddress;
+    DroneVerticalThrustAddress = A.DroneVerticalThrustAddress;
+    DroneVerticalVelocityAddress = A.DroneVerticalVelocityAddress;
     DroneLateralRightZAddress = A.DroneLateralRightZAddress;
     FloydCameraPreviousXAddress = A.FloydCameraPreviousXAddress;
     FloydCameraPreviousZAddress = A.FloydCameraPreviousZAddress;
@@ -3383,6 +3423,8 @@ void CJetForceGeminiRuntime::StateSaving(void)
     m_Memory.WriteU32(DroneLateralFlagsAddress, 0);
     m_Memory.WriteF32(DroneLateralSideFactorAddress, 0.0f);
     m_Memory.WriteF32(DroneLateralVelocityAddress, 0.0f);
+    m_Memory.WriteF32(DroneVerticalThrustAddress, 0.0f);
+    m_Memory.WriteF32(DroneVerticalVelocityAddress, 0.0f);
     m_Memory.WriteU32(DroneLateralPreviousObjectAddress, 0);
 
     m_SprintApplied = false;
@@ -3450,6 +3492,8 @@ void CJetForceGeminiRuntime::StateLoaded(void)
     m_Memory.WriteU32(DroneLateralFlagsAddress, 0);
     m_Memory.WriteF32(DroneLateralSideFactorAddress, 0.0f);
     m_Memory.WriteF32(DroneLateralVelocityAddress, 0.0f);
+    m_Memory.WriteF32(DroneVerticalThrustAddress, 0.0f);
+    m_Memory.WriteF32(DroneVerticalVelocityAddress, 0.0f);
     m_Memory.WriteU32(DroneLateralPreviousObjectAddress, 0);
     m_DroneLateralApplied = false;
     m_DroneLateralPositionValid = false;
@@ -7393,27 +7437,58 @@ bool CJetForceGeminiRuntime::PatchSidekickVelocityLateralMove(bool Enabled)
     return true;
 }
 
-// Only the entry word is displaced. The delay slot at 0x80030064 reloads $f8
-// from Floyd's position and the stub resumes on it, so letting it run twice is
-// harmless and one patched instruction is enough.
+// Relocate the two flight stubs' US instruction templates for the selected ROM.
+// Every $t9-relative load/store belongs to the same reserved scratch region.
+uint32_t SidekickFlightHookWord(uint32_t Word)
+{
+    if (Word == 0x3C19800A)
+    {
+        return WithHi(Word, DroneLateralMaxSpeedAddress);
+    }
+    const uint32_t Opcode = Word >> 26;
+    if (((Word >> 21) & 31) == 25 &&
+        (Opcode == 0x23 || Opcode == 0x2B || Opcode == 0x31 || Opcode == 0x39))
+    {
+        const uint32_t UsAddress = 0x800A0000 + (int16_t)(Word & 0xFFFF);
+        return WithLo(Word, DroneLateralMaxSpeedAddress + (UsAddress - 0x8009FCA4));
+    }
+    if (Word == 0x08019BC0)
+    {
+        return JumpTo(SidekickVerticalStub);
+    }
+    if (Word == 0x0800C01A)
+    {
+        return SidekickStrafeResumeJump;
+    }
+    return Word;
+}
+
+// Move the original frame-step load into the entry's delay slot. The second
+// cave restores $f8 and resumes at entry + 8, outside that delay slot.
 bool CJetForceGeminiRuntime::PatchSidekickStrafe(bool Enabled)
 {
-    const size_t StubCount = sizeof(SidekickStrafeHookCode) / sizeof(SidekickStrafeHookCode[0]);
+    const size_t LateralCount = sizeof(SidekickStrafeHookCode) / sizeof(SidekickStrafeHookCode[0]);
+    const size_t StubCount = LateralCount + sizeof(SidekickVerticalHookCode) / sizeof(SidekickVerticalHookCode[0]);
     const GAME_HACK_CODE_PATCH EntryPatches[] =
     {
         { SidekickStrafeEntry, SidekickStrafeEntryOriginal, SidekickStrafeJump },
         { SidekickStrafeDelay, SidekickStrafeDelayOriginal, SidekickStrafeEntryOriginal },
     };
-    auto BuildStubWrites = [this, StubCount](std::vector<GAME_HACK_CODE_WRITE> & Writes, bool Install) {
+    auto StubAddress = [LateralCount](size_t Index) {
+        return Index < LateralCount ? SidekickStrafeStub + (uint32_t)(Index * sizeof(uint32_t)) :
+                                     SidekickVerticalStub + (uint32_t)((Index - LateralCount) * sizeof(uint32_t));
+    };
+    auto BuildStubWrites = [this, StubCount, LateralCount, StubAddress](std::vector<GAME_HACK_CODE_WRITE> & Writes, bool Install) {
         Writes.resize(StubCount);
         for (size_t Index = 0; Index < StubCount; Index++)
         {
             GAME_HACK_CODE_WRITE & Write = Writes[Index];
-            Write.Address = SidekickStrafeStub + (uint32_t)(Index * sizeof(uint32_t));
-            Write.Desired = Install ? SidekickStrafeHookCode[Index] :
-                                      m_SidekickStrafeHookStubOriginal[Index];
+            const uint32_t Word = SidekickFlightHookWord(Index < LateralCount ? SidekickStrafeHookCode[Index] :
+                                                                              SidekickVerticalHookCode[Index - LateralCount]);
+            Write.Address = StubAddress(Index);
+            Write.Desired = Install ? Word : m_SidekickStrafeHookStubOriginal[Index];
             Write.Allowed[0] = m_SidekickStrafeHookStubOriginal[Index];
-            Write.Allowed[1] = SidekickStrafeHookCode[Index];
+            Write.Allowed[1] = Word;
             Write.AllowedCount = 2;
         }
     };
@@ -7473,7 +7548,7 @@ bool CJetForceGeminiRuntime::PatchSidekickStrafe(bool Enabled)
     for (size_t Index = 0; Index < StubCount; Index++)
     {
         if (!m_Memory.ReadU32(
-                SidekickStrafeStub + (uint32_t)(Index * sizeof(uint32_t)),
+                StubAddress(Index),
                 m_SidekickStrafeHookStubOriginal[Index]))
         {
             m_SidekickStrafeHookStubOriginal.clear();
@@ -7501,6 +7576,8 @@ bool CJetForceGeminiRuntime::PatchSidekickStrafe(bool Enabled)
     }
     m_Memory.WriteU32(DroneLateralHookHitsAddress, 0);
     m_SidekickStrafeHookApplied = true;
+    m_Memory.WriteF32(DroneLateralVelocityAddress, 0.0f);
+    m_Memory.WriteF32(DroneVerticalVelocityAddress, 0.0f);
     return true;
 }
 
@@ -8434,6 +8511,8 @@ void CJetForceGeminiRuntime::Deactivate(void)
     m_Memory.WriteU32(DroneLateralFlagsAddress, 0);
     m_Memory.WriteF32(DroneLateralSideFactorAddress, 0.0f);
     m_Memory.WriteF32(DroneLateralVelocityAddress, 0.0f);
+    m_Memory.WriteF32(DroneVerticalThrustAddress, 0.0f);
+    m_Memory.WriteF32(DroneVerticalVelocityAddress, 0.0f);
     m_Memory.WriteU32(DroneLateralPreviousObjectAddress, 0);
     PatchSchedulerRelease(false);
     PatchTripleBuffer(false);
@@ -9337,22 +9416,23 @@ void CJetForceGeminiRuntime::MapController(
 
     const bool DroneCameraDirect = DroneMode && g_Settings->LoadBool(Setting_JfgDroneCameraDirect);
     const bool DroneOnStick = DroneMode && !DroneCameraDirect;
-    const bool DroneLateralMovement =
-        DroneMode && g_Settings->LoadBool(Setting_JfgDroneLateralMovement) && Left != Right;
-    m_DroneLateralActive = DroneLateralMovement;
+    const bool DroneThrusters = DroneMode && g_Settings->LoadBool(Setting_JfgDroneLateralMovement);
+    const bool DroneLateralMovement = DroneThrusters && Left != Right;
+    const bool DroneVerticalMovement = DroneThrusters && CUp != CDown;
+    m_DroneLateralActive = DroneLateralMovement || DroneVerticalMovement;
     m_DroneLateralRight = Right;
-    uint32_t DroneLateralFlags = 0;
+    uint32_t DroneLateralFlags = DroneThrusters ? DroneLateralActive | (Right ? DroneLateralRight : 0) : 0;
     // The stub stays armed for the whole drone section rather than only while a
     // strafe key is down, so the lateral velocity it holds can decay through
     // drag after the key is released instead of being frozen mid-drift.
     float DroneLateralSideFactor = 0.0f;
+    const float DroneVerticalThrust = DroneVerticalMovement ? (CUp ? 1.0f : -1.0f) * DroneLateralSideThrust : 0.0f;
     float DroneLateralRightX = 0.0f;
     float DroneLateralRightZ = 0.0f;
     int16_t DroneCameraYaw = 0;
-    if (DroneMode && g_Settings->LoadBool(Setting_JfgDroneLateralMovement) &&
+    if (DroneThrusters &&
         m_Memory.ReadS16(PlayerObject + DroneYawSourceOffsetA, DroneCameraYaw))
     {
-        DroneLateralFlags = DroneLateralActive | (Right ? DroneLateralRight : 0);
         const float Angle = (float)DroneCameraYaw * DroneLateralAngleScale;
         DroneLateralRightX = cosf(Angle);
         DroneLateralRightZ = -sinf(Angle);
@@ -9368,11 +9448,18 @@ void CJetForceGeminiRuntime::MapController(
     {
         m_Memory.WriteU32(DroneLateralFlagsAddress, DroneLateralFlags);
         m_Memory.WriteF32(DroneLateralSideFactorAddress, DroneLateralSideFactor);
+        m_Memory.WriteF32(DroneVerticalThrustAddress, DroneVerticalThrust);
         m_Memory.WriteF32(DroneLateralDragAddress, DroneLateralDrag);
         m_Memory.WriteF32(DroneLateralMaxSpeedAddress, DroneLateralMaxSpeed);
         m_Memory.WriteF32(DroneLateralRightXAddress, DroneLateralRightX);
         m_Memory.WriteF32(DroneLateralRightZAddress, DroneLateralRightZ);
-        if (!DroneLateralMovement)
+        if (!DroneThrusters)
+        {
+            // Do not carry drift into a new mission or an option re-enable.
+            m_Memory.WriteF32(DroneLateralVelocityAddress, 0.0f);
+            m_Memory.WriteF32(DroneVerticalVelocityAddress, 0.0f);
+        }
+        if (!m_DroneLateralActive)
         {
             m_Memory.WriteU32(DroneLateralHookHitsAddress, 0);
             m_Memory.WriteU32(DroneLateralHookFlagsAddress, 0);
@@ -9457,6 +9544,9 @@ void CJetForceGeminiRuntime::MapController(
         Buttons.B_BUTTON = Backward || B;
         Buttons.L_CBUTTON = false;
         Buttons.R_CBUTTON = false;
+        // Jump/crouch feed the vertical thruster above, not native C buttons.
+        Buttons.U_CBUTTON = false;
+        Buttons.D_CBUTTON = false;
         // Leaving the stick at rest is what keeps the reticle centred, since the
         // game walks it back to the middle by itself once nothing is pushing it.
         if (!DroneCameraDirect)

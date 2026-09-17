@@ -168,46 +168,18 @@ The gamepad itself comes from the `GetGamepadState` plugin extension in
 `SDL_GameController`, so any pad SDL has a mapping for presents the same Xbox
 style layout.
 
-When `Setting_JfgDroneLateralMovement` is enabled during a robot mission, the
-runtime requests native forward thrust while Q or D is held. Floyd has no
-retail strafe control, so the resulting velocity is rotated before it is
-integrated. This preserves the game's acceleration, top speed and collision
-response without adding a separate movement model.
+When `Setting_JfgDroneLateralMovement` is enabled during a robot mission, Q/D
+request lateral thrust and Jump/Crouch request world-up/world-down thrust.
+These use Space/Ctrl on the keyboard and A/B on the gamepad. Opposite inputs
+cancel thrust on their axis. Neither axis requests the native A/B throttle.
+Outside a robot mission, Jump/Crouch retain their normal mapping.
 
-`sidekickControl` already implements a thruster model, so the strafe is fed
-into it rather than bolted on after it:
-
-```
-8002FDC8  velocity = heading * speed
-8002FDF8  target   = velocity + acceleration
-8002FE50  velocity += (target - velocity) * (1 - k)   inertia and drag
-8002FEB0  speed    = |velocity|
-8002FED0  heading  = velocity / speed
-```
-
-That acceleration vector is assembled in Floyd's local space at `0x8002FD8C`
-as `(0, 0, forward)` and rotated into world space by the matrix at `sk->0x60`.
-The local X slot is hard-wired to zero, so writing it is a genuine lateral
-thruster. Everything downstream is inherited for free: the inertia and drag
-above, the terrain slide at `0x80030438`, and the collision bounce at
-`0x800304D4`, which all act on the same heading.
-
-The hook displaces the zero store at `0x8002FD8C`. The controller poll writes a
-forward factor to `0x8009FCA4` and a signed side factor to `0x8009FCA8`, both
-expressed as a share of the engine's own thrust magnitude in `$f8`, so the
-units need no calibration. Holding Z and a strafe key fires both thrusters at
-full strength; the engine's drag and speed cap bound the result. `$f12` must
-stay zero for the Y slot stored at `0x8002FD94`, and `$f8` and `$f4` must
-survive for the replayed multiply that fills the Z slot.
-
-One constraint comes with that path. `0x8002FDC0` skips the entire velocity
-integration when the forward thrust is exactly zero, so cancelling the forward
-factor to get a pure strafe silently disables the lateral thruster as well.
-Strafing without Z therefore keeps a token forward share,
-`DroneLateralIdleForward`, rather than none.
-
-`DroneLateralSideThrust` sets the lateral thruster's strength relative to the
-forward one.
+Each added axis keeps its own velocity and advances once per game update:
+`velocity = velocity * 0.975 + signed_thrust * frame_step`, with thrust `0.15`
+and a scalar cap of `8.0`. Releasing a button leaves the hook active so drag
+slows the drift. The same frame step as lateral movement is used (normally
+1 at 60 fps and 2 at 30 fps). The final XYZ velocity, including native flight,
+is limited to magnitude `8.0` before the game's position integration.
 
 Floyd never moves through `objMoveXYZ`. `sidekickControl` integrates his flight
 inline at `0x8003001C`-`0x800300A8`, where the sidekick structure at
@@ -225,13 +197,27 @@ every other hook here it moves the displaced instruction into the jump delay
 slot and resumes at entry + 8, replaying the instruction it overwrote.
 Resuming at entry + 4 instead jumps into the delay slot of the installed jump,
 which leaves the recompiler building a block that starts on a delay slot; that
-hangs the emulator on the next state load rather than failing visibly. The stub
-turns only `object+0x1C/0x24`; the heading at
+hangs the emulator on the next state load rather than failing visibly. The stubs
+add thrust velocity to `object+0x1C/0x20/0x24`; the heading at
 `sidekick+0x28/0x2C/0x30` is persistent state that the next frame smooths and
 renormalises, so rotating it in place would accumulate 90 degrees per frame.
 Leaving it untouched is also what keeps the drone and the camera facing forward
 while strafing. `$at` carries `0x800B0000` across the block for the constant
 read at `0x800300B0`, so the stub keeps its scratch base in `$t9`.
+
+The lateral half uses `0x80066C00`, then jumps to the vertical half at
+`0x80066F00`. Both are installed/restored together and fit their existing
+retired-hook caves (`0xC0` and `0xC4` bytes). The vertical scratch words at
+`0x8009FCD0/FCD4` replace position deltas of retired hooks; they hold thrust
+and velocity. The installer relocates both stubs and their scratch references
+for the selected address table. Save/load, deactivation, leaving a mission
+and disabling the option clear the added velocity.
+
+The vertical direction uses world Y and does not depend on the camera. The
+pre-existing lateral orientation still reads `PlayerObject+0x1040`; that is
+not a stable reference to Floyd across object allocations and remains a
+separate known defect. The native collision response still works from the
+engine's heading/speed, so obstacle behaviour needs in-game validation.
 
 `sidekickpadMovePlayer` (overlay 22, `overlay+0x2F38`) looks like the mover but
 is not: it searches the object list for id `0x5D` and drives its caller towards

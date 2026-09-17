@@ -65,6 +65,7 @@ struct JFG_ADDRESSES
     uint32_t PlayerVelocityStub;
     uint32_t FloydMoveHookStub;
     uint32_t SidekickStrafeStub;
+    uint32_t SidekickVerticalStub;
     uint32_t SidekickControlProbeStub;
     uint32_t SidekickPadProbeStub;
     uint32_t ObjectMoveStub;
@@ -84,6 +85,8 @@ struct JFG_ADDRESSES
     uint32_t DroneLateralMaxSpeedAddress;
     uint32_t DroneLateralSideFactorAddress;
     uint32_t DroneLateralVelocityAddress;
+    uint32_t DroneVerticalThrustAddress;
+    uint32_t DroneVerticalVelocityAddress;
     uint32_t DroneLateralRightZAddress;
     uint32_t FloydCameraPreviousXAddress;
     uint32_t FloydCameraPreviousZAddress;

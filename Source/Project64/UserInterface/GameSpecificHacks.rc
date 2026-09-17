@@ -39,7 +39,7 @@ BEGIN
     CONTROL         "Synchronize emulator to audio",IDC_GSH_SYNC_AUDIO,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,211,120,158,12
     GROUPBOX        "Improvements",IDC_STATIC,16,228,178,135
     CONTROL         "Skip cinematics (E / Enter / A / Start)",IDC_GSH_FAST_CUTSCENES,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,246,168,12
-    CONTROL         "Floyd lateral movement (Q/D)",IDC_GSH_LATERAL_MOVEMENT,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,264,158,12
+    CONTROL         "Floyd lateral / vertical movement",IDC_GSH_LATERAL_MOVEMENT,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,264,158,12
     CONTROL         "Direct Floyd mouse aiming",IDC_GSH_DRONE_DIRECT,"Button",BS_AUTOCHECKBOX | WS_DISABLED | WS_TABSTOP,25,282,158,12
     CONTROL         "Enable sprint at 125% speed (Shift / L3)",IDC_GSH_ENABLE_SPRINT,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,300,158,12
     CONTROL         "Correct widescreen HUD",IDC_GSH_WIDESCREEN_HUD,"Button",BS_AUTOCHECKBOX | WS_TABSTOP,25,318,158,12

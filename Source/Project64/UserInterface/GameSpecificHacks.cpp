@@ -54,7 +54,7 @@ void initialize_tooltips(HWND dialog)
     add_tooltip(tooltip, dialog, IDC_GSH_STICK_CAMERA_SPEED,
         L"How fast the right stick turns the camera and the aim, from 1 (slowest) to 10 (fastest).");
     add_tooltip(tooltip, dialog, IDC_GSH_LATERAL_MOVEMENT,
-        L"During Floyd missions, Q/D use the drone's native acceleration while redirecting its travelled distance to the left or right.");
+        L"During Floyd missions, Q/D move sideways and Jump/Crouch move up/down, with gradual acceleration and braking. Keyboard: Space to rise, Ctrl to descend. Gamepad: A to rise, B to descend.");
     add_tooltip(tooltip, dialog, IDC_GSH_PRESERVE_CAMERA,
         L"Keeps the game's normal camera pitch and yaw limits while using mouse look.");
     add_tooltip(tooltip, dialog, IDC_GSH_FREE_CAMERA_JUMP,
