@@ -402,7 +402,7 @@ bool VideoInterface::need_fetch_bug_emulation(const Registers &regs, unsigned sc
 	return regs.init_y_add < 1024 && scaling_factor == 1;
 }
 
-Vulkan::ImageHandle VideoInterface::vram_fetch_stage(const Registers &regs, unsigned scaling_factor) const
+Vulkan::ImageHandle VideoInterface::vram_fetch_stage(const Registers &regs, unsigned scaling_factor, const VIOverlay *overlay) const
 {
 	auto async_cmd = device->request_command_buffer(Vulkan::CommandBuffer::Type::AsyncCompute);
 	Vulkan::ImageHandle vram_image;
@@ -468,6 +468,10 @@ Vulkan::ImageHandle VideoInterface::vram_fetch_stage(const Registers &regs, unsi
 		int32_t y_offset;
 		int32_t x_res;
 		int32_t y_res;
+		int32_t overlay_x;
+		int32_t overlay_y;
+		int32_t overlay_width;
+		int32_t overlay_height;
 	} push = {};
 
 	if ((regs.status & VI_CONTROL_TYPE_MASK) == VI_CONTROL_TYPE_RGBA8888_BIT)
@@ -481,10 +485,36 @@ Vulkan::ImageHandle VideoInterface::vram_fetch_stage(const Registers &regs, unsi
 	push.x_res = extract_width;
 	push.y_res = extract_height;
 
-	async_cmd->set_specialization_constant_mask(7);
+	// Compose into the transient VI input, before AA/divot/scale/gamma. Keeping
+	// guest and upscaled RDRAM intact also makes repeated scanouts idempotent.
+	const unsigned pixel_bytes = (regs.status & VI_CONTROL_TYPE_MASK) == VI_CONTROL_TYPE_RGBA8888_BIT ? 4 : 2;
+	const bool use_overlay = overlay && overlay->width == unsigned(regs.vi_width) &&
+		overlay->scale == scaling_factor && overlay->width && overlay->height &&
+		overlay->width <= 1024 && overlay->height <= 1024 && scaling_factor <= 8 &&
+		unsigned(regs.vi_offset) >= overlay->origin &&
+		(unsigned(regs.vi_offset) - overlay->origin) % pixel_bytes == 0 &&
+		uint64_t(unsigned(regs.vi_offset) - overlay->origin) < uint64_t(overlay->width) * overlay->height * pixel_bytes &&
+		overlay->pixels.size() == uint64_t(overlay->width) * overlay->height * scaling_factor * scaling_factor * 2;
+	Vulkan::BufferHandle overlay_buffer;
+	if (use_overlay)
+	{
+		const unsigned offset = (unsigned(regs.vi_offset) - overlay->origin) / pixel_bytes;
+		push.overlay_x = (offset % overlay->width) * scaling_factor;
+		push.overlay_y = (offset / overlay->width) * scaling_factor;
+		push.overlay_width = overlay->width * scaling_factor;
+		push.overlay_height = overlay->height * scaling_factor;
+		Vulkan::BufferCreateInfo info = {};
+		info.size = overlay->pixels.size() * sizeof(uint32_t);
+		info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
+		info.domain = Vulkan::BufferDomain::LinkedDeviceHost;
+		overlay_buffer = device->create_buffer(info, overlay->pixels.data());
+		async_cmd->set_storage_buffer(0, 3, *overlay_buffer);
+	}
+	async_cmd->set_specialization_constant_mask(15);
 	async_cmd->set_specialization_constant(0, uint32_t(rdram_size));
 	async_cmd->set_specialization_constant(1, regs.status & (VI_CONTROL_TYPE_MASK | VI_CONTROL_META_AA_BIT));
 	async_cmd->set_specialization_constant(2, Util::trailing_zeroes(scaling_factor));
+	async_cmd->set_specialization_constant(3, use_overlay ? 1u : 0u);
 
 	async_cmd->push_constants(&push, 0, sizeof(push));
 	async_cmd->dispatch((extract_width + 15) / 16,
@@ -1322,7 +1352,7 @@ Vulkan::ImageHandle VideoInterface::scanout(VkImageLayout target_layout, const S
 	// After the copy, we can immediately begin rendering new frames while we do post in parallel.
 	Vulkan::ImageHandle vram_image;
 	if (!degenerate)
-		vram_image = vram_fetch_stage(regs, scaling_factor);
+		vram_image = vram_fetch_stage(regs, scaling_factor, options.overlay);
 
 	auto cmd = device->request_command_buffer();
 

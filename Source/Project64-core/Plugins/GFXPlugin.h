@@ -24,6 +24,8 @@ public:
     void(CALL * SoftReset)(void);
     // Optional JFG presentation layer. Packet addresses refer to guest RDRAM.
     void(CALL * JfgReticleCommand)(uint32_t Command, uint32_t Packet);
+    void(CALL * JfgHudCommand)(uint32_t Command);
+    void(CALL * JfgHudTextCommand)(uint32_t Command, uint32_t DisplayListPointer);
 #ifdef ANDROID
     void(CALL * SurfaceCreated)(void);
     void(CALL * SurfaceChanged)(int w, int h);

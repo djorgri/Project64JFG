@@ -25,11 +25,14 @@
 #include <stdint.h>
 #include "device.hpp"
 #include "rdp_common.hpp"
+#include "vi_overlay.hpp"
 
 namespace RDP
 {
 struct ScanoutOptions
 {
+    // Uploaded during scanout(); the caller need only retain this until return.
+    const VIOverlay *overlay = nullptr;
 	// Simple (obsolete) crop method. If crop_rect.enable is false, this
 	// crops top / bottom with number of pixels (doubled if interlace),
 	// and left / right are cropped in an aspect preserving way.
@@ -208,7 +211,7 @@ private:
 	void clear_per_scanline_state();
 
 	Vulkan::ImageHandle vram_fetch_stage(const Registers &registers,
-	                                     unsigned scaling_factor) const;
+	                                     unsigned scaling_factor, const VIOverlay *overlay) const;
 	Vulkan::ImageHandle aa_fetch_stage(Vulkan::CommandBuffer &cmd,
 	                                   Vulkan::Image &vram_image,
 	                                   const Registers &registers,

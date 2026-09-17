@@ -91,6 +91,7 @@ private:
     };
 
     static bool IsSupportedRom(void);
+    void PatchHudRaster(bool Enabled, bool TextOnly = false);
     static bool KeyDown(const KEYBOARD_MOUSE_STATE & Input, KeyboardMouseKey Key);
     static bool MouseButtonDown(const KEYBOARD_MOUSE_STATE & Input, uint32_t Button);
     static void ReadControls(const JFG_PORT_INPUT & Input, JFG_CONTROLS & Controls);

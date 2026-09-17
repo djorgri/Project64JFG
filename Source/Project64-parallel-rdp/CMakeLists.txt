@@ -65,3 +65,11 @@ set_target_properties(Project64-ParallelRDP PROPERTIES
     PREFIX ""
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>"
     RUNTIME_OUTPUT_DIRECTORY "${PROJECT64_ROOT}/Bin/${PROJECT64_PLUGIN_ARCHITECTURE}/$<CONFIG>/Plugin/GFX")
+
+# Explicit headless GPU regression target; not part of the released plugin.
+add_executable(Project64JfgHudLayerTest EXCLUDE_FROM_ALL tests/JfgHudLayerTest.cpp)
+target_compile_features(Project64JfgHudLayerTest PRIVATE cxx_std_14)
+target_compile_definitions(Project64JfgHudLayerTest PRIVATE NOMINMAX)
+target_include_directories(Project64JfgHudLayerTest PRIVATE
+    "${PROJECT64_ROOT}/external/parallel-rdp/Granite/application/global")
+target_link_libraries(Project64JfgHudLayerTest PRIVATE parallel-rdp granite-application-global-init)

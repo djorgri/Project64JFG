@@ -47,6 +47,21 @@ int main(int argc, char **argv) {
  for(unsigned mode: {0u,2u}) {ram[0xFECA8^3]=uint8_t(mode);put(p+32,0);q.command(1,p,ram.data(),ram.size());check(get(p+32)==0);}
  ram[0xFECA8^3]=1;ram[0xA4FD0^3]=2;put(p+32,0);
  q.command(1,p,ram.data(),ram.size());check(get(p+32)==0);
+ put(0x80103B90,0);
+ // The multiplayer trampoline has its own lifetime, independent of solo HUD.
+ put(0x80068184,0xAD1D7FF0);put(0x800681CC,0x4A46524D);put(0x8006E1C0,0x0801A06A);
+ put(0x800A391C,0x3F800000);put(0x800A3920,0x3F800000);
+ for(unsigned players:{2u,3u,4u}) {
+  ram[0xA4FD0^3]=uint8_t(players);ram[0xA4FCC^3]=uint8_t(players);
+  for(unsigned player=0;player<players;++player) {
+   const unsigned bounds=0x800A508C+(((players-1)*4+player)*4+0x40)*2;
+   const int left=player%2?160:0,top=players>2&&player>=2?120:0;
+   put(bounds,(unsigned(left)<<16)|unsigned(top));put(bounds+4,(unsigned(left+160)<<16)|unsigned(top+120));
+   put(p+20,player);put(p+32,0);q.command(1,p,ram.data(),ram.size());check(get(p+32)==1);
+   check(q.pending[0].back().clip==std::array<int,4>{left+1,top+1,left+158,top+118});
+  }
+ }
+ put(p+20,0);put(0x8006E1C0,0x0801A0D8);
  q.command(0,0,nullptr,0);check(q.find(0x200000).lines.empty());
  // Capture every native cursor style, including immutable copies of guest glyphs.
  ram[0xA4FD0^3]=1;put(0x80103B90,0);
@@ -72,6 +87,21 @@ int main(int argc, char **argv) {
  int centre=width*9/16;
  check(x0==centre-3&&x1==centre+5&&y0==300&&y1==302&&count==27);
  }
+ // A subpixel-wide stroke must keep the same integrated intensity at every
+ // phase, including 1x where independent rounding used to erase some lines.
+ for(unsigned scale:{1u,2u,4u,8u})for(int offset=-4;offset<=4;++offset) {
+  v.frame.lines={{160+offset,100,160+offset,102,160,100,0}};
+  RDP::VIOverlay plane;before_vi(v,scale,16.0/9.0,plane);
+  unsigned green=0;
+  for(unsigned x=0;x<plane.width*scale;++x)
+   green+=(plane.pixels[(100*scale*plane.width*scale+x)*2]>>8)&255;
+  check(green==48*scale);
+ }
+ // Adjacent source pixels form a continuous segment, without bright seams.
+ v.frame.lines={{156,100,164,100,160,100,0}};
+ RDP::VIOverlay plane;before_vi(v,2,16.0/9.0,plane);
+ for(unsigned x=314;x<327;++x)check(((plane.pixels[(200*640+x)*2]>>8)&255)==64);
+ check(((plane.pixels[(200*640+327)*2]>>8)&255)==32);
  return 0;
 }
 '''

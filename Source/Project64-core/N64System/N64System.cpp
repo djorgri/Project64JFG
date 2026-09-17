@@ -2212,6 +2212,8 @@ bool CN64System::LoadState(const char * FileName)
     // Host reticle queues are deliberately not guest save-state data.
     if (m_Plugins->Gfx()->JfgReticleCommand)
         m_Plugins->Gfx()->JfgReticleCommand(0, 0);
+    if (m_Plugins->Gfx()->JfgHudCommand)
+        m_Plugins->Gfx()->JfgHudCommand(0);
 
     // Fix random register
     while ((int)m_Reg.RANDOM_REGISTER < (int)m_Reg.WIRED_REGISTER)

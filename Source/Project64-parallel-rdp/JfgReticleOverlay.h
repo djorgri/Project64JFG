@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
+#include "../../external/parallel-rdp/parallel-rdp/vi_overlay.hpp"
 
 // Host copy of the game's CPU line queue, separate from the emulated image.
 // All access is serialized by the plugin mutex. No guest pointers survive a call.
@@ -18,6 +19,7 @@ struct Line
     // Styles 4..7 are guest pixel-offset glyphs, including mirrored variants.
     std::array<int8_t, 36> glyph = {};
     unsigned glyph_count = 0;
+    std::array<int, 4> clip = {1, 1, 1023, 1023};
 };
 struct Frame
 {
@@ -60,11 +62,31 @@ public:
             // The guest mode and installed HUD hooks own activation. The video
             // plugin's aspect override only controls the whole window; it must
             // not silently select the stretched stock reticle as a fallback.
-            if ((mode != 1 && mode != 3) || ram[0xA4FD0 ^ 3] != 1 ||
-                word(0x80068334) != 0xAD1D7FF0 || word(0x8006E1C0) != 0x0801A0D8)
-                return;
+            const unsigned players = ram[0xA4FD0 ^ 3];
+            const bool solo = players == 1 && word(0x80068334) == 0xAD1D7FF0 &&
+                word(0x8006E1C0) == 0x0801A0D8;
+            const bool multi = players >= 2 && players <= 4 &&
+                word(0x80068184) == 0xAD1D7FF0 && word(0x800681CC) == 0x4A46524D &&
+                word(0x8006E1C0) == 0x0801A06A;
+            if ((mode != 1 && mode != 3) || (!solo && !multi)) return;
             Line l = { int(word(packet)), int(word(packet+4)), int(word(packet+8)), int(word(packet+12)),
                        int(word(packet+24)), int(word(packet+28)), word(packet+16) & 255 };
+            if (multi && int32_t(word(packet+20)) != -1) {
+                // frontPlayerScreenLimits uses the number of rendered views,
+                // which can differ from the number of active players.
+                const unsigned views = ram[0xA4FCC ^ 3], player = word(packet+20);
+                if (views < 1 || views > 4 || player >= views) return;
+                const uint32_t bounds = 0x800A508C + (((views-1)*4+player)*4+0x40)*2;
+                uint32_t xb = word(0x800A391C), yb = word(0x800A3920);
+                float xs, ys; std::memcpy(&xs,&xb,4);std::memcpy(&ys,&yb,4);
+                if (!std::isfinite(xs) || !std::isfinite(ys) || xs <= 0 || ys <= 0 || xs > 4 || ys > 4) return;
+                for (unsigned i=0;i<4;++i) {
+                    const uint32_t a=bounds+i*2;
+                    const int16_t n=int16_t(word(a&~3u) >> ((a&2)?0:16));
+                    l.clip[i]=int(n*(i&1?ys:xs))+(i<2?1:-2);
+                }
+                if (l.clip[0]>l.clip[2] || l.clip[1]>l.clip[3]) return;
+            }
             const unsigned style = l.flags & 15;
             if (style > 7 || style == 3) return;
             if (std::abs(int64_t(l.x0)-l.cx) > 128 || std::abs(int64_t(l.x1)-l.cx) > 128 ||
@@ -146,6 +168,50 @@ template<class Plot> void raster(const Line &l, Plot plot)
     }
 }
 
+// Additive CPU lines join the same immutable framebuffer plane as the HUD,
+// before extract_vram and all VI filters. Pixel footprints are constructed on
+// the internal framebuffer grid, rather than the final Windows blit surface.
+inline void before_vi(const View &v, unsigned scale, double aspect, RDP::VIOverlay &out)
+{
+    const unsigned xa=v.xscale&4095, ya=v.yscale&4095;
+    const double viewW=640-2*std::round(v.crop*(640.0/240.0)), viewH=240-2*int(v.crop);
+    if (v.frame.lines.empty() || !v.frame.width || !v.frame.height || !xa || !ya ||
+        viewW<=0 || viewH<=0 || aspect<=0 || (scale!=1 && scale!=2 && scale!=4 && scale!=8)) return;
+    if (out.pixels.empty()) {
+        out.origin=v.frame.address;out.width=v.frame.width;out.height=v.frame.height;out.scale=scale;
+        out.pixels.resize(size_t(out.width)*out.height*scale*scale*2);
+        for(size_t i=1;i<out.pixels.size();i+=2)out.pixels[i]=0xFFFFFF;
+    }
+    if (out.origin!=v.frame.address || out.width!=v.frame.width || out.height<v.frame.height || out.scale!=scale) return;
+    const int width=int(out.width*scale),height=int(out.height*scale);
+    const double dx=viewW/viewH/aspect*xa/ya*scale;
+    for(const auto &l:v.frame.lines) {
+        const int clipLeft=std::max(1,l.clip[0])*int(scale);
+        const int clipTop=std::max(1,l.clip[1])*int(scale);
+        const int clipRight=std::min(int(v.frame.width)-1,l.clip[2]+1)*int(scale);
+        const int clipBottom=std::min(int(v.frame.height)-1,l.clip[3]+1)*int(scale);
+        raster(l,[&](int x,int y,int red,int green) {
+            // Integrate the actual footprint instead of rounding each column
+            // independently. At 3/4 width, a one-pixel stroke must not disappear
+            // or change brightness when its position advances by one pixel.
+            const double left=double(l.cx)*scale+(x-l.cx)*dx;
+            const double right=double(l.cx)*scale+(x-l.cx+1)*dx;
+            const int x0=std::max(clipLeft,int(std::floor(left)));
+            const int x1=std::min(clipRight,int(std::ceil(right)));
+            const int y0=std::max(clipTop,y*int(scale)),y1=std::min(clipBottom,(y+1)*int(scale));
+            for(int py=y0;py<y1;++py)for(int px=x0;px<x1;++px) {
+                if(px<0 || py<0 || px>=width || py>=height)continue;
+                auto &color=out.pixels[(size_t(py)*width+px)*2];
+                const double coverage=std::max(0.0,std::min(right,double(px+1))-std::max(left,double(px)));
+                const unsigned r=std::min(255u,((color>>16)&255)+unsigned(std::round(red*8*coverage)));
+                const unsigned g=std::min(255u,((color>>8)&255)+unsigned(std::round(green*8*coverage)));
+                color=(color&255)|(r<<16)|(g<<8);
+            }
+        });
+    }
+}
+
+// Reference compositor for raster/geometry tests; never used for presentation.
 inline void composite(const View &v, uint32_t *pixels, int width, int height)
 {
     const unsigned xa = v.xscale & 4095, ya = v.yscale & 4095;

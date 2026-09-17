@@ -4,6 +4,8 @@
 #include <Video.h>
 #include "Settings.h"
 #include "JfgReticleOverlay.h"
+#include "JfgHudRaster.h"
+#include "JfgHudLayer.h"
 
 #include <context.hpp>
 #include <device.hpp>
@@ -142,6 +144,10 @@ unsigned g_last_visible_width = 0;
 unsigned g_last_visible_height = 0;
 unsigned g_consecutive_black_scanouts = 0;
 JfgReticleOverlay::Queue g_reticle_queue;
+JfgHudRaster::State g_hud_raster;
+std::array<std::unique_ptr<RDP::CommandProcessor>, 2> g_hud_processors;
+JfgHudLayer::Capture g_hud_capture;
+JfgHudLayer::Bindings g_hud_bindings;
 JfgReticleOverlay::View g_reticle_view, g_last_reticle_view;
 // Reading a VI image back to the CPU is needed by the current GDI presenter,
 // but it must not make the emulation thread wait for the GPU. Keep a small
@@ -178,6 +184,8 @@ struct PerformanceCounters
 	uint32_t scanouts_queued = 0;
 	uint32_t scanouts_completed = 0;
 	uint32_t scanouts_skipped = 0;
+	uint32_t hud_health_scopes = 0, hud_weapon_scopes = 0, hud_text_scopes = 0, hud_primitives = 0;
+	uint64_t hud_render_ticks = 0;
 };
 PerformanceCounters g_performance;
 bool g_global_managers_initialized = false;
@@ -372,14 +380,16 @@ void report_performance_if_due()
 
 	char message[512] = {};
 	_snprintf_s(message, sizeof(message), _TRUNCATE,
-		"perf: present %.1f Hz, present CPU %.2f ms, SyncFull %u waits %.2f ms (%.2f ms/wait), RDP callback %u %.2f ms lock %.2f ms batch %u %.2f ms cmds/words %u/%u, scanout queued/ready/skipped %u/%u/%u",
+		"perf: present %.1f Hz, present CPU %.2f ms, SyncFull %u waits %.2f ms (%.2f ms/wait), RDP callback %u %.2f ms lock %.2f ms batch %u %.2f ms cmds/words %u/%u, scanout queued/ready/skipped %u/%u/%u, HUD overlay health/weapon/text/primitives %u/%u/%u/%u GPU+readback %.2f ms",
 		double(g_performance.present_count) / elapsed_seconds,
 		presentation_ms,
 		g_performance.sync_wait_count, wait_ms, wait_per_sync_ms,
 		g_performance.rdp_callback_count, callback_ms, callback_lock_ms,
 		g_performance.rdp_batch_count, batch_enqueue_ms,
 		g_performance.rdp_command_count, g_performance.rdp_word_count,
-		g_performance.scanouts_queued, g_performance.scanouts_completed, g_performance.scanouts_skipped);
+		g_performance.scanouts_queued, g_performance.scanouts_completed, g_performance.scanouts_skipped,
+		g_performance.hud_health_scopes, g_performance.hud_weapon_scopes, g_performance.hud_text_scopes, g_performance.hud_primitives,
+		double(g_performance.hud_render_ticks) * 1000.0 / double(g_performance.frequency.QuadPart));
 	FILE *file = nullptr;
 	if (fopen_s(&file, path.c_str(), "a") == 0 && file != nullptr)
 	{
@@ -389,8 +399,34 @@ void report_performance_if_due()
 	reset_performance_counters();
 }
 
+void clear_hud_overlay()
+{
+    // All three processors share Granite's thread-index-zero pools. Finish
+    // scene recording before private processor destruction touches the Device.
+    if (g_processor && g_hud_processors[0]) g_processor->idle();
+    for (auto &processor : g_hud_processors)
+    {
+        if (processor) processor->idle();
+        processor.reset();
+    }
+    g_hud_raster = {};
+    g_hud_capture = {};
+    g_hud_bindings = {};
+    // The HUD is baked into scanouts now. A reset/state load must discard
+    // those images too, instead of only clearing a separate overlay handle.
+    for (auto &scanout : g_async_scanouts)
+    {
+        if (scanout.buffer.fence) scanout.buffer.fence->wait();
+        scanout.buffer.fence.reset();
+        scanout.sequence = 0;
+    }
+    g_scanout_colors.clear(); g_scanout_width = g_scanout_height = 0;
+    g_last_visible_scanout.clear(); g_consecutive_black_scanouts = 0;
+}
+
 void destroy_renderer()
 {
+    clear_hud_overlay();
     g_reticle_queue.clear();
     g_reticle_view = {};
     g_last_reticle_view = {};
@@ -482,8 +518,10 @@ bool create_renderer()
 	// a scene first uses a new shader variant. The renderer's ubershader fallback
 	// keeps rendering correct while that compilation completes.
 	_putenv_s("PARALLEL_RDP_FORCE_SYNC_SHADER", "0");
+	// Shaders address one hidden byte per 16-bit RDRAM word (the low two
+	// coverage bits), not a packed two-bit array. VI fetch uses that same index.
 	g_processor = std::make_unique<RDP::CommandProcessor>(
-		device, g_gfx.RDRAM, 0, g_gfx.RDRAM_SIZE, g_gfx.RDRAM_SIZE / 8,
+		device, g_gfx.RDRAM, 0, g_gfx.RDRAM_SIZE, g_gfx.RDRAM_SIZE / 2,
 		render_flags());
 	if (!g_processor->device_is_supported())
 	{
@@ -494,6 +532,82 @@ bool create_renderer()
 
 	trace_event("renderer: ready");
 	return true;
+}
+
+bool create_hud_renderers()
+{
+    if (g_hud_processors[0] && g_hud_processors[1]) return true;
+    if (!create_renderer()) return false;
+    g_processor->idle();
+    // Two native backgrounds let the original RDP blender determine both
+    // foreground color and transmission. No scene color is present in either.
+    // Separate processors retain identical TMEM/state between completion points.
+    for (auto &p : g_hud_processors)
+    {
+        p = std::make_unique<RDP::CommandProcessor>(*g_device, nullptr, 0,
+            JfgHudLayer::RamSize, JfgHudLayer::RamSize / 2, // One coverage byte per halfword.
+            RDP::COMMAND_PROCESSOR_FLAG_HOST_VISIBLE_HIDDEN_RDRAM_BIT |
+            RDP::COMMAND_PROCESSOR_FLAG_SINGLE_THREADED_COMMAND_BIT);
+        if (!p->device_is_supported()) { clear_hud_overlay(); return false; }
+        RDP::Quirks quirks;
+        quirks.set_native_hud_coordinates(true);
+        p->set_quirks(quirks);
+        const uint32_t bind[] = { 0xFF100000 | (JfgHudLayer::Width - 1), JfgHudLayer::ColorBase };
+        p->enqueue_command(2, bind);
+        p->idle();
+    }
+    trace_event("JFG HUD: native isolated overlay renderers ready (serialized command recording)");
+    return true;
+}
+
+void render_hud_layers()
+{
+    if (!g_hud_processors[0] || g_hud_capture.commands.empty()) return;
+    // SyncFull has idled the scene processor. Private command recording stays
+    // on this calling thread: separate worker threads would all register as
+    // Granite index zero and race in descriptor/command-pool allocation. GPU
+    // execution can still overlap; both replays complete before readback.
+    LARGE_INTEGER start = {}, end = {};
+    QueryPerformanceCounter(&start);
+    for (unsigned background = 0; background < 2; ++background)
+    {
+        auto &p = g_hud_processors[background];
+        auto ram = static_cast<uint8_t *>(p->begin_read_rdram());
+        std::memcpy(ram, g_gfx.RDRAM, std::min(g_gfx.RDRAM_SIZE, JfgHudLayer::ColorBase));
+        auto color = reinterpret_cast<uint16_t *>(ram + JfgHudLayer::ColorBase);
+        std::fill(color, color + JfgHudLayer::Groups * JfgHudLayer::ImageBytes / 2, background ? 0xFFFF : 0x0001);
+        std::memset(ram + JfgHudLayer::DepthBase, 0xFF, JfgHudLayer::Groups * JfgHudLayer::ImageBytes);
+        p->end_write_rdram();
+        // Coverage belongs to this fresh pair of backgrounds, not to the
+        // preceding frame's antialiased edges.
+        std::memset(p->begin_read_hidden_rdram(), 3, p->get_hidden_rdram_size());
+        p->end_write_hidden_rdram();
+        p->enqueue_command_batch(unsigned(g_hud_capture.commands.size()), g_hud_capture.commands.data());
+    }
+    for (auto &p : g_hud_processors) p->idle();
+    auto black = static_cast<const uint8_t *>(g_hud_processors[0]->begin_read_rdram());
+    auto white = static_cast<const uint8_t *>(g_hud_processors[1]->begin_read_rdram());
+    for (const auto &target : g_hud_capture.touched)
+    {
+        auto frame = std::make_shared<JfgHudLayer::Frame>(); frame->target = target;
+        for (const auto &fade : g_hud_capture.fades)
+            if (fade.target.address == target.address) frame->fades.push_back(fade);
+        for (unsigned group = 0; group < 2; ++group)
+            if (g_hud_capture.layers[group].address == target.address)
+            {
+                auto layer = JfgHudLayer::extract(black, white, group, target);
+                layer.order = g_hud_capture.layerOrders[group];
+                if (!layer.pixels.empty()) frame->layers.push_back(std::move(layer));
+            }
+        for (const auto &glyph : g_hud_capture.glyphs)
+            if (glyph.target.address == target.address)
+                frame->layers.push_back(JfgHudLayer::extract_glyph(black, white, glyph));
+        // Empty frames remove the old HUD when a menu/scene replaces it.
+        g_hud_bindings.publish(std::move(frame));
+    }
+    g_hud_capture.next();
+    QueryPerformanceCounter(&end);
+    g_performance.hud_render_ticks += end.QuadPart - start.QuadPart;
 }
 
 void update_vi_registers()
@@ -614,40 +728,10 @@ void blit_scanout()
 
 	if (const auto dc = GetDC(window))
 	{
-		// Compose the optional reticle into the scaled image before one final
-		// window blit. Painting it in a second visible pass can flicker with DWM.
-		HDC composition = nullptr;
-		HBITMAP surface = nullptr;
-		HGDIOBJ old_surface = nullptr;
-		void *surface_pixels = nullptr;
-		if (!g_reticle_view.frame.lines.empty())
-		{
-			BITMAPINFO output = bitmap;
-			output.bmiHeader.biWidth = target_width;
-			output.bmiHeader.biHeight = -target_height;
-			composition = CreateCompatibleDC(dc);
-			surface = CreateDIBSection(dc, &output, DIB_RGB_COLORS, &surface_pixels, nullptr, 0);
-			if (composition && surface)
-			{
-				old_surface = SelectObject(composition, surface);
-				SetStretchBltMode(composition, COLORONCOLOR);
-				StretchDIBits(composition, 0, 0, target_width, target_height, 0, 0,
-					g_scanout_width, g_scanout_height, g_display_pixels.data(), &bitmap, DIB_RGB_COLORS, SRCCOPY);
-				GdiFlush(); // DIB writes below must follow the queued GDI stretch.
-				JfgReticleOverlay::composite(g_reticle_view, static_cast<uint32_t *>(surface_pixels), target_width, target_height);
-				BitBlt(dc, target_x, target_y, target_width, target_height, composition, 0, 0, SRCCOPY);
-			}
-		}
-		if (!old_surface)
-		{
-			SetStretchBltMode(dc, COLORONCOLOR);
-			StretchDIBits(dc, target_x, target_y, target_width, target_height, 0, 0,
-				g_scanout_width, g_scanout_height, g_display_pixels.data(), &bitmap,
-				DIB_RGB_COLORS, SRCCOPY);
-		}
-		if (old_surface) SelectObject(composition, old_surface);
-		if (surface) DeleteObject(surface);
-		if (composition) DeleteDC(composition);
+        SetStretchBltMode(dc, COLORONCOLOR);
+        StretchDIBits(dc, target_x, target_y, target_width, target_height, 0, 0,
+            g_scanout_width, g_scanout_height, g_display_pixels.data(), &bitmap,
+            DIB_RGB_COLORS, SRCCOPY);
 		// Do not clear the whole client area before StretchDIBits. With the
 		// larger scanout produced by internal upscaling, DWM can occasionally
 		// composite the window between those two GDI operations and reveal a
@@ -780,8 +864,8 @@ void queue_async_scanout(const RDP::ScanoutOptions &options)
 	}
 
 	g_processor->begin_frame_context();
-	g_processor->scanout_async_buffer(free_scanout->buffer, options);
 	free_scanout->reticle = {};
+	JfgHudLayer::View hud;
 	if (g_gfx.VI_ORIGIN_REG && g_gfx.VI_X_SCALE_REG &&
 		g_gfx.VI_Y_SCALE_REG && g_gfx.VI_H_START_REG && g_gfx.VI_V_START_REG)
 	{
@@ -793,12 +877,34 @@ void queue_async_scanout(const RDP::ScanoutOptions &options)
 		r.hstart = *g_gfx.VI_H_START_REG;
 		r.vstart = *g_gfx.VI_V_START_REG;
 		r.crop = options.crop_overscan_pixels;
+		hud.vi = r;
+		hud.vi.frame = {};
+		hud.frame = g_hud_bindings.find(r.origin);
 	}
+	// The overlay is uploaded synchronously into a buffer owned by this GPU
+	// submission. Later frames cannot change an in-flight scanout's HUD.
+	auto overlay = JfgHudLayer::before_vi(hud, unsigned(g_settings.upscaling),
+		g_settings.force_widescreen ? 16.0 / 9.0 : 4.0 / 3.0);
+    JfgReticleOverlay::before_vi(free_scanout->reticle, unsigned(g_settings.upscaling),
+        g_settings.force_widescreen ? 16.0 / 9.0 : 4.0 / 3.0, overlay);
+	auto filtered_options = options;
+	if (!overlay.pixels.empty()) filtered_options.overlay = &overlay;
+	g_processor->scanout_async_buffer(free_scanout->buffer, filtered_options);
 	if (free_scanout->buffer.fence)
 	{
 		free_scanout->sequence = g_next_scanout_sequence++;
 		g_performance.scanouts_queued++;
 	}
+}
+
+void apply_raster_quirks()
+{
+    if (!g_processor) return;
+    flush_pending_rdp_command_batch();
+    RDP::Quirks quirks;
+    quirks.set_native_resolution_tex_rect(g_settings.native_texrects);
+    quirks.set_native_texture_lod(g_settings.native_texture_lod);
+    g_processor->set_quirks(quirks);
 }
 
 void present()
@@ -810,10 +916,7 @@ void present()
 	g_performance.present_count++;
 
 	update_vi_registers();
-	RDP::Quirks quirks;
-	quirks.set_native_resolution_tex_rect(g_settings.native_texrects);
-	quirks.set_native_texture_lod(g_settings.native_texture_lod);
-	g_processor->set_quirks(quirks);
+	apply_raster_quirks();
 
 	RDP::ScanoutOptions scanout_options;
 	scanout_options.downscale_steps = static_cast<unsigned>(g_settings.downscale_steps);
@@ -982,12 +1085,39 @@ EXPORT void CALL ProcessRDPList()
 		{
 			break;
 		}
-		// Keep command boundaries together locally, but never cross SyncFull:
-		// that command is the CPU-visible completion boundary.
-		g_pending_rdp_command_batch.push_back(word_count);
-		g_pending_rdp_command_batch.insert(g_pending_rdp_command_batch.end(),
-			g_pending_rdp_words.begin() + consumed_words,
-			g_pending_rdp_words.begin() + consumed_words + word_count);
+		const auto words = g_pending_rdp_words.data() + consumed_words;
+		const bool marker = g_hud_raster.consume(words[0], words[1]);
+		if (marker)
+		{
+			const auto id = words[1] & 255;
+			if (id == 1) ++g_performance.hud_health_scopes;
+			if (id == 3) ++g_performance.hud_weapon_scopes;
+            if (id == 5 || id == 7) ++g_performance.hud_text_scopes;
+		}
+		const bool isolated = g_hud_processors[0] && g_hud_capture.command(words, unsigned(word_count), marker);
+		if (isolated)
+			++g_performance.hud_primitives;
+		else
+		{
+			// Only HUD draw primitives are suppressed. Preserve every state
+			// transition, texture upload and hardware completion in the scene.
+            RDP::Quirks sceneQuirks;
+            sceneQuirks.set_native_resolution_tex_rect(g_settings.native_texrects);
+            sceneQuirks.set_native_texture_lod(g_settings.native_texture_lod);
+            if (!(g_gfx.VI_X_SCALE_REG && g_gfx.VI_Y_SCALE_REG &&
+                g_hud_capture.ordered_font_commands(words, unsigned(word_count),
+                    *g_gfx.VI_X_SCALE_REG, *g_gfx.VI_Y_SCALE_REG, g_settings.overscan_crop,
+                    g_settings.force_widescreen ? 16.0 / 9.0 : 4.0 / 3.0, g_pending_rdp_command_batch,
+                    sceneQuirks, unsigned(g_settings.upscaling))))
+            {
+                g_pending_rdp_command_batch.push_back(word_count);
+                std::array<uint32_t, 4> ordered_number;
+                if (g_hud_capture.ordered_number_rectangle(words, unsigned(word_count), ordered_number))
+                    g_pending_rdp_command_batch.insert(g_pending_rdp_command_batch.end(), ordered_number.begin(), ordered_number.end());
+                else
+                    g_pending_rdp_command_batch.insert(g_pending_rdp_command_batch.end(), words, words + word_count);
+            }
+		}
 		// Flush periodically so the worker keeps progressing while the RSP is
 		// still producing commands. This avoids the per-command lock overhead
 		// without delaying an entire frame until SyncFull.
@@ -1003,6 +1133,8 @@ EXPORT void CALL ProcessRDPList()
 		}
 		if (opcode == 0x29) // RDP SyncFull
 		{
+			// A truncated/abandoned HUD scope must never reach the next frame.
+			g_hud_raster.drawing = 0;
 			LARGE_INTEGER batch_start = {};
 			LARGE_INTEGER batch_end = {};
 			QueryPerformanceCounter(&batch_start);
@@ -1014,7 +1146,7 @@ EXPORT void CALL ProcessRDPList()
 			// framebuffer as soon as we raise its interrupt, so wait for the GPU
 			// before returning to Project64. This matches ParaLLEl's synchronous
 			// RDP mode and is required for Jet Force Gemini's CPU-filtered shadows.
-			if (g_settings.synchronous_rdp)
+			if (g_settings.synchronous_rdp || g_hud_processors[0])
 			{
 				LARGE_INTEGER sync_wait_start = {};
 				LARGE_INTEGER sync_wait_end = {};
@@ -1024,6 +1156,7 @@ EXPORT void CALL ProcessRDPList()
 				g_performance.sync_wait_ticks += sync_wait_end.QuadPart - sync_wait_start.QuadPart;
 				g_performance.sync_wait_count++;
 			}
+			render_hud_layers();
 			signal_dp_interrupt();
 		}
 		g_performance.rdp_command_count++;
@@ -1060,6 +1193,8 @@ EXPORT void CALL ShowCFB()
 EXPORT void CALL SoftReset()
 {
     std::lock_guard<std::mutex> lock(g_mutex);
+    clear_hud_overlay();
+    apply_raster_quirks();
     g_reticle_queue.clear();
     g_reticle_view = {};
     g_last_reticle_view = {};
@@ -1076,6 +1211,39 @@ EXPORT void CALL JfgReticleCommand(uint32_t command, uint32_t packet)
         g_last_reticle_view = {};
         for (auto &scanout : g_async_scanouts) scanout.reticle = {};
     }
+}
+
+EXPORT void CALL JfgHudCommand(uint32_t command)
+{
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (command == 0)
+    {
+        clear_hud_overlay();
+        apply_raster_quirks();
+    }
+    else if (g_hud_raster.notify(command, g_gfx.RDRAM, g_gfx.RDRAM_SIZE))
+    {
+        create_hud_renderers();
+    }
+}
+
+EXPORT void CALL JfgHudTextCommand(uint32_t command, uint32_t display_list_pointer)
+{
+    std::lock_guard<std::mutex> lock(g_mutex);
+    if (command == 12) {
+        JfgHudRaster::multiplayer_radar_point(g_gfx.RDRAM, g_gfx.RDRAM_SIZE, display_list_pointer);
+        return;
+    }
+    if (command == 11) {
+        JfgHudRaster::multiplayer_matrix(g_gfx.RDRAM, g_gfx.RDRAM_SIZE, display_list_pointer);
+        return;
+    }
+    if ((command == 9 || command == 10) &&
+        g_hud_raster.notify_number(command, g_gfx.RDRAM, g_gfx.RDRAM_SIZE, int32_t(display_list_pointer)))
+        create_hud_renderers();
+    if ((command == 5 || command == 6) &&
+        g_hud_raster.notify(command, g_gfx.RDRAM, g_gfx.RDRAM_SIZE, display_list_pointer))
+        create_hud_renderers();
 }
 
 EXPORT void CALL UpdateScreen()

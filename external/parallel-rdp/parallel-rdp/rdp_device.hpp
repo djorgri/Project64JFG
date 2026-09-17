@@ -48,7 +48,10 @@ enum CommandProcessorFlagBits
 	COMMAND_PROCESSOR_FLAG_UPSCALING_4X_BIT = 1 << 3,
 	COMMAND_PROCESSOR_FLAG_UPSCALING_8X_BIT = 1 << 4,
 	COMMAND_PROCESSOR_FLAG_SUPER_SAMPLED_READ_BACK_BIT = 1 << 5,
-	COMMAND_PROCESSOR_FLAG_SUPER_SAMPLED_DITHER_BIT = 1 << 6
+	COMMAND_PROCESSOR_FLAG_SUPER_SAMPLED_DITHER_BIT = 1 << 6,
+	// For multiple processors sharing one Device and Granite thread index.
+	// The caller serializes command recording with the other processors.
+	COMMAND_PROCESSOR_FLAG_SINGLE_THREADED_COMMAND_BIT = 1 << 7
 };
 using CommandProcessorFlags = uint32_t;
 
@@ -78,6 +81,7 @@ struct Quirks
 {
 	inline Quirks()
 	{
+		u.words[0] = 0;
 		u.options.native_resolution_tex_rect = true;
 		u.options.native_texture_lod = false;
 	}
@@ -92,6 +96,11 @@ struct Quirks
 		u.options.native_texture_lod = enable;
 	}
 
+	inline void set_native_hud_coordinates(bool enable)
+	{
+		u.options.native_hud_coordinates = enable;
+	}
+
 	union
 	{
 		struct Opts
@@ -103,6 +112,8 @@ struct Quirks
 			// Forces LOD to be computed as 1x upscale.
 			// Fixes content which relies on LOD computation to select textures in clever ways.
 			bool native_texture_lod;
+			// Private native HUD renderer only; undo a 3/4 X transform.
+			bool native_hud_coordinates;
 		} options;
 		uint32_t words[1];
 	} u;
@@ -224,6 +235,7 @@ private:
 	void clear_buffer(Vulkan::Buffer &buffer, uint32_t value);
 	void init_renderer();
 	void enqueue_command_inner(unsigned num_words, const uint32_t *words);
+	void draw_primitive(TriangleSetup &setup, AttributeSetup attr, bool texture_rectangle = false);
 
 	Vulkan::ImageHandle scanout(const ScanoutOptions &opts, VkImageLayout target_layout);
 

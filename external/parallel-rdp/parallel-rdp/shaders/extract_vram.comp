@@ -41,13 +41,22 @@ layout(set = 0, binding = 2, std430) readonly buffer HiddenRDRAM
 	mem_u8 elems[];
 } hidden_vram;
 
+layout(set = 0, binding = 3, std430) readonly buffer Overlay
+{
+	uvec2 pixels[];
+} overlay;
+
 layout(push_constant, std430) uniform Registers
 {
 	int fb_offset;
 	int fb_width;
 	ivec2 offset;
 	ivec2 resolution;
+	ivec2 overlay_offset;
+	ivec2 overlay_resolution;
 } registers;
+
+layout(constant_id = 3) const bool COMPOSE_OVERLAY = false;
 
 layout(constant_id = 0) const int RDRAM_SIZE = 0;
 const int RDRAM_MASK_8 = RDRAM_SIZE - 1;
@@ -103,5 +112,24 @@ void main()
 
 	ivec2 coord = ivec2(gl_GlobalInvocationID.xy) + registers.offset;
 	uvec4 col = fetch_color(coord);
+	if (COMPOSE_OVERLAY)
+	{
+		ivec2 p = coord + registers.overlay_offset;
+		if (all(greaterThanEqual(p, ivec2(0))) && all(lessThan(p, registers.overlay_resolution)))
+		{
+			uvec2 value = overlay.pixels[p.y * registers.overlay_resolution.x + p.x];
+			if (value != uvec2(0u, 0x00ffffffu))
+			{
+				uvec3 color = (uvec3(value.x) >> uvec3(16, 8, 0)) & 255u;
+				uvec3 transmit = (uvec3(value.y) >> uvec3(16, 8, 0)) & 255u;
+				col.rgb = min(uvec3(255u), color + (transmit * col.rgb + 127u) / 255u);
+				if (FMT_RGBA5551) col.rgb &= 248u;
+				// A resolved overlay pixel covers the framebuffer sample. Its
+				// transparency is already in RGB; untouched scene samples retain
+				// their original RDP coverage for the VI's edge reconstruction.
+				col.a = 7u;
+			}
+		}
+	}
 	imageStore(uAAInput, ivec2(gl_GlobalInvocationID.xy), col);
 }

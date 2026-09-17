@@ -5,6 +5,8 @@
 #include "JetForceGeminiHudAlignment.h"
 #include "JetForceGeminiFloydHud.h"
 #include "JetForceGeminiRocketOverlay.h"
+#include "JetForceGeminiHudRaster.h"
+#include "JetForceGeminiMultiplayerHud.h"
 #include <Common/DateTime.h>
 #include <Common/path.h>
 #include <math.h>
@@ -865,6 +867,19 @@ const WIDESCREEN_HUD_BANNER_WORD_PATCH WidescreenHudBannerPatches[] =
     { 0x1E60, 0x00000000, 0x46083200, 0x46083200 }, // add.s f8, f6, f8
     { 0x1EFC, 0x24180008, 0x2418000C, 0x2418000C }, // centre + middle
     { 0x1F64, 0x240E0008, 0x240E000C, 0x240E000C }, // shadow, same alignment
+};
+
+// Fuel's matrix-backed frame receives the left HUD bias (-48 / -68) before
+// the .75 X scale. Its rectangles use the screen centre instead, while the
+// font and deferred digital counter take unscaled screen coordinates. Align
+// these callers with the frame without changing shared renderer behaviour.
+const WIDESCREEN_HUD_BANNER_WORD_PATCH WidescreenHudFuelPatches[] =
+{
+    { 0x0F58, 0x240D0042, 0x240D0012, 0x240DFFFE }, // gauge right: 66 - bias
+    { 0x0F6C, 0x2406FFD3, 0x2406FFA3, 0x2406FF8F }, // gauge left: -45 - bias
+    // Label starts from screenCentre - 50: move to centre - 70 / -85.
+    { 0x0FE0, 0x25A50005, 0x25A5FFEC, 0x25A5FFDD },
+    { 0x1030, 0x24840080, 0x24840060, 0x24840060 }, // counter: label X + .75 * 128
 };
 
 const uint32_t WidescreenHudCamCopyEntry = 0x80042158;
@@ -3320,6 +3335,7 @@ CJetForceGeminiRuntime::~CJetForceGeminiRuntime()
 
 void CJetForceGeminiRuntime::Reset(void)
 {
+    PatchHudRaster(false);
     PatchHudAlignment(false, false);
     PatchWidescreenHud(false);
     Deactivate();
@@ -3340,6 +3356,7 @@ void CJetForceGeminiRuntime::Reset(void)
 // let the next video frame put it back.
 void CJetForceGeminiRuntime::StateSaving(void)
 {
+    PatchHudRaster(false);
     PatchHudAlignment(false, false);
     PatchWidescreenHud(false);
     PatchLandingCinematicSkip(false);
@@ -3384,6 +3401,7 @@ void CJetForceGeminiRuntime::StateSaving(void)
 
 void CJetForceGeminiRuntime::StateLoaded(void)
 {
+    PatchHudRaster(false);
     PatchHudAlignment(false, false);
     PatchWidescreenHud(false);
     // States made by the first HUD prototype may contain an interrupted scope.
@@ -3476,19 +3494,20 @@ void CJetForceGeminiRuntime::ProcessRuntimeFrame(void)
     const bool AlignmentRequested = Supported && g_Settings->LoadBool(Setting_JfgAlignHud);
     if (!WidescreenRequested && !AlignmentRequested)
     {
+        PatchHudRaster(false);
         PatchHudAlignment(false, false);
         PatchWidescreenHud(false);
         return;
     }
 
-    // Never install the fixed hooks during the boot/front-end sequence. Their
+    // Never install the gameplay hooks during the boot/front-end sequence. Their
     // trampoline storage is in the retired tail of JFG's CPU diagnostic code,
     // which is still executing during a cold boot. A loaded gameplay state
     // skips that initializer, which is why the old eager installation appeared
     // to work only after loading a state.
     //
-    // Keep Options and boot screens stock. Once gameplay resumes, require the
-    // live overlay and its four-word signature before touching either cave.
+    // The shared font has a separate post-initialization guard below. For the
+    // gameplay HUD, require the live overlay and its four-word signature.
     // Placement works in all four video modes; aspect correction additionally
     // requires the game's own widescreen bit below.
     uint8_t ResolutionIndex = 0;
@@ -3538,11 +3557,21 @@ void CJetForceGeminiRuntime::ProcessRuntimeFrame(void)
          ExitWord == JumpTo(WidescreenHudScopeExitStub)) &&
         ExitDelay == WidescreenHudOverlayExitDelayOriginal;
 
+    uint8_t multiplayerPlayers = 0;
+    if (JfgAddresses() == &JfgUsAddresses &&
+        (!WidescreenRequested || !m_Memory.ReadU8(0x800A4FD0, multiplayerPlayers) ||
+        multiplayerPlayers < 2 || multiplayerPlayers > 4 ||
+        !IsWidescreenHudResolution(ResolutionIndex)))
+        JfgMultiplayerHud::Update(m_Memory, m_CodePatcher, false);
+
     const bool EnableWidescreen = GameplayHudReady && WidescreenRequested &&
                                   IsWidescreenHudResolution(ResolutionIndex);
     const bool HudPatched = PatchWidescreenHud(EnableWidescreen);
     PatchHudAlignment(GameplayHudReady && AlignmentRequested && HudPatched,
                       EnableWidescreen && HudPatched);
+    const bool NativeHud = EnableWidescreen && HudPatched;
+    const bool NativeText = WidescreenRequested && JfgHudRaster::TextReady(m_Memory);
+    PatchHudRaster(NativeHud || NativeText, !NativeHud && NativeText);
 
     // Republish the override every frame: the scope-exit stub decrements this
     // byte on every HUD pass. Seed it well above zero so no legitimate exit can
@@ -4546,7 +4575,7 @@ bool CJetForceGeminiRuntime::SetWidescreenHudBanner(uint32_t OverlayBase, bool E
     }
 
     std::vector<GAME_HACK_CODE_WRITE> Writes;
-    for (const WIDESCREEN_HUD_BANNER_WORD_PATCH & Patch : WidescreenHudBannerPatches)
+    auto AddWrite = [&](const WIDESCREEN_HUD_BANNER_WORD_PATCH & Patch)
     {
         GAME_HACK_CODE_WRITE Write = {};
         Write.Address = OverlayBase + Patch.Offset;
@@ -4557,6 +4586,15 @@ bool CJetForceGeminiRuntime::SetWidescreenHudBanner(uint32_t OverlayBase, bool E
         Write.Allowed[2] = Patch.HighResolution;
         Write.AllowedCount = 3;
         Writes.push_back(Write);
+    };
+    // Both layouts live in overlay 14 and share its signature-checked lifetime.
+    for (const WIDESCREEN_HUD_BANNER_WORD_PATCH & Patch : WidescreenHudBannerPatches)
+    {
+        AddWrite(Patch);
+    }
+    for (const WIDESCREEN_HUD_BANNER_WORD_PATCH & Patch : WidescreenHudFuelPatches)
+    {
+        AddWrite(Patch);
     }
     const CGameHackCodePatcher::Result Result = m_CodePatcher.Apply(Writes.data(), Writes.size());
     return Result != CGameHackCodePatcher::Result_SignatureMismatch &&
@@ -5795,6 +5833,21 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
     m_WidescreenHudOverlayHookApplied = true;
     m_WidescreenHudOverlayBase = OverlayBase;
     return SetWidescreenHudReticle(true) || RollbackOverlay();
+}
+
+void CJetForceGeminiRuntime::PatchHudRaster(bool Enabled, bool TextOnly)
+{
+    if (!IsSupportedRom() || JfgAddresses() != &JfgUsAddresses) return;
+    if (!Enabled) JfgMultiplayerHud::Update(m_Memory, m_CodePatcher, false);
+    JfgHudRaster::UpdateTitleLogo(m_Memory, m_CodePatcher, Enabled);
+    uint32_t table = 0, health = 0, weapon = 0;
+    // An unreadable module table is not proof that the old callers are gone.
+    if (!m_Memory.ReadU32(OverlayTableAddress, table) || (table & 3) != 0 ||
+        !m_Memory.IsRdramAddress(table, 15 * OverlayHeaderSize) ||
+        !m_Memory.ReadU32(table + 6 * OverlayHeaderSize, health) ||
+        !m_Memory.ReadU32(table + 14 * OverlayHeaderSize, weapon)) return;
+    const bool ready = JfgHudRaster::Update(m_Memory, m_CodePatcher, Enabled, health, weapon, TextOnly);
+    if (Enabled) JfgMultiplayerHud::Update(m_Memory, m_CodePatcher, ready);
 }
 
 // True only when the live (scene, setup) is one the landing stub would act on:

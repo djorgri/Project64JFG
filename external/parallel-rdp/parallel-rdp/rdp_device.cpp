@@ -21,6 +21,7 @@
  */
 
 #include "rdp_device.hpp"
+#include "hud_coordinates.hpp"
 #include "rdp_common.hpp"
 #include <chrono>
 
@@ -141,12 +142,13 @@ CommandProcessor::CommandProcessor(Vulkan::Device &device_, void *rdram_ptr,
 			LOGI("Will measure stall timings.\n");
 	}
 
+	single_threaded_processing = (flags & COMMAND_PROCESSOR_FLAG_SINGLE_THREADED_COMMAND_BIT) != 0;
 	if (const char *env = getenv("PARALLEL_RDP_SINGLE_THREADED_COMMAND"))
 	{
-		single_threaded_processing = strtol(env, nullptr, 0) > 0;
-		if (single_threaded_processing)
-			LOGI("Will use single threaded command processing.\n");
+		single_threaded_processing |= strtol(env, nullptr, 0) > 0;
 	}
+	if (single_threaded_processing)
+		LOGI("Will use single threaded command processing.\n");
 
 	if (!single_threaded_processing)
 	{
@@ -351,11 +353,18 @@ static void decode_z_setup(AttributeSetup &attr, const uint32_t *words)
 	attr.dzdy = words[3];
 }
 
+void CommandProcessor::draw_primitive(TriangleSetup &setup, AttributeSetup attr, bool texture_rectangle)
+{
+    if (quirks.u.options.native_hud_coordinates)
+        restore_hud_coordinates(setup, attr, texture_rectangle);
+    renderer.draw_shaded_primitive(setup, attr);
+}
+
 void CommandProcessor::op_fill_triangle(const uint32_t *words)
 {
 	TriangleSetup setup = {};
 	decode_triangle_setup(setup, words);
-	renderer.draw_flat_primitive(setup);
+	draw_primitive(setup, {});
 }
 
 void CommandProcessor::op_shade_triangle(const uint32_t *words)
@@ -364,7 +373,7 @@ void CommandProcessor::op_shade_triangle(const uint32_t *words)
 	AttributeSetup attr = {};
 	decode_triangle_setup(setup, words);
 	decode_rgba_setup(attr, words + 8);
-	renderer.draw_shaded_primitive(setup, attr);
+	draw_primitive(setup, attr);
 }
 
 void CommandProcessor::op_shade_z_buffer_triangle(const uint32_t *words)
@@ -374,7 +383,7 @@ void CommandProcessor::op_shade_z_buffer_triangle(const uint32_t *words)
 	decode_triangle_setup(setup, words);
 	decode_rgba_setup(attr, words + 8);
 	decode_z_setup(attr, words + 24);
-	renderer.draw_shaded_primitive(setup, attr);
+	draw_primitive(setup, attr);
 }
 
 void CommandProcessor::op_shade_texture_z_buffer_triangle(const uint32_t *words)
@@ -385,7 +394,7 @@ void CommandProcessor::op_shade_texture_z_buffer_triangle(const uint32_t *words)
 	decode_rgba_setup(attr, words + 8);
 	decode_tex_setup(attr, words + 24);
 	decode_z_setup(attr, words + 40);
-	renderer.draw_shaded_primitive(setup, attr);
+	draw_primitive(setup, attr);
 }
 
 void CommandProcessor::op_fill_z_buffer_triangle(const uint32_t *words)
@@ -394,7 +403,7 @@ void CommandProcessor::op_fill_z_buffer_triangle(const uint32_t *words)
 	AttributeSetup attr = {};
 	decode_triangle_setup(setup, words);
 	decode_z_setup(attr, words + 8);
-	renderer.draw_shaded_primitive(setup, attr);
+	draw_primitive(setup, attr);
 }
 
 void CommandProcessor::op_texture_triangle(const uint32_t *words)
@@ -403,7 +412,7 @@ void CommandProcessor::op_texture_triangle(const uint32_t *words)
 	AttributeSetup attr = {};
 	decode_triangle_setup(setup, words);
 	decode_tex_setup(attr, words + 8);
-	renderer.draw_shaded_primitive(setup, attr);
+	draw_primitive(setup, attr);
 }
 
 void CommandProcessor::op_texture_z_buffer_triangle(const uint32_t *words)
@@ -413,7 +422,7 @@ void CommandProcessor::op_texture_z_buffer_triangle(const uint32_t *words)
 	decode_triangle_setup(setup, words);
 	decode_tex_setup(attr, words + 8);
 	decode_z_setup(attr, words + 24);
-	renderer.draw_shaded_primitive(setup, attr);
+	draw_primitive(setup, attr);
 }
 
 void CommandProcessor::op_shade_texture_triangle(const uint32_t *words)
@@ -423,7 +432,7 @@ void CommandProcessor::op_shade_texture_triangle(const uint32_t *words)
 	decode_triangle_setup(setup, words);
 	decode_rgba_setup(attr, words + 8);
 	decode_tex_setup(attr, words + 24);
-	renderer.draw_shaded_primitive(setup, attr);
+	draw_primitive(setup, attr);
 }
 
 void CommandProcessor::op_set_color_image(const uint32_t *words)
@@ -472,6 +481,11 @@ void CommandProcessor::op_set_scissor(const uint32_t *words)
 	scissor_state.xhi = (words[1] >> 12) & 0xfff;
 	scissor_state.ylo = (words[0] >> 0) & 0xfff;
 	scissor_state.yhi = (words[1] >> 0) & 0xfff;
+    if (quirks.u.options.native_hud_coordinates)
+    {
+        scissor_state.xlo = scissor_state.xlo * 4 / 3;
+        scissor_state.xhi = scissor_state.xhi * 4 / 3;
+    }
 
 	STATE_MASK(static_state.flags, bool(words[1] & (1 << 25)), RASTERIZATION_INTERLACE_FIELD_BIT);
 	STATE_MASK(static_state.flags, bool(words[1] & (1 << 24)), RASTERIZATION_INTERLACE_KEEP_ODD_BIT);
@@ -737,7 +751,7 @@ void CommandProcessor::op_fill_rectangle(const uint32_t *words)
 	setup.yh = yh;
 	setup.flags = TRIANGLE_SETUP_FLIP_BIT | TRIANGLE_SETUP_DISABLE_UPSCALING_BIT;
 
-	renderer.draw_flat_primitive(setup);
+	draw_primitive(setup, {});
 }
 
 void CommandProcessor::op_texture_rectangle(const uint32_t *words)
@@ -781,7 +795,7 @@ void CommandProcessor::op_texture_rectangle(const uint32_t *words)
 	if ((static_state.flags & RASTERIZATION_COPY_BIT) != 0)
 		setup.flags |= TRIANGLE_SETUP_SKIP_XFRAC_BIT;
 
-	renderer.draw_shaded_primitive(setup, attr);
+	draw_primitive(setup, attr, true);
 }
 
 void CommandProcessor::op_texture_rectangle_flip(const uint32_t *words)
@@ -825,7 +839,7 @@ void CommandProcessor::op_texture_rectangle_flip(const uint32_t *words)
 	if ((static_state.flags & RASTERIZATION_COPY_BIT) != 0)
 		setup.flags |= TRIANGLE_SETUP_SKIP_XFRAC_BIT;
 
-	renderer.draw_shaded_primitive(setup, attr);
+	draw_primitive(setup, attr, true);
 }
 
 void CommandProcessor::op_set_prim_depth(const uint32_t *words)

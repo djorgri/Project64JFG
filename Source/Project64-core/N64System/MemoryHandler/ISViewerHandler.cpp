@@ -41,6 +41,30 @@ bool ISViewerHandler::Write32(uint32_t Address, uint32_t Value, uint32_t Mask)
     // Private bridge used only by the signature-checked US JFG trampolines.
     // Keep the ordinary ISViewer text protocol and all other ROMs unchanged.
     const auto rom = reinterpret_cast<const uint32_t *>(m_Rom.GetRomAddress());
+    if (Address >= 0x13FF7FC0 && Address <= 0x13FF7FCC && !(Address & 3) &&
+        Mask == 0xFFFFFFFF && m_Rom.GetRomSize() >= 0x40 &&
+        rom[4] == 0x8A6009B6 && rom[5] == 0x94ACE150)
+    {
+        if (g_Plugins && g_Plugins->Gfx() && g_Plugins->Gfx()->JfgHudTextCommand)
+            g_Plugins->Gfx()->JfgHudTextCommand(Address == 0x13FF7FC0 ? 11 :
+                Address == 0x13FF7FC4 ? 9 : Address == 0x13FF7FC8 ? 10 : 12, Value);
+        return true;
+    }
+    if ((Address == 0x13FF7FD0 || Address == 0x13FF7FD4) && Mask == 0xFFFFFFFF &&
+        m_Rom.GetRomSize() >= 0x40 && rom[4] == 0x8A6009B6 && rom[5] == 0x94ACE150)
+    {
+        if (g_Plugins && g_Plugins->Gfx() && g_Plugins->Gfx()->JfgHudTextCommand)
+            g_Plugins->Gfx()->JfgHudTextCommand(Address == 0x13FF7FD0 ? 5 : 6, Value);
+        return true;
+    }
+    if (Address >= 0x13FF7FE0 && Address <= 0x13FF7FEC && !(Address & 3) &&
+        Mask == 0xFFFFFFFF && m_Rom.GetRomSize() >= 0x40 &&
+        rom[4] == 0x8A6009B6 && rom[5] == 0x94ACE150)
+    {
+        if (g_Plugins && g_Plugins->Gfx() && g_Plugins->Gfx()->JfgHudCommand)
+            g_Plugins->Gfx()->JfgHudCommand(1 + (Address - 0x13FF7FE0) / 4);
+        return true;
+    }
     if ((Address == 0x13FF7FF0 || Address == 0x13FF7FF4) && Mask == 0xFFFFFFFF &&
         m_Rom.GetRomSize() >= 0x40 && rom[4] == 0x8A6009B6 && rom[5] == 0x94ACE150)
     {

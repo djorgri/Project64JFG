@@ -137,6 +137,12 @@ const uint32_t FloydCallOffset = 0x468, FloydOriginalCall = 0x0C01B4E4, FloydDel
 void Require(bool value, const std::string &message) {
     if (!value) throw std::runtime_error(message);
 }
+std::vector<WIDESCREEN_HUD_BANNER_WORD_PATCH> LayoutFixture() {
+    std::vector<WIDESCREEN_HUD_BANNER_WORD_PATCH> patches;
+    for (const auto &p : WidescreenHudBannerPatches) patches.push_back(p);
+    for (const auto &p : WidescreenHudFuelPatches) patches.push_back(p);
+    return patches;
+}
 void Stock(CGameHackMemory &m, uint8_t mode) {
     m.WriteU8(WidescreenHudResolutionIndexAddress, mode);
     m.WriteU32(OverlayTableAddress, Table);
@@ -158,7 +164,7 @@ void Stock(CGameHackMemory &m, uint8_t mode) {
     m.WriteU32(Overlay14 + WidescreenHudOverlayEnterOffset + 4, WidescreenHudOverlayEnterDelayOriginal);
     m.WriteU32(Overlay14 + WidescreenHudOverlayExitOffset, WidescreenHudOverlayExitOriginal);
     m.WriteU32(Overlay14 + WidescreenHudOverlayExitOffset + 4, WidescreenHudOverlayExitDelayOriginal);
-    for (const auto &p : WidescreenHudBannerPatches) m.WriteU32(Overlay14 + p.Offset, p.Original);
+    for (const auto &p : LayoutFixture()) m.WriteU32(Overlay14 + p.Offset, p.Original);
     for (const auto &p : WidescreenHudShotGaugePatches) m.WriteU32(Overlay14 + p.Offset, p.Original);
     m.WriteU32(Overlay14 + GaugeCallOffset, GaugeOriginalCall);
     m.WriteU32(Overlay14 + GaugeCallOffset + 4, 0x00003825);
@@ -182,7 +188,7 @@ void CheckFloydDiagnosticStock(const CGameHackMemory &m) {
 void CheckOverlay14Stock(const CGameHackMemory &m, uint32_t base = Overlay14) {
     Require(m.Word(base + WidescreenHudOverlayEnterOffset) == WidescreenHudOverlayEnterOriginal, "HUD scope entry remains active");
     Require(m.Word(base + WidescreenHudOverlayExitOffset) == WidescreenHudOverlayExitOriginal, "HUD scope exit remains active");
-    for (const auto &p : WidescreenHudBannerPatches)
+    for (const auto &p : LayoutFixture())
         Require(m.Word(base + p.Offset) == p.Original, "banner remains patched");
     for (const auto &p : WidescreenHudShotGaugePatches)
         Require(m.Word(base + p.Offset) == p.Original, "gauge remains patched");
@@ -206,7 +212,7 @@ void CheckInstalled(const CGameHackMemory &m, uint8_t mode) {
     for (const auto &p : FixedFixture()) Require(m.Word(p.Address) == p.Replacement, "fixture did not install fixed hooks");
     for (const auto &p : WidescreenHudReticleCalls)
         Require(m.Word(Overlay13 + p.Offset) == CallTo(WidescreenHudReticleStub), "fixture did not install reticle");
-    for (const auto &p : WidescreenHudBannerPatches)
+    for (const auto &p : LayoutFixture())
         Require(m.Word(Overlay14 + p.Offset) == (mode == 3 ? p.HighResolution : p.LowResolution), "fixture did not install banner");
     for (const auto &p : WidescreenHudShotGaugePatches)
         Require(m.Word(Overlay14 + p.Offset) == p.Original, "gauge source coordinates were modified");
@@ -282,6 +288,35 @@ int main(int argc, char **argv) {
                             "legacy snapshot did not acquire the weapon guard");
                 Require(fresh.PatchWidescreenHud(false), "reticle migrated disable failed");
             }
+            CheckAllStock(m);
+        } else if (scenario == "fuel_foreign") {
+            m.WriteU32(Overlay14 + WidescreenHudFuelPatches[2].Offset, 0xDEADBEEF);
+            const auto before = m.bytes;
+            Require(!live.PatchWidescreenHud(true), "foreign fuel instruction was accepted");
+            for (const auto &p : LayoutFixture())
+                for (unsigned byte = 0; byte < 4; ++byte) {
+                    const size_t offset = Overlay14 + p.Offset + byte - 0x80000000;
+                    Require(m.bytes[offset] == before[offset], "layout was partially overwritten");
+                }
+            Require(m.Word(Overlay14 + WidescreenHudOverlayEnterOffset) == WidescreenHudOverlayEnterOriginal,
+                    "foreign fuel acquired a HUD scope");
+            // Conservative cleanup retains caves while a local signature is
+            // unknown; it must finish once the original instruction returns.
+            const auto &p = WidescreenHudFuelPatches[2];
+            m.WriteU32(Overlay14 + p.Offset, p.Original);
+            Require(live.PatchWidescreenHud(false), "fuel cleanup could not resume");
+            CheckAllStock(m);
+        } else if (scenario == "fuel_old_snapshot") {
+            Require(live.PatchWidescreenHud(true), "initial fixture failed");
+            // Pre-fuel-fix snapshots contain all other HUD hooks.
+            for (const auto &p : WidescreenHudFuelPatches) m.WriteU32(Overlay14 + p.Offset, p.Original);
+            CJetForceGeminiRuntime fresh(m);
+            Require(fresh.PatchWidescreenHud(true), "old fuel snapshot migration failed");
+            CheckInstalled(m, mode);
+            m.WriteU8(WidescreenHudResolutionIndexAddress, mode ^ 2);
+            Require(fresh.PatchWidescreenHud(true), "fuel resolution change failed");
+            CheckInstalled(m, mode ^ 2);
+            Require(fresh.PatchWidescreenHud(false), "fuel cleanup failed");
             CheckAllStock(m);
         } else if (scenario == "gauge_legacy_transition") {
             Require(live.PatchWidescreenHud(true), "initial gauge installation failed");
@@ -364,7 +399,7 @@ int main(int argc, char **argv) {
                     "Floyd call with unknown delay was overwritten");
             Require(m.Word(Overlay14 + GaugeCallOffset) == GaugeOriginalCall,
                     "Floyd failure prevented independent gauge cleanup");
-            for (const auto &p : WidescreenHudBannerPatches)
+            for (const auto &p : LayoutFixture())
                 Require(m.Word(Overlay14 + p.Offset) == p.Original,
                         "Floyd failure prevented independent banner cleanup");
             for (size_t i = 0; i < WidescreenHudCaveWordCount; ++i)
@@ -565,6 +600,10 @@ class JfgWidescreenLifecycleTests(unittest.TestCase):
 
     def test_fresh_enabled_snapshot_restores_complete_diagnostic_function_on_disable(self):
         self.scenario("adopt_enabled", (1, 3))
+
+    def test_fuel_layout_preserves_foreign_code_and_migrates_previous_snapshots(self):
+        self.scenario("fuel_foreign", (1, 3))
+        self.scenario("fuel_old_snapshot", (1, 3))
 
     def test_foreign_fixed_signature_is_preserved_without_partial_installation(self):
         self.scenario("foreign", (1, 3))
