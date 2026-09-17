@@ -1744,6 +1744,8 @@ const uint32_t CameraCount = 4;
 // in the main code rather than in an overlay, so it reads the same whatever the
 // game has paged in.
 uint32_t RobotMissionAddress = 0x800A3208;
+uint32_t MultiplayerGameAddress = 0x800A4FC4;
+uint32_t CooperativeGameAddress = 0x800A4FC8;
 const uint32_t ObjectPlayerDataOffset = 0x68;
 const uint32_t ObjectYawOffset = 0x00;
 const uint32_t PlayerIndexOffset = 0x00;
@@ -2895,6 +2897,8 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     SquaddieXStub = A.SquaddieXStub;
     SquaddieZStub = A.SquaddieZStub;
     RobotMissionAddress = A.RobotMissionAddress;
+    MultiplayerGameAddress = A.MultiplayerGameAddress;
+    CooperativeGameAddress = A.CooperativeGameAddress;
     WaterWakeGlobalFadeAddress = A.WaterWakeGlobalFadeAddress;
     WaterWakeObjectListAddress = A.WaterWakeObjectListAddress;
     WaterWakeObjectCountAddress = A.WaterWakeObjectCountAddress;
@@ -4142,6 +4146,19 @@ void CJetForceGeminiRuntime::MapSecondaryPort(
     Buttons.R_DPAD = Controls.DpadRight;
     Buttons.X_AXIS = Controls.StickX;
     Buttons.Y_AXIS = Controls.StickY;
+
+    // In solo play, START on port two toggles cooperativeGame and hands Floyd
+    // to that port. His aiming Y runs opposite to the normal movement stick.
+    // Read the live flags so joining/leaving co-op and loading a state take
+    // effect immediately, without reversing other players or multiplayer.
+    uint8_t MultiplayerGame = 0;
+    uint8_t CooperativeGame = 0;
+    if (Control == 1 && IsSupportedRom() &&
+        m_Memory.ReadU8(MultiplayerGameAddress, MultiplayerGame) && MultiplayerGame == 0 &&
+        m_Memory.ReadU8(CooperativeGameAddress, CooperativeGame) && CooperativeGame != 0)
+    {
+        Buttons.Y_AXIS = -Controls.StickY;
+    }
 }
 
 // Removes the 30fps -> 20fps escalation in viFrameSync, see FramePacingPatches.

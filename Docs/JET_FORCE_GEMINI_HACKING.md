@@ -61,7 +61,10 @@ the implementation still validates the live instructions before modifying them.
 
 1. `ProcessController()` maps the sources routed to a port, keyboard/mouse and
    up to two gamepads, to that N64 controller. Port one gets the full scheme;
-   ports two to four get `MapSecondaryPort()`, the button layout alone.
+   ports two to four get `MapSecondaryPort()`, the button layout alone. Port
+   two reverses stick Y while `cooperativeGame` is set and `multiPlayerGame`
+   is clear, matching Floyd's aim when the second player joins solo play.
+   The flags are read on each poll, including after a state load.
 2. `ProcessVideoFrame()` performs camera work and applies timing/gameplay
    patches once the level has a valid player object. It also turns the right
    stick into mouse counts, see `BankStickCamera()`.

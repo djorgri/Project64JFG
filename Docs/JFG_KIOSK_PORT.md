@@ -393,6 +393,8 @@ OverlayTableAddress                        800FEAA0 800FF780  symbole           
 PlayerCountAddress                         800F2D10 800F3910  symbole           playerlist+0x4
 PlayerListAddress                          800F2D0C 800F390C  symbole           playerlist+0x0
 RobotMissionAddress                        800A3208 800A3A58  signature 13/13   2e candidat 8
+MultiplayerGameAddress                     800A4FC4 800A5994  lbu sidekickControl US+0x58 / Kiosk+0x58
+CooperativeGameAddress                     800A4FC8 800A5998  lbu sidekickControl US+0x68 / Kiosk+0x68, sb +0x90/+0xBC
 SidekickControlEnd                         8003109C 800310A8  signature 12/13   2e candidat 2
 SidekickControlEntry                       8002F728 8002F734  signature 13/13   2e candidat 2
 SidekickControlObjectAddress               8009FCA0 800A0530  signature 12/13   2e candidat 4

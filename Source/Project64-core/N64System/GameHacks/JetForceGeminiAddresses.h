@@ -114,6 +114,8 @@ struct JFG_ADDRESSES
     uint32_t SquaddieXStub;
     uint32_t SquaddieZStub;
     uint32_t RobotMissionAddress;
+    uint32_t MultiplayerGameAddress;
+    uint32_t CooperativeGameAddress;
     uint32_t WaterWakeGlobalFadeAddress;
     uint32_t WaterWakeObjectListAddress;
     uint32_t WaterWakeObjectCountAddress;
