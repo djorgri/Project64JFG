@@ -76,7 +76,7 @@ support and an optional 60 FPS mode.
 - Jet Force Gemini options are grouped under
   *Options → Game-specific hacks → Jet Force Gemini*
 - Some greyed-out options are still under development and are not available
-  yet, including Floyd lateral movement
+  yet, including direct Floyd mouse aiming
 - The Parallel-RDP graphics dialog includes a hardware-oriented preset and
   display, RDP, and VI controls
 
@@ -103,9 +103,9 @@ The Jet Force Gemini settings list three input sources, **Keyboard/mouse**,
 
 During crouch, Q/D are routed to N64 C-left/C-right. The equivalent prone
 behaviour is configurable in the **Controls** tab. Floyd lateral movement is
-still in development; its current contextual flight controls use W/S (or E/F)
-for A/B throttle, while the mouse controls its reticle or camera according to
-the selected Floyd option.
+experimental and enabled by default; Q/D move sideways during Floyd missions.
+Its contextual flight controls use W/S (or E/F) for A/B throttle, while the
+mouse controls its reticle or camera according to the selected Floyd option.
 
 ### Gamepad
 

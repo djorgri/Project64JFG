@@ -194,9 +194,9 @@ void CGameSpecificHacksDialog::UpdateControlState(void)
     ::EnableWindow(GetDlgItem(IDC_GSH_STICK_CAMERA_LABEL), AnyGamepad ? TRUE : FALSE);
     ::EnableWindow(GetDlgItem(IDC_GSH_GAMEPAD_STOCK_AIM), AnyGamepad ? TRUE : FALSE);
 
-    // IDC_GSH_LATERAL_MOVEMENT and IDC_GSH_DRONE_DIRECT are greyed out (WS_DISABLED in
-    // the resource), so they are intentionally left out here to stay disabled.
+    // IDC_GSH_DRONE_DIRECT stays disabled in the dialog resource.
     const int SchemeOptions[] = {
+        IDC_GSH_LATERAL_MOVEMENT,
         IDC_GSH_PRESERVE_CAMERA,
         IDC_GSH_FREE_CAMERA_JUMP,
         IDC_GSH_PRONE_CBUTTONS,
