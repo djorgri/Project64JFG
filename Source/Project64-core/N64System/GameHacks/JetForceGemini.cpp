@@ -1724,6 +1724,16 @@ std::vector<uint32_t> BuildLandingCinematicSkipImage(void)
 uint32_t CameraNativeYAddress = 0x8009F244;
 uint32_t CameraHeightOffsetAddress = 0x8009F248;
 uint32_t CameraTopDownCounterAddress = 0x8009F24C;
+// The free orbit's camera height, one word per player, and the native target
+// height the injected blend saves before adding it, again per player. They
+// sit in the same zero gap the three words above already use, just below
+// them: the gap runs from CameraNativeYAddress - 0x1C in both builds, and the
+// injected code indexes both tables from one $at, see CameraHeightBlendCode.
+// CameraHeightOffsetAddress is no longer read by anything and is kept only
+// as a name for the word.
+const uint32_t CameraPlayerCount = 4;
+uint32_t CameraNativeYTableAddress = 0x8009F228;
+uint32_t CameraHeightTableAddress = 0x8009F238;
 
 uint32_t PlayerListAddress = 0x800F2D0C;
 uint32_t PlayerCountAddress = 0x800F2D10;
@@ -1863,6 +1873,8 @@ const uint32_t TransformZOffset = 0x14;
 // Instruction words the two builds spell differently, see JFG_ADDRESSES.
 // Kept beside the addresses so a use site reads the same either way.
 uint32_t CameraHelperCallWord = 0x0C00CFE9;
+uint32_t ManualAimCursorXGuardWord = 0x15E10002;
+uint32_t ManualAimCursorYGuardWord = 0x15610002;
 uint32_t ManualAimCursorXStoreWord = 0xA7190000;
 uint32_t ManualAimCursorYStoreWord = 0xA58D0000;
 uint32_t SchedulerSignatureWord0 = 0x8E480300;
@@ -1895,27 +1907,42 @@ CAMERA_CODE_PATCH CameraCodePatches[] =
     { CameraLookHelperCall, 0x8FA200F0, 0x0C025A3B, true },
     { CameraYawHelperCall, CameraHelperCallWord, CameraHelperCallReplacement, true },
     { CameraPitchHelperCall, CameraHelperCallWord, CameraHelperCallReplacement, true },
-    { ManualAimCursorXStore, ManualAimCursorXStoreWord, ManualAimCursorXStoreClear, false },
-    { ManualAimCursorYStore, ManualAimCursorYStoreWord, ManualAimCursorYStoreClear, false },
+    { ManualAimCursorXStore, ManualAimCursorXStoreWord, 0x00000000, false },
+    { ManualAimCursorYStore, ManualAimCursorYStoreWord, 0x00000000, false },
     { ManualAimXVelocityStore, 0xE60401E4, 0xE60801E4, false },
     { ManualAimYVelocityStore, 0xE60401E8, 0xE60801E8, false },
 
-    { CameraHeightBlendBase + 0x00, 0x8D230000, 0x3C01800A, true },
+    { CameraHeightBlendBase + 0x00, 0x8D230000, 0x92020000, true },
     { CameraHeightBlendBase + 0x04, 0xC7A40090, 0xC7A40090, true },
-    { CameraHeightBlendBase + 0x08, 0xC46C0010, 0xE424F244, true },
-    { CameraHeightBlendBase + 0x0C, 0xC7A800A8, 0xC426F248, true },
-    { CameraHeightBlendBase + 0x10, 0x460C2181, 0x46062100, true },
-    { CameraHeightBlendBase + 0x14, 0x46083482, 0xC46C0010, true },
-    { CameraHeightBlendBase + 0x18, 0x460C9280, 0x460C2181, true },
-    { CameraHeightBlendBase + 0x1C, 0xE46A0010, 0x46083482, true },
-    { CameraHeightBlendBase + 0x20, 0x8D230000, 0x460C9280, true },
-    { CameraHeightBlendBase + 0x24, 0xC7A40094, 0xE46A0010, true },
-    { CameraHeightBlendBase + 0x28, 0xC4620014, 0xC7A40094, true },
-    { CameraHeightBlendBase + 0x2C, 0xC7A800A8, 0xC4620014, true },
-    { CameraHeightBlendBase + 0x30, 0x46022181, 0x46022181, true },
-    { CameraHeightBlendBase + 0x34, 0x46083482, 0x46083482, true },
-    { CameraHeightBlendBase + 0x38, 0x46029280, 0x46029280, true },
-    { CameraHeightBlendBase + 0x3C, 0xE46A0014, 0xE46A0014, true },
+    { CameraHeightBlendBase + 0x08, 0xC46C0010, 0x00021080, true },
+    { CameraHeightBlendBase + 0x0C, 0xC7A800A8, 0x3C01800A, true },
+    { CameraHeightBlendBase + 0x10, 0x460C2181, 0x00220821, true },
+    { CameraHeightBlendBase + 0x14, 0x46083482, 0xE424F228, true },
+    { CameraHeightBlendBase + 0x18, 0x460C9280, 0xC426F238, true },
+    { CameraHeightBlendBase + 0x1C, 0xE46A0010, 0xC46C0010, true },
+    { CameraHeightBlendBase + 0x20, 0x8D230000, 0x46062100, true },
+    { CameraHeightBlendBase + 0x24, 0xC7A40094, 0x460C2181, true },
+    { CameraHeightBlendBase + 0x28, 0xC4620014, 0x46083482, true },
+    { CameraHeightBlendBase + 0x2C, 0xC7A800A8, 0x460C9280, true },
+    { CameraHeightBlendBase + 0x30, 0x46022181, 0xE46A0010, true },
+    { CameraHeightBlendBase + 0x34, 0x46083482, 0xC7A40094, true },
+    { CameraHeightBlendBase + 0x38, 0x46029280, 0xC4620014, true },
+    { CameraHeightBlendBase + 0x3C, 0xE46A0014, 0x46022181, true },
+    { CameraHeightBlendBase + 0x40, 0x8D230000, 0x46083482, true },
+    { CameraHeightBlendBase + 0x44, 0x00000000, 0x46029280, true },
+    { CameraHeightBlendBase + 0x48, 0xC464000C, 0xE46A0014, true },
+    { CameraHeightBlendBase + 0x4C, 0x00000000, 0xC464000C, true },
+    { CameraHeightBlendBase + 0x50, 0xE4640018, 0xC4660010, true },
+    { CameraHeightBlendBase + 0x54, 0x8D230000, 0xC4680014, true },
+    { CameraHeightBlendBase + 0x58, 0x00000000, 0xE4640018, true },
+    { CameraHeightBlendBase + 0x5C, 0xC4660010, 0xE466001C, true },
+    { CameraHeightBlendBase + 0x60, 0x00000000, 0xE4680020, true },
+    { CameraHeightBlendBase + 0x64, 0xE466001C, 0x00000000, true },
+    { CameraHeightBlendBase + 0x68, 0x8D230000, 0x00000000, true },
+    { CameraHeightBlendBase + 0x6C, 0x00000000, 0x00000000, true },
+    { CameraHeightBlendBase + 0x70, 0xC4680014, 0x00000000, true },
+    { CameraHeightBlendBase + 0x74, 0x00000000, 0x00000000, true },
+    { CameraHeightBlendBase + 0x78, 0xE4680020, 0x00000000, true },
 
     { CameraLookHelperCall + 0x0C, 0x44802000, 0xC7A40098, true },
     { CameraLookHelperCall + 0x38, 0x44805000, 0xC7AA00A0, true },
@@ -1970,6 +1997,69 @@ GAME_HACK_CODE_PATCH BoyAimPatches[] =
     { 0x8035CD40, 0x87A50054, 0x860501E2 },
     { 0x8035CD44, 0x860401DE, 0x00A02025 },
 };
+
+// controlGetManualAim places the reticle from the stick with one halfword
+// store per axis (ManualAimCursorXStore / YStore), each preceded by the
+// compiler's division guard:
+//
+//   bnez  $v1, +2          ; the divisor is the constant 0x28, so neither
+//   nop                    ; the zero check nor the overflow check can fire
+//   break 7
+//   addiu $at, $zero, -1
+//   bne   $v1, $at, +4
+//   lui   $at, 0x8000
+//   bne   $tX, $at, +2
+//   nop
+//   break 6
+//   mflo  $rt
+//   sh    $rt, 0($base)
+//
+// The mouse scheme owns those fields for player one, so the store used to be
+// turned into `sh $zero`. That took the reticle away from every player at
+// once: in split screen and in co-op the second controller's stick could not
+// aim at all. The guard being dead code, the eleven words are rewritten in
+// place to store nothing for player one and the game's own value for anyone
+// else, keyed on the player index byte at the start of the player data:
+//
+//   lbu   $at, 0($s0)      ; player index; $s0 is the player data throughout
+//   nop
+//   bne   $at, $zero, +3   ; another player: the game's store
+//   mflo  $rt              ; (delay slot) the quotient either way
+//   b     +3
+//   sh    $zero, 0($base)  ; (delay slot) player one: keep the mouse value
+//   sh    $rt, 0($base)
+//   nop                    ; x4, through the original store
+//
+// $at is dead across the window in both builds and $rt is only read by the
+// store. The store and the guard's `bne` are where the two compiles picked
+// different registers, so both words come from the address table; the mflo
+// follows from the store's register. The window entries hold the ten words
+// before the store; the store itself stays in CameraCodePatches.
+const uint32_t ManualAimCursorWindowBytes = 0x28;
+const size_t ManualAimCursorWindowWords = ManualAimCursorWindowBytes / sizeof(uint32_t);
+CAMERA_CODE_PATCH ManualAimCursorPatches[2 * ManualAimCursorWindowWords] = {};
+
+void FillManualAimCursorPatches(
+    CAMERA_CODE_PATCH * Patches, uint32_t Store, uint32_t StoreWord, uint32_t GuardWord)
+{
+    const uint32_t Rt = (StoreWord >> 16) & 0x1F;
+    const uint32_t Mflo = 0x00000012 | (Rt << 11);
+    const uint32_t StoreClear = StoreWord & ~(0x1Fu << 16);
+    const CAMERA_CODE_PATCH Window[ManualAimCursorWindowWords] =
+    {
+        { Store - 0x28, 0x14600002, 0x92010000, false }, // bnez  $v1, +2       -> lbu  $at, 0($s0)
+        { Store - 0x24, 0x00000000, 0x00000000, false }, // nop                 -> nop
+        { Store - 0x20, 0x0007000D, 0x14200003, false }, // break 7             -> bne  $at, $zero, +3
+        { Store - 0x1C, 0x2401FFFF, Mflo,       false }, // addiu $at, $zero,-1 -> mflo $rt
+        { Store - 0x18, 0x14610004, 0x10000003, false }, // bne   $v1, $at, +4  -> b    +3
+        { Store - 0x14, 0x3C018000, StoreClear, false }, // lui   $at, 0x8000   -> sh   $zero, 0($base)
+        { Store - 0x10, GuardWord,  StoreWord,  false }, // bne   $tX, $at, +2  -> sh   $rt, 0($base)
+        { Store - 0x0C, 0x00000000, 0x00000000, false }, // nop                 -> nop
+        { Store - 0x08, 0x0006000D, 0x00000000, false }, // break 6             -> nop
+        { Store - 0x04, Mflo,       0x00000000, false }, // mflo  $rt           -> nop
+    };
+    memcpy(Patches, Window, sizeof(Window));
+}
 
 GAME_HACK_CODE_PATCH FramePacingPatches[] =
 {
@@ -2621,12 +2711,27 @@ bool IsManualAimAnglePatch(uint32_t Address)
     return Address == CameraYawHelperCall || Address == CameraPitchHelperCall;
 }
 
-// The four words that take the reticle away from the game's stick: the cursor
-// stores and the velocity stores of controlGetManualAim.
+// The words that take the reticle away from the game's stick for player one:
+// the two cursor stores of controlGetManualAim with the guard window rewritten
+// in front of each, see ManualAimCursorPatches. Stock aim puts them all back.
 bool IsManualAimStorePatch(uint32_t Address)
 {
-    return Address == ManualAimCursorXStore || Address == ManualAimCursorYStore ||
-           Address == ManualAimXVelocityStore || Address == ManualAimYVelocityStore;
+    return (Address >= ManualAimCursorXStore - ManualAimCursorWindowBytes &&
+            Address <= ManualAimCursorXStore) ||
+           (Address >= ManualAimCursorYStore - ManualAimCursorWindowBytes &&
+            Address <= ManualAimCursorYStore);
+}
+
+// The velocity stores of the same function used to be redirected to store the
+// stick's target instead of the smoothed value. With player one's stick at
+// rest in the mouse aim that target is zero and the runtime zeroes the
+// velocities every video frame anyway, so the redirect changed nothing for
+// player one while denying the other players their smoothing. They stay at
+// the original words now; the entries remain so a state saved with the old
+// replacement is recognised and restored.
+bool IsManualAimVelocityPatch(uint32_t Address)
+{
+    return Address == ManualAimXVelocityStore || Address == ManualAimYVelocityStore;
 }
 
 bool GetLegacyCameraHeightInstruction(uint32_t Address, uint32_t & Instruction)
@@ -2645,6 +2750,36 @@ bool GetLegacyCameraHeightInstruction(uint32_t Address, uint32_t & Instruction)
     case 0x18: Instruction = 0x46083482; return true;
     case 0x1C: Instruction = 0x460C9280; return true;
     case 0x20: Instruction = 0xE46A0010; return true;
+    default: return false;
+    }
+}
+
+uint32_t WithHi(uint32_t Instruction, uint32_t Address);
+uint32_t WithLo(uint32_t Instruction, uint32_t Address);
+
+// The height blend as the builds before the per-player tables wrote it, so a
+// state carrying it is recognised and rewritten.
+bool GetPreviousCameraHeightInstruction(uint32_t Address, uint32_t & Instruction)
+{
+    const uint32_t Offset = Address - CameraHeightBlendBase;
+    switch (Offset)
+    {
+    case 0x00: Instruction = WithHi(0x3C010000, CameraHeightOffsetAddress); return true;
+    case 0x04: Instruction = 0xC7A40090; return true;
+    case 0x08: Instruction = WithLo(0xE4240000, CameraNativeYAddress); return true;
+    case 0x0C: Instruction = WithLo(0xC4260000, CameraHeightOffsetAddress); return true;
+    case 0x10: Instruction = 0x46062100; return true;
+    case 0x14: Instruction = 0xC46C0010; return true;
+    case 0x18: Instruction = 0x460C2181; return true;
+    case 0x1C: Instruction = 0x46083482; return true;
+    case 0x20: Instruction = 0x460C9280; return true;
+    case 0x24: Instruction = 0xE46A0010; return true;
+    case 0x28: Instruction = 0xC7A40094; return true;
+    case 0x2C: Instruction = 0xC4620014; return true;
+    case 0x30: Instruction = 0x46022181; return true;
+    case 0x34: Instruction = 0x46083482; return true;
+    case 0x38: Instruction = 0x46029280; return true;
+    case 0x3C: Instruction = 0xE46A0014; return true;
     default: return false;
     }
 }
@@ -2863,6 +2998,8 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     CameraTopDownHelperBase = A.CameraTopDownHelperBase;
     CameraNativeYAddress = A.CameraNativeYAddress;
     CameraHeightOffsetAddress = A.CameraHeightOffsetAddress;
+    CameraNativeYTableAddress = CameraNativeYAddress - 0x1C;
+    CameraHeightTableAddress = CameraNativeYAddress - 0x0C;
     CameraTopDownCounterAddress = A.CameraTopDownCounterAddress;
     SidekickControlObjectAddress = A.SidekickControlObjectAddress;
     DroneLateralMaxSpeedAddress = A.DroneLateralMaxSpeedAddress;
@@ -2930,6 +3067,8 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     // Build-specific instruction words, and the three replacements derived from
     // them so they follow whichever registers the compile happened to choose.
     CameraHelperCallWord = A.CameraHelperCallWord;
+    ManualAimCursorXGuardWord = A.ManualAimCursorXGuardWord;
+    ManualAimCursorYGuardWord = A.ManualAimCursorYGuardWord;
     ManualAimCursorXStoreWord = A.ManualAimCursorXStoreWord;
     ManualAimCursorYStoreWord = A.ManualAimCursorYStoreWord;
     SchedulerSignatureWord0 = A.SchedulerSignatureWord0;
@@ -2939,6 +3078,11 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     CameraHelperCallReplacement = 0x0C000000 | ((CameraHelperBase >> 2) & 0x03FFFFFF);
     ManualAimCursorXStoreClear = ManualAimCursorXStoreWord & ~(0x1Fu << 16);
     ManualAimCursorYStoreClear = ManualAimCursorYStoreWord & ~(0x1Fu << 16);
+    FillManualAimCursorPatches(
+        ManualAimCursorPatches, ManualAimCursorXStore, ManualAimCursorXStoreWord, ManualAimCursorXGuardWord);
+    FillManualAimCursorPatches(
+        ManualAimCursorPatches + ManualAimCursorWindowWords, ManualAimCursorYStore, ManualAimCursorYStoreWord,
+        ManualAimCursorYGuardWord);
 
     // The camera table carries addresses too, so it is rebuilt like the others.
     CameraCodePatches[0] = { CameraClampBranch, 0x14200004, 0x10000008, true };
@@ -2951,55 +3095,70 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     CameraCodePatches[7] = { CameraLookHelperCall, 0x8FA200F0, CallTo(CameraHelperBase + 0x20), true };
     CameraCodePatches[8] = { CameraYawHelperCall, CameraHelperCallWord, CameraHelperCallReplacement, true };
     CameraCodePatches[9] = { CameraPitchHelperCall, CameraHelperCallWord, CameraHelperCallReplacement, true };
-    CameraCodePatches[10] = { ManualAimCursorXStore, ManualAimCursorXStoreWord, ManualAimCursorXStoreClear, false };
-    CameraCodePatches[11] = { ManualAimCursorYStore, ManualAimCursorYStoreWord, ManualAimCursorYStoreClear, false };
+    CameraCodePatches[10] = { ManualAimCursorXStore, ManualAimCursorXStoreWord, 0x00000000, false };
+    CameraCodePatches[11] = { ManualAimCursorYStore, ManualAimCursorYStoreWord, 0x00000000, false };
     CameraCodePatches[12] = { ManualAimXVelocityStore, 0xE60401E4, 0xE60801E4, false };
     CameraCodePatches[13] = { ManualAimYVelocityStore, 0xE60401E8, 0xE60801E8, false };
-    CameraCodePatches[14] = { CameraHeightBlendBase + 0x00, 0x8D230000, WithHi(0x3C010000, CameraHeightOffsetAddress), true };
+    CameraCodePatches[14] = { CameraHeightBlendBase + 0x00, 0x8D230000, 0x92020000, true };
     CameraCodePatches[15] = { CameraHeightBlendBase + 0x04, 0xC7A40090, 0xC7A40090, true };
-    CameraCodePatches[16] = { CameraHeightBlendBase + 0x08, 0xC46C0010, WithLo(0xE4240000, CameraNativeYAddress), true };
-    CameraCodePatches[17] = { CameraHeightBlendBase + 0x0C, 0xC7A800A8, WithLo(0xC4260000, CameraHeightOffsetAddress), true };
-    CameraCodePatches[18] = { CameraHeightBlendBase + 0x10, 0x460C2181, 0x46062100, true };
-    CameraCodePatches[19] = { CameraHeightBlendBase + 0x14, 0x46083482, 0xC46C0010, true };
-    CameraCodePatches[20] = { CameraHeightBlendBase + 0x18, 0x460C9280, 0x460C2181, true };
-    CameraCodePatches[21] = { CameraHeightBlendBase + 0x1C, 0xE46A0010, 0x46083482, true };
-    CameraCodePatches[22] = { CameraHeightBlendBase + 0x20, 0x8D230000, 0x460C9280, true };
-    CameraCodePatches[23] = { CameraHeightBlendBase + 0x24, 0xC7A40094, 0xE46A0010, true };
-    CameraCodePatches[24] = { CameraHeightBlendBase + 0x28, 0xC4620014, 0xC7A40094, true };
-    CameraCodePatches[25] = { CameraHeightBlendBase + 0x2C, 0xC7A800A8, 0xC4620014, true };
-    CameraCodePatches[26] = { CameraHeightBlendBase + 0x30, 0x46022181, 0x46022181, true };
-    CameraCodePatches[27] = { CameraHeightBlendBase + 0x34, 0x46083482, 0x46083482, true };
-    CameraCodePatches[28] = { CameraHeightBlendBase + 0x38, 0x46029280, 0x46029280, true };
-    CameraCodePatches[29] = { CameraHeightBlendBase + 0x3C, 0xE46A0014, 0xE46A0014, true };
-    CameraCodePatches[30] = { CameraLookHelperCall + 0x0C, 0x44802000, 0xC7A40098, true };
-    CameraCodePatches[31] = { CameraLookHelperCall + 0x38, 0x44805000, 0xC7AA00A0, true };
-    CameraCodePatches[32] = { CameraYawHelperCall + 0x14, 0xA5C50000, 0xA5C20000, true };
-    CameraCodePatches[33] = { CameraTopDownEntry + 0x00, 0x44866000, JumpTo(CameraTopDownHelperBase), false };
-    CameraCodePatches[34] = { CameraTopDownEntry + 0x04, 0x3C06800F, 0x44866000, false };
-    CameraCodePatches[35] = { CameraTopDownHelperBase + 0x00, 0x00000000, WithHi(0x3C080000, CameraTopDownCounterAddress), false };
-    CameraCodePatches[36] = { CameraTopDownHelperBase + 0x04, 0x00000000, WithLo(0x8D090000, CameraTopDownCounterAddress), false };
+    CameraCodePatches[16] = { CameraHeightBlendBase + 0x08, 0xC46C0010, 0x00021080, true };
+    CameraCodePatches[17] = { CameraHeightBlendBase + 0x0C, 0xC7A800A8, WithHi(0x3C010000, CameraNativeYTableAddress), true };
+    CameraCodePatches[18] = { CameraHeightBlendBase + 0x10, 0x460C2181, 0x00220821, true };
+    CameraCodePatches[19] = { CameraHeightBlendBase + 0x14, 0x46083482, WithLo(0xE4240000, CameraNativeYTableAddress), true };
+    CameraCodePatches[20] = { CameraHeightBlendBase + 0x18, 0x460C9280, WithLo(0xC4260000, CameraHeightTableAddress), true };
+    CameraCodePatches[21] = { CameraHeightBlendBase + 0x1C, 0xE46A0010, 0xC46C0010, true };
+    CameraCodePatches[22] = { CameraHeightBlendBase + 0x20, 0x8D230000, 0x46062100, true };
+    CameraCodePatches[23] = { CameraHeightBlendBase + 0x24, 0xC7A40094, 0x460C2181, true };
+    CameraCodePatches[24] = { CameraHeightBlendBase + 0x28, 0xC4620014, 0x46083482, true };
+    CameraCodePatches[25] = { CameraHeightBlendBase + 0x2C, 0xC7A800A8, 0x460C9280, true };
+    CameraCodePatches[26] = { CameraHeightBlendBase + 0x30, 0x46022181, 0xE46A0010, true };
+    CameraCodePatches[27] = { CameraHeightBlendBase + 0x34, 0x46083482, 0xC7A40094, true };
+    CameraCodePatches[28] = { CameraHeightBlendBase + 0x38, 0x46029280, 0xC4620014, true };
+    CameraCodePatches[29] = { CameraHeightBlendBase + 0x3C, 0xE46A0014, 0x46022181, true };
+    CameraCodePatches[30] = { CameraHeightBlendBase + 0x40, 0x8D230000, 0x46083482, true };
+    CameraCodePatches[31] = { CameraHeightBlendBase + 0x44, 0x00000000, 0x46029280, true };
+    CameraCodePatches[32] = { CameraHeightBlendBase + 0x48, 0xC464000C, 0xE46A0014, true };
+    CameraCodePatches[33] = { CameraHeightBlendBase + 0x4C, 0x00000000, 0xC464000C, true };
+    CameraCodePatches[34] = { CameraHeightBlendBase + 0x50, 0xE4640018, 0xC4660010, true };
+    CameraCodePatches[35] = { CameraHeightBlendBase + 0x54, 0x8D230000, 0xC4680014, true };
+    CameraCodePatches[36] = { CameraHeightBlendBase + 0x58, 0x00000000, 0xE4640018, true };
+    CameraCodePatches[37] = { CameraHeightBlendBase + 0x5C, 0xC4660010, 0xE466001C, true };
+    CameraCodePatches[38] = { CameraHeightBlendBase + 0x60, 0x00000000, 0xE4680020, true };
+    CameraCodePatches[39] = { CameraHeightBlendBase + 0x64, 0xE466001C, 0x00000000, true };
+    CameraCodePatches[40] = { CameraHeightBlendBase + 0x68, 0x8D230000, 0x00000000, true };
+    CameraCodePatches[41] = { CameraHeightBlendBase + 0x6C, 0x00000000, 0x00000000, true };
+    CameraCodePatches[42] = { CameraHeightBlendBase + 0x70, 0xC4680014, 0x00000000, true };
+    CameraCodePatches[43] = { CameraHeightBlendBase + 0x74, 0x00000000, 0x00000000, true };
+    CameraCodePatches[44] = { CameraHeightBlendBase + 0x78, 0xE4680020, 0x00000000, true };
+    CameraCodePatches[45] = { CameraLookHelperCall + 0x0C, 0x44802000, 0xC7A40098, true };
+    CameraCodePatches[46] = { CameraLookHelperCall + 0x38, 0x44805000, 0xC7AA00A0, true };
+    CameraCodePatches[47] = { CameraYawHelperCall + 0x14, 0xA5C50000, 0xA5C20000, true };
+    CameraCodePatches[48] = { CameraTopDownEntry + 0x00, 0x44866000, JumpTo(CameraTopDownHelperBase), false };
+    CameraCodePatches[49] = { CameraTopDownEntry + 0x04, 0x3C06800F, 0x44866000, false };
+    CameraCodePatches[50] = { CameraTopDownHelperBase + 0x00, 0x00000000, WithHi(0x3C080000, CameraTopDownCounterAddress), false };
+    CameraCodePatches[51] = { CameraTopDownHelperBase + 0x04, 0x00000000, WithLo(0x8D090000, CameraTopDownCounterAddress), false };
     // A lone lui: its low half is supplied by the game code jumped to below, so
     // there is no pair here to name the global. Both builds keep their 0x800F
     // globals in the same 64K page, so the upper half is the same either way.
-    CameraCodePatches[37] = { CameraTopDownHelperBase + 0x08, 0x00000000, 0x3C06800F, false };
-    CameraCodePatches[38] = { CameraTopDownHelperBase + 0x0C, 0x00000000, 0x25290001, false };
-    CameraCodePatches[39] = { CameraTopDownHelperBase + 0x10, 0x00000000, JumpTo(CameraTopDownEntry + 0x08), false };
-    CameraCodePatches[40] = { CameraTopDownHelperBase + 0x14, 0x00000000, WithLo(0xAD090000, CameraTopDownCounterAddress), false };
-    CameraCodePatches[41] = { CameraHelperBase + 0x00, 0x00000000, 0x92080568, false };
-    CameraCodePatches[42] = { CameraHelperBase + 0x04, 0x00000000, 0x3108FFFC, false };
-    CameraCodePatches[43] = { CameraHelperBase + 0x08, 0x00000000, 0x00000000, false };
-    CameraCodePatches[44] = { CameraHelperBase + 0x0C, 0x00000000, 0x15000003, false };
-    CameraCodePatches[45] = { CameraHelperBase + 0x10, 0x00000000, 0x00A01025, false };
-    CameraCodePatches[46] = { CameraHelperBase + 0x14, 0x00000000, 0x03E00008, false };
-    CameraCodePatches[47] = { CameraHelperBase + 0x1C, 0x00000000, JumpTo(CameraAngleHelper), false };
-    CameraCodePatches[48] = { CameraHelperBase + 0x20, 0x00000000, 0x92080568, false };
-    CameraCodePatches[49] = { CameraHelperBase + 0x24, 0x00000000, 0x3108FFFC, false };
-    CameraCodePatches[50] = { CameraHelperBase + 0x28, 0x00000000, 0x00000000, false };
-    CameraCodePatches[51] = { CameraHelperBase + 0x2C, 0x00000000, 0x15000003, false };
-    CameraCodePatches[52] = { CameraHelperBase + 0x30, 0x00000000, 0x8FA200F0, false };
-    CameraCodePatches[53] = { CameraHelperBase + 0x34, 0x00000000, 0xAFA00098, false };
-    CameraCodePatches[54] = { CameraHelperBase + 0x38, 0x00000000, 0xAFA000A0, false };
-    CameraCodePatches[55] = { CameraHelperBase + 0x3C, 0x00000000, 0x03E00008, false };
+    CameraCodePatches[52] = { CameraTopDownHelperBase + 0x08, 0x00000000, 0x3C06800F, false };
+    CameraCodePatches[53] = { CameraTopDownHelperBase + 0x0C, 0x00000000, 0x25290001, false };
+    CameraCodePatches[54] = { CameraTopDownHelperBase + 0x10, 0x00000000, JumpTo(CameraTopDownEntry + 0x08), false };
+    CameraCodePatches[55] = { CameraTopDownHelperBase + 0x14, 0x00000000, WithLo(0xAD090000, CameraTopDownCounterAddress), false };
+    CameraCodePatches[56] = { CameraHelperBase + 0x00, 0x00000000, 0x92080568, false };
+    CameraCodePatches[57] = { CameraHelperBase + 0x04, 0x00000000, 0x3108FFFC, false };
+    CameraCodePatches[58] = { CameraHelperBase + 0x08, 0x00000000, 0x00000000, false };
+    CameraCodePatches[59] = { CameraHelperBase + 0x0C, 0x00000000, 0x15000003, false };
+    CameraCodePatches[60] = { CameraHelperBase + 0x10, 0x00000000, 0x00A01025, false };
+    CameraCodePatches[61] = { CameraHelperBase + 0x14, 0x00000000, 0x03E00008, false };
+    CameraCodePatches[62] = { CameraHelperBase + 0x1C, 0x00000000, JumpTo(CameraAngleHelper), false };
+    CameraCodePatches[63] = { CameraHelperBase + 0x20, 0x00000000, 0x92080568, false };
+    CameraCodePatches[64] = { CameraHelperBase + 0x24, 0x00000000, 0x3108FFFC, false };
+    CameraCodePatches[65] = { CameraHelperBase + 0x28, 0x00000000, 0x00000000, false };
+    CameraCodePatches[66] = { CameraHelperBase + 0x2C, 0x00000000, 0x15000003, false };
+    CameraCodePatches[67] = { CameraHelperBase + 0x30, 0x00000000, 0x8FA200F0, false };
+    CameraCodePatches[68] = { CameraHelperBase + 0x34, 0x00000000, 0xAFA00098, false };
+    CameraCodePatches[69] = { CameraHelperBase + 0x38, 0x00000000, 0xAFA000A0, false };
+    CameraCodePatches[70] = { CameraHelperBase + 0x3C, 0x00000000, 0x03E00008, false };
 
     // Every jump word that encodes one of our own stub addresses, or a game
     // routine a stub returns to. These were the last thing still spelled in
@@ -3254,14 +3413,6 @@ CJetForceGeminiRuntime::CJetForceGeminiRuntime(CMipsMemoryVM & MMU, CRecompiler 
     m_CodePatcher(m_Memory, Recompiler),
     m_Enabled(false),
     m_CameraPatchApplied(false),
-    m_CameraOverrideActive(false),
-    m_CameraOverrideSuspended(false),
-    m_TrackedCamera(0),
-    m_TrackedPlayerObject(0),
-    m_OrbitYawInitialized(false),
-    m_CameraElevationReady(false),
-    m_CameraHeightOffset(0.0f),
-    m_OrbitYaw(0),
     m_AimFovReference(0.0f),
     m_AimYawCarry(0.0f),
     m_AimPitchCarry(0.0f),
@@ -3270,11 +3421,7 @@ CJetForceGeminiRuntime::CJetForceGeminiRuntime(CMipsMemoryVM & MMU, CRecompiler 
     m_TopDownCounterInitialized(false),
     m_TopDownCounter(0),
     m_TopDownHoldPolls(0),
-    m_MouseDeltaX(0),
-    m_MouseDeltaY(0),
     m_QueuedMouseWheel(0),
-    m_StickCameraCarryX(0.0f),
-    m_StickCameraCarryY(0.0f),
     m_FramePacingPatchApplied(false),
     m_FramePacing60PatchApplied(false),
     m_SchedulerReleasePatchApplied(false),
@@ -3361,8 +3508,10 @@ CJetForceGeminiRuntime::CJetForceGeminiRuntime(CMipsMemoryVM & MMU, CRecompiler 
     m_LastCurrentScreen(0)
 {
     memset(m_HalvedEnemySlots, 0, sizeof(m_HalvedEnemySlots));
+    memset(m_Orbit, 0, sizeof(m_Orbit));
     memset(&m_ScrollButtons, 0, sizeof(m_ScrollButtons));
     memset(m_SecondaryScrollButtons, 0, sizeof(m_SecondaryScrollButtons));
+    memset(m_SecondaryQueuedScroll, 0, sizeof(m_SecondaryQueuedScroll));
     if (CinematicProbeEnabled)
     {
         OpenCinematicProbeLogSession();
@@ -3474,8 +3623,6 @@ void CJetForceGeminiRuntime::StateLoaded(void)
     PatchSquaddieMove(false);
     PatchSquadsTimeStep(false);
     ClearCameraState();
-    m_MouseDeltaX = 0;
-    m_MouseDeltaY = 0;
     m_SprintApplied = false;
     m_SprintPositionValid = false;
     m_SprintPlayerObject = 0;
@@ -3789,7 +3936,7 @@ void CJetForceGeminiRuntime::ProcessVideoFrame(const JFG_PORT_INPUT & Input, BUT
 
     // The stick is banked only once a level is live, so holding it through a
     // menu or cinematic cannot pile up a turn to spend on the first frame back.
-    BankStickCamera(Input);
+    BankStickCamera(m_Orbit[0], Input);
 
     // A wheel notch is a one-poll A/B impulse. The video path can run before
     // that poll, so it queues the event but never consumes it itself.
@@ -3862,8 +4009,8 @@ bool CJetForceGeminiRuntime::UpdateEnabledState(const JFG_PORT_INPUT & Input)
 // otherwise steal it. Banking the total keeps both paths harmless.
 void CJetForceGeminiRuntime::BankMouseDelta(const KEYBOARD_MOUSE_STATE & Input)
 {
-    m_MouseDeltaX += Input.MouseX;
-    m_MouseDeltaY += Input.MouseY;
+    m_Orbit[0].MouseDeltaX += Input.MouseX;
+    m_Orbit[0].MouseDeltaY += Input.MouseY;
 }
 
 // The video interrupt and the game controller poll acquire input separately.
@@ -3886,6 +4033,28 @@ void CJetForceGeminiRuntime::QueueGamepadScroll(const JFG_PORT_INPUT & Input)
     if (Scroll != 0)
     {
         m_QueuedMouseWheel = Scroll;
+    }
+}
+
+// The secondary ports' counterpart of the two above: their X/Y notches and
+// wheel are one-poll impulses too, so they are sampled from the video
+// interrupt as well as from the game's own poll, with the per-port edge state
+// shared between the two paths, and held until MapSecondaryPort returns them.
+// Sampling only at the poll left a tap shorter than one game frame unseen.
+void CJetForceGeminiRuntime::QueueSecondaryScroll(int32_t Control, const JFG_PORT_INPUT & Input)
+{
+    if (Control < 1 || Control > 3)
+    {
+        return;
+    }
+    int32_t Scroll = ReadScrollButtons(Input, m_SecondaryScrollButtons[Control - 1]);
+    if (Scroll == 0 && Input.KeyboardMouse != nullptr && Input.KeyboardMouse->MouseWheel != 0)
+    {
+        Scroll = Input.KeyboardMouse->MouseWheel > 0 ? 1 : -1;
+    }
+    if (Scroll != 0)
+    {
+        m_SecondaryQueuedScroll[Control - 1] = Scroll;
     }
 }
 
@@ -3934,7 +4103,8 @@ int8_t StickToN64(float Deflection)
 // without further wiring. The response is squared for fine control near the
 // centre, and the truncated fraction carries to the next frame so slow pans
 // still move. The pads sharing the port contribute whichever is pushed further.
-void CJetForceGeminiRuntime::BankStickCamera(const JFG_PORT_INPUT & Input)
+// Orbit is the state of the player the port feeds.
+void CJetForceGeminiRuntime::BankStickCamera(ORBIT_CAMERA_STATE & Orbit, const JFG_PORT_INPUT & Input)
 {
     float X = 0.0f;
     float Y = 0.0f;
@@ -3960,8 +4130,8 @@ void CJetForceGeminiRuntime::BankStickCamera(const JFG_PORT_INPUT & Input)
     }
     if (X == 0.0f && Y == 0.0f)
     {
-        m_StickCameraCarryX = 0.0f;
-        m_StickCameraCarryY = 0.0f;
+        Orbit.StickCarryX = 0.0f;
+        Orbit.StickCarryY = 0.0f;
         return;
     }
 
@@ -3976,14 +4146,14 @@ void CJetForceGeminiRuntime::BankStickCamera(const JFG_PORT_INPUT & Input)
         Rate *= GamepadAimRateMultiplier;
     }
 
-    const float AmountX = X * fabsf(X) * Rate + m_StickCameraCarryX;
+    const float AmountX = X * fabsf(X) * Rate + Orbit.StickCarryX;
     const int32_t StepX = (int32_t)AmountX;
-    m_StickCameraCarryX = AmountX - (float)StepX;
-    const float AmountY = Y * fabsf(Y) * Rate + m_StickCameraCarryY;
+    Orbit.StickCarryX = AmountX - (float)StepX;
+    const float AmountY = Y * fabsf(Y) * Rate + Orbit.StickCarryY;
     const int32_t StepY = (int32_t)AmountY;
-    m_StickCameraCarryY = AmountY - (float)StepY;
-    m_MouseDeltaX += StepX;
-    m_MouseDeltaY += StepY;
+    Orbit.StickCarryY = AmountY - (float)StepY;
+    Orbit.MouseDeltaX += StepX;
+    Orbit.MouseDeltaY += StepY;
 }
 
 // Merges every source routed to a port into the scheme's own controls. Keys
@@ -4111,9 +4281,14 @@ int32_t CJetForceGeminiRuntime::ReadScrollButtons(const JFG_PORT_INPUT & Input, 
     return Scroll;
 }
 
-// Ports two to four get the button layout alone: the camera work is bound to
-// the first player's objects, so the right stick has nothing to drive there and
-// mouse travel has nowhere to go.
+// Ports two to four get the button layout without the camera work, which is
+// bound to the first player's objects: mouse travel has nowhere to go and the
+// right stick cannot turn the view. It still aims, though. The trigger hands
+// the aim to the game's own reticle the way port one's stock aim does, the
+// right stick on the N64 stick and the left stick on the C buttons the game
+// moves with while targeting. There is no mouse-style aim to fall back on
+// here, so this does not follow the port-one option. Floyd in co-op is always
+// aiming and reads either stick.
 void CJetForceGeminiRuntime::MapSecondaryPort(
     int32_t Control, const JFG_PORT_INPUT & Input, BUTTONS & Buttons)
 {
@@ -4125,11 +4300,9 @@ void CJetForceGeminiRuntime::MapSecondaryPort(
 
     JFG_CONTROLS Controls;
     ReadControls(Input, Controls);
-    int32_t Scroll = ReadScrollButtons(Input, m_SecondaryScrollButtons[Control - 1]);
-    if (Scroll == 0 && Input.KeyboardMouse != nullptr && Input.KeyboardMouse->MouseWheel != 0)
-    {
-        Scroll = Input.KeyboardMouse->MouseWheel > 0 ? 1 : -1;
-    }
+    QueueSecondaryScroll(Control, Input);
+    const int32_t Scroll = m_SecondaryQueuedScroll[Control - 1];
+    m_SecondaryQueuedScroll[Control - 1] = 0;
 
     Buttons.A_BUTTON = Controls.A || Scroll < 0;
     Buttons.B_BUTTON = Controls.B || Scroll > 0;
@@ -4144,8 +4317,6 @@ void CJetForceGeminiRuntime::MapSecondaryPort(
     Buttons.D_DPAD = Controls.DpadDown;
     Buttons.L_DPAD = Controls.DpadLeft;
     Buttons.R_DPAD = Controls.DpadRight;
-    Buttons.X_AXIS = Controls.StickX;
-    Buttons.Y_AXIS = Controls.StickY;
 
     // In solo play, START on port two toggles cooperativeGame and hands Floyd
     // to that port. His aiming Y runs opposite to the normal movement stick.
@@ -4157,8 +4328,45 @@ void CJetForceGeminiRuntime::MapSecondaryPort(
         m_Memory.ReadU8(MultiplayerGameAddress, MultiplayerGame) && MultiplayerGame == 0 &&
         m_Memory.ReadU8(CooperativeGameAddress, CooperativeGame) && CooperativeGame != 0)
     {
-        Buttons.Y_AXIS = -Controls.StickY;
+        // Either stick aims him, the one pushed further winning each axis.
+        // The right stick is brought to N64 up-positive first so both share
+        // the reversal below.
+        int32_t AimX = Controls.StickX;
+        int32_t AimY = Controls.StickY;
+        const int32_t RightX = StickToN64(Controls.CameraX);
+        const int32_t RightY = StickToN64(-Controls.CameraY);
+        if (abs(RightX) > abs(AimX))
+        {
+            AimX = RightX;
+        }
+        if (abs(RightY) > abs(AimY))
+        {
+            AimY = RightY;
+        }
+        Buttons.X_AXIS = (int8_t)AimX;
+        Buttons.Y_AXIS = (int8_t)-AimY;
+        return;
     }
+
+    // Aiming from the trigger, as in port one's stock aim: controlGetManualAim
+    // pins the reticle at half deflection and turns past it, so the right
+    // stick goes through as it is, and its Y runs the other way from the
+    // camera's, so it is not flipped into N64 up-positive: pushing up moves
+    // the reticle up. The left stick moves on the C buttons meanwhile, the
+    // shoulder buttons still sidestepping on the same two.
+    if (Controls.AimPad && !Controls.AimMouse)
+    {
+        Buttons.X_AXIS = StickToN64(Controls.CameraX);
+        Buttons.Y_AXIS = StickToN64(Controls.CameraY);
+        Buttons.U_CBUTTON = Controls.Forward || Controls.CUp;
+        Buttons.D_CBUTTON = Controls.Backward || Controls.CDown;
+        Buttons.L_CBUTTON = Controls.CLeft || Controls.Left;
+        Buttons.R_CBUTTON = Controls.CRight || Controls.Right;
+        return;
+    }
+
+    Buttons.X_AXIS = Controls.StickX;
+    Buttons.Y_AXIS = Controls.StickY;
 }
 
 // Removes the 30fps -> 20fps escalation in viFrameSync, see FramePacingPatches.
@@ -8546,6 +8754,10 @@ void CJetForceGeminiRuntime::Deactivate(void)
     {
         SetCameraCode(false, false, false, false);
         m_Memory.WriteF32(CameraHeightOffsetAddress, 0.0f);
+        for (uint8_t Player = 0; Player < CameraPlayerCount; Player++)
+        {
+            WriteCameraHeightOffset(Player, 0.0f);
+        }
     }
     m_Enabled = false;
     ClearCameraState();
@@ -8566,14 +8778,16 @@ void CJetForceGeminiRuntime::Deactivate(void)
 void CJetForceGeminiRuntime::ClearCameraState(void)
 {
     m_CameraPatchApplied = false;
-    m_CameraOverrideActive = false;
-    m_CameraOverrideSuspended = false;
-    m_TrackedCamera = 0;
-    m_TrackedPlayerObject = 0;
-    m_OrbitYawInitialized = false;
-    m_CameraElevationReady = false;
-    m_CameraHeightOffset = 0.0f;
-    m_OrbitYaw = 0;
+    memset(m_Orbit, 0, sizeof(m_Orbit));
+    // A state or an earlier session may leave a height behind for a player
+    // nothing drives any more, and the blend adds whatever it finds there.
+    if (IsSupportedRom())
+    {
+        for (uint8_t Player = 0; Player < CameraPlayerCount; Player++)
+        {
+            WriteCameraHeightOffset(Player, 0.0f);
+        }
+    }
     m_AimFovReference = 0.0f;
     m_AimYawCarry = 0.0f;
     m_AimPitchCarry = 0.0f;
@@ -8582,13 +8796,10 @@ void CJetForceGeminiRuntime::ClearCameraState(void)
     m_TopDownCounterInitialized = false;
     m_TopDownCounter = 0;
     m_TopDownHoldPolls = 0;
-    m_MouseDeltaX = 0;
-    m_MouseDeltaY = 0;
     m_QueuedMouseWheel = 0;
-    m_StickCameraCarryX = 0.0f;
-    m_StickCameraCarryY = 0.0f;
     memset(&m_ScrollButtons, 0, sizeof(m_ScrollButtons));
     memset(m_SecondaryScrollButtons, 0, sizeof(m_SecondaryScrollButtons));
+    memset(m_SecondaryQueuedScroll, 0, sizeof(m_SecondaryQueuedScroll));
     m_FramePacingPatchApplied = false;
     m_FramePacing60PatchApplied = false;
     m_SchedulerReleasePatchApplied = false;
@@ -8673,11 +8884,15 @@ bool CJetForceGeminiRuntime::SetCameraCode(
         PatchManualAimCode(!StockAim);
     }
 
-    const size_t PatchCount = sizeof(CameraCodePatches) / sizeof(CameraCodePatches[0]);
+    const size_t CameraPatchCount = sizeof(CameraCodePatches) / sizeof(CameraCodePatches[0]);
+    const size_t CursorPatchCount = sizeof(ManualAimCursorPatches) / sizeof(ManualAimCursorPatches[0]);
+    const size_t PatchCount = CameraPatchCount + CursorPatchCount;
     GAME_HACK_CODE_WRITE Writes[PatchCount] = {};
     for (size_t i = 0; i < PatchCount; i++)
     {
-        const CAMERA_CODE_PATCH & Patch = CameraCodePatches[i];
+        const CAMERA_CODE_PATCH & Patch = i < CameraPatchCount
+                                              ? CameraCodePatches[i]
+                                              : ManualAimCursorPatches[i - CameraPatchCount];
         Writes[i].Address = Patch.Address;
         AddAllowedCodeValue(Writes[i], Patch.Original);
         if (Patch.Replacement != Patch.Original)
@@ -8689,8 +8904,22 @@ bool CJetForceGeminiRuntime::SetCameraCode(
         {
             AddAllowedCodeValue(Writes[i], 0x00A01025);
         }
+        // Builds before the per-player guard window cleared the store itself
+        if (Patch.Address == ManualAimCursorXStore)
+        {
+            AddAllowedCodeValue(Writes[i], ManualAimCursorXStoreClear);
+        }
+        if (Patch.Address == ManualAimCursorYStore)
+        {
+            AddAllowedCodeValue(Writes[i], ManualAimCursorYStoreClear);
+        }
         uint32_t LegacyInstruction;
         if (GetLegacyCameraHeightInstruction(Patch.Address, LegacyInstruction) &&
+            LegacyInstruction != Patch.Original && LegacyInstruction != Patch.Replacement)
+        {
+            AddAllowedCodeValue(Writes[i], LegacyInstruction);
+        }
+        if (GetPreviousCameraHeightInstruction(Patch.Address, LegacyInstruction) &&
             LegacyInstruction != Patch.Original && LegacyInstruction != Patch.Replacement)
         {
             AddAllowedCodeValue(Writes[i], LegacyInstruction);
@@ -8723,6 +8952,10 @@ bool CJetForceGeminiRuntime::SetCameraCode(
         else if (IsManualAimAnglePatch(Patch.Address) && EnableManualAim)
         {
             Writes[i].Desired = 0x00A01025;
+        }
+        else if (IsManualAimVelocityPatch(Patch.Address))
+        {
+            Writes[i].Desired = Patch.Original;
         }
         else if (IsManualAimStorePatch(Patch.Address) && StockAim)
         {
@@ -8808,6 +9041,83 @@ bool CJetForceGeminiRuntime::GetPlayerData(uint32_t & PlayerObject, uint32_t & P
         return false;
     }
     return true;
+}
+
+// The player object carrying a given index, for the ports beyond the first:
+// the list is in join order, so it is walked rather than indexed.
+bool CJetForceGeminiRuntime::GetPlayerDataByIndex(
+    uint8_t PlayerIndex, uint32_t & PlayerObject, uint32_t & PlayerData) const
+{
+    uint32_t PlayerCount;
+    uint32_t PlayerList;
+    if (!m_Memory.ReadU32(PlayerCountAddress, PlayerCount) || PlayerCount == 0 || PlayerCount > 4 ||
+        !m_Memory.ReadU32(PlayerListAddress, PlayerList) ||
+        !m_Memory.IsRdramAddress(PlayerList, 4 * PlayerCount))
+    {
+        return false;
+    }
+    for (uint32_t Slot = 0; Slot < PlayerCount; Slot++)
+    {
+        uint32_t Object;
+        uint32_t Data;
+        uint8_t Index;
+        if (!m_Memory.ReadU32(PlayerList + 4 * Slot, Object) ||
+            !m_Memory.IsRdramAddress(Object, ObjectPlayerDataOffset + 4) ||
+            !m_Memory.ReadU32(Object + ObjectPlayerDataOffset, Data) ||
+            !m_Memory.IsRdramAddress(Data, PlayerCameraObjectOffset + 4) ||
+            !m_Memory.ReadU8(Data + PlayerIndexOffset, Index) || Index != PlayerIndex)
+        {
+            continue;
+        }
+        PlayerObject = Object;
+        PlayerData = Data;
+        return true;
+    }
+    return false;
+}
+
+// Each player's camera is the array slot of its index: controlcam is only the
+// one the game processed last, which in split screen is the other player's.
+bool CJetForceGeminiRuntime::GetPlayerCamera(uint8_t PlayerIndex, uint32_t & Camera) const
+{
+    if (PlayerIndex >= CameraCount)
+    {
+        return false;
+    }
+    Camera = CameraArrayAddress + PlayerIndex * CameraStructSize;
+    return m_Memory.IsRdramAddress(Camera, CameraStructSize);
+}
+
+void CJetForceGeminiRuntime::WriteCameraHeightOffset(uint8_t PlayerIndex, float HeightOffset)
+{
+    if (PlayerIndex < CameraPlayerCount)
+    {
+        m_Memory.WriteF32(CameraHeightTableAddress + PlayerIndex * 4, HeightOffset);
+    }
+}
+
+bool CJetForceGeminiRuntime::AnyFreeOrbitWanted(void) const
+{
+    for (uint32_t Player = 0; Player < CameraPlayerCount; Player++)
+    {
+        if (m_Orbit[Player].FreeOrbitWanted)
+        {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Drops the override and the tracking, keeping the banked input and the
+// height the player had set so a resumed orbit picks them up again.
+void CJetForceGeminiRuntime::ResetOrbitCamera(ORBIT_CAMERA_STATE & Orbit)
+{
+    Orbit.OverrideActive = false;
+    Orbit.OverrideSuspended = false;
+    Orbit.TrackedCamera = 0;
+    Orbit.TrackedPlayerObject = 0;
+    Orbit.OrbitYawInitialized = false;
+    Orbit.ElevationReady = false;
 }
 
 // Turns the drone by winding its heading rather than its reticle. The camera
@@ -9012,16 +9322,16 @@ void CJetForceGeminiRuntime::ApplyManualAimMouse(int32_t MouseX, int32_t MouseY)
 }
 
 void CJetForceGeminiRuntime::AlignPlayerYawToOrbitCamera(
-    uint32_t PlayerObject, uint32_t PlayerData)
+    const ORBIT_CAMERA_STATE & Orbit, uint32_t PlayerObject, uint32_t PlayerData)
 {
     uint8_t PlayerType;
-    if (!m_OrbitYawInitialized ||
+    if (!Orbit.OrbitYawInitialized ||
         !m_Memory.ReadU8(PlayerData + PlayerTypeOffset, PlayerType))
     {
         return;
     }
 
-    int16_t FacingYaw = (int16_t)(0x8000 - (int32_t)m_OrbitYaw);
+    int16_t FacingYaw = (int16_t)(0x8000 - (int32_t)Orbit.OrbitYaw);
     m_Memory.WriteS16(PlayerObject + ObjectYawOffset, FacingYaw);
     m_Memory.WriteS16(PlayerData + PlayerMovementYawOffset, FacingYaw);
     if ((PlayerType & 3) == 3)
@@ -9085,8 +9395,11 @@ bool CJetForceGeminiRuntime::TopDownCameraWasUpdated(uint32_t Counter)
     return m_TopDownHoldPolls > 0;
 }
 
+// The top-down counter is a global the runtime advances once per video frame,
+// from player one's evaluation; the other players read what it concluded.
 bool CJetForceGeminiRuntime::GetNormalCameraState(
-    uint32_t PlayerData, bool & NormalCamera, bool & MouseCameraAllowed)
+    uint32_t PlayerData, const ORBIT_CAMERA_STATE & Orbit, bool UpdateTopDown,
+    bool & NormalCamera, bool & MouseCameraAllowed)
 {
     uint32_t CameraObject;
     uint32_t AnimseqCamera;
@@ -9126,7 +9439,8 @@ bool CJetForceGeminiRuntime::GetNormalCameraState(
         return false;
     }
 
-    const bool TopDownCameraActive = TopDownCameraWasUpdated(TopDownCounter);
+    const bool TopDownCameraActive =
+        UpdateTopDown ? TopDownCameraWasUpdated(TopDownCounter) : m_TopDownHoldPolls > 0;
     const bool PlayerCameraAvailable =
         CameraObject == 0 && AnimseqCamera == 0 && LobbyCamera == 0 && StaticCamera == 0 &&
         ActiveCameraOverride == 0 && (PlayerType & 3) != 3 &&
@@ -9137,12 +9451,12 @@ bool CJetForceGeminiRuntime::GetNormalCameraState(
     NormalCamera =
         PlayerCameraAvailable && CameraMode == PlayerCameraModeNormal && StandardOrbitState;
     MouseCameraAllowed =
-        PlayerCameraAvailable && (NormalCamera || (m_CameraOverrideActive && !IsManualAimCameraMode(CameraMode)));
+        PlayerCameraAvailable && (NormalCamera || (Orbit.OverrideActive && !IsManualAimCameraMode(CameraMode)));
     return true;
 }
 
 float CJetForceGeminiRuntime::ClampCameraElevation(
-    uint32_t PlayerObject, uint32_t Camera, float HeightOffset) const
+    uint8_t PlayerIndex, uint32_t PlayerObject, uint32_t Camera, float HeightOffset) const
 {
     HeightOffset = ClampCameraHeight(HeightOffset);
     float CameraX;
@@ -9157,7 +9471,8 @@ float CJetForceGeminiRuntime::ClampCameraElevation(
         !m_Memory.ReadF32(Camera + TransformZOffset, CameraZ) ||
         !m_Memory.ReadF32(PlayerObject + TransformXOffset, PlayerX) ||
         !m_Memory.ReadF32(PlayerObject + TransformZOffset, PlayerZ) ||
-        !m_Memory.ReadF32(CameraNativeYAddress, NativeCameraY) ||
+        PlayerIndex >= CameraPlayerCount ||
+        !m_Memory.ReadF32(CameraNativeYTableAddress + PlayerIndex * 4, NativeCameraY) ||
         !m_Memory.ReadS16(Camera + CameraRenderPitchOffset, CameraPitch) ||
         !IsCameraFloat(CameraX) || !IsCameraFloat(CameraY) || !IsCameraFloat(CameraZ) ||
         !IsCameraFloat(PlayerX) || !IsCameraFloat(PlayerZ) || !IsCameraFloat(NativeCameraY))
@@ -9193,142 +9508,214 @@ float CJetForceGeminiRuntime::ClampCameraElevation(
     return ClampCameraHeight(HeightOffset);
 }
 
+// Player one's camera pass. Its state checks and writes are the per-player
+// core below; what is specific here is the mouse aim and the shared camera
+// code, which is one copy for every player and therefore keeps its free orbit
+// words in while any driven player wants them. The other players' wants are
+// those of the previous frame, their passes running after this one.
 bool CJetForceGeminiRuntime::ApplyMouseCamera(int32_t MouseX, int32_t MouseY, bool AimMode, bool StockAim)
 {
-    uint32_t PlayerObject = 0;
-    uint32_t PlayerData = 0;
-    uint32_t Camera = 0;
-    uint32_t JoyDisabled = 0;
-    uint8_t CameraMode = 0;
-    bool NormalCamera = false;
-    bool MouseCameraAllowed = false;
-    bool BasicCameraStateAvailable =
-        GetPlayerData(PlayerObject, PlayerData) && GetControlCamera(Camera) &&
-        m_Memory.ReadU32(DisableJoyAddress, JoyDisabled) &&
-        m_Memory.ReadU8(PlayerData + PlayerCameraModeOffset, CameraMode);
-    bool PreserveConstrainedCameras =
-        g_Settings->LoadBool(Setting_JfgPreserveCameraInGameLimits);
-    bool FreeCameraInJump =
-        g_Settings->LoadBool(Setting_JfgFreeCameraInJump);
-    bool JumpCameraMode =
-        BasicCameraStateAvailable && CameraMode == PlayerCameraModeJump;
-    bool FreeJumpCameraAllowed =
-        JumpCameraMode && FreeCameraInJump;
-    bool FreeCameraBlockedByJump =
-        JumpCameraMode && !FreeCameraInJump;
-    bool ConstrainedCameraStateAvailable =
-        BasicCameraStateAvailable && GetNormalCameraState(PlayerData, NormalCamera, MouseCameraAllowed);
-    bool FreeCameraStateAllowed =
-        JoyDisabled == 0 && !FreeCameraBlockedByJump &&
-        (FreeJumpCameraAllowed ||
-         (PreserveConstrainedCameras ? (ConstrainedCameraStateAvailable && NormalCamera) : BasicCameraStateAvailable));
-    bool EnableFreeOrbit =
-        FreeCameraStateAllowed && !AimMode;
-    bool EnableManualAim = BasicCameraStateAvailable && JoyDisabled == 0 && IsManualAimCameraMode(CameraMode) &&
-                           (AimMode || CameraMode == PlayerCameraModeBossAim) && !StockAim;
-    bool CameraInputEnabled =
-        FreeCameraStateAllowed;
-    SetCameraCode(EnableFreeOrbit, EnableManualAim, true, StockAim);
+    ORBIT_CAMERA_STATE & Orbit = m_Orbit[0];
+    ORBIT_CAMERA_EVAL Eval;
+    EvaluateOrbitCamera(0, Orbit, AimMode, Eval);
+    const bool EnableManualAim = Eval.BasicStateAvailable && Eval.JoyDisabled == 0 &&
+                                 IsManualAimCameraMode(Eval.CameraMode) &&
+                                 (AimMode || Eval.CameraMode == PlayerCameraModeBossAim) && !StockAim;
+    Orbit.FreeOrbitWanted = Eval.EnableFreeOrbit;
+    SetCameraCode(AnyFreeOrbitWanted(), EnableManualAim, true, StockAim);
+    return ApplyOrbitCamera(0, Orbit, Eval, MouseX, MouseY, AimMode);
+}
 
-    if (!m_CameraPatchApplied || !BasicCameraStateAvailable)
+// The state checks that decide whether a player's camera may be orbited this
+// frame, for player one from the first entry of the player list and for the
+// others from the entry carrying their index.
+void CJetForceGeminiRuntime::EvaluateOrbitCamera(
+    uint8_t PlayerIndex, const ORBIT_CAMERA_STATE & Orbit, bool AimMode, ORBIT_CAMERA_EVAL & Eval)
+{
+    memset(&Eval, 0, sizeof(Eval));
+    const bool PlayerFound = PlayerIndex == 0 ? GetPlayerData(Eval.PlayerObject, Eval.PlayerData)
+                                              : GetPlayerDataByIndex(PlayerIndex, Eval.PlayerObject, Eval.PlayerData);
+    Eval.BasicStateAvailable =
+        PlayerFound && GetPlayerCamera(PlayerIndex, Eval.Camera) &&
+        m_Memory.ReadU32(DisableJoyAddress, Eval.JoyDisabled) &&
+        m_Memory.ReadU8(Eval.PlayerData + PlayerCameraModeOffset, Eval.CameraMode);
+    Eval.PreserveConstrainedCameras = g_Settings->LoadBool(Setting_JfgPreserveCameraInGameLimits);
+    const bool FreeCameraInJump = g_Settings->LoadBool(Setting_JfgFreeCameraInJump);
+    Eval.JumpCameraMode = Eval.BasicStateAvailable && Eval.CameraMode == PlayerCameraModeJump;
+    Eval.FreeJumpCameraAllowed = Eval.JumpCameraMode && FreeCameraInJump;
+    Eval.FreeCameraBlockedByJump = Eval.JumpCameraMode && !FreeCameraInJump;
+    Eval.ConstrainedStateAvailable =
+        Eval.BasicStateAvailable &&
+        GetNormalCameraState(Eval.PlayerData, Orbit, PlayerIndex == 0, Eval.NormalCamera, Eval.MouseCameraAllowed);
+    Eval.FreeCameraStateAllowed =
+        Eval.JoyDisabled == 0 && !Eval.FreeCameraBlockedByJump &&
+        (Eval.FreeJumpCameraAllowed ||
+         (Eval.PreserveConstrainedCameras ? (Eval.ConstrainedStateAvailable && Eval.NormalCamera)
+                                          : Eval.BasicStateAvailable));
+    Eval.EnableFreeOrbit = Eval.FreeCameraStateAllowed && !AimMode;
+}
+
+// The orbit itself: spends the banked mouse counts on the player's orbit yaw
+// and camera height and writes them where the patched camera code reads them.
+// The height word is written on every path, since the blend adds whatever it
+// finds there for as long as the code is in for any player: it carries the
+// player's height only while the orbit is active and zero otherwise.
+bool CJetForceGeminiRuntime::ApplyOrbitCamera(
+    uint8_t PlayerIndex, ORBIT_CAMERA_STATE & Orbit, const ORBIT_CAMERA_EVAL & Eval,
+    int32_t MouseX, int32_t MouseY, bool AimMode)
+{
+    const bool CameraInputEnabled = Eval.FreeCameraStateAllowed;
+    float HeightToApply = 0.0f;
+    bool Result = CameraInputEnabled;
+
+    if (!m_CameraPatchApplied || !Eval.BasicStateAvailable)
     {
-        m_CameraOverrideActive = false;
-        m_CameraOverrideSuspended = false;
-        m_TrackedCamera = 0;
-        m_TrackedPlayerObject = 0;
-        m_OrbitYawInitialized = false;
-        m_CameraElevationReady = false;
-        return CameraInputEnabled;
-    }
-
-    if (Camera != m_TrackedCamera || PlayerObject != m_TrackedPlayerObject)
-    {
-        m_TrackedCamera = Camera;
-        m_TrackedPlayerObject = PlayerObject;
-        m_CameraOverrideActive = false;
-        m_CameraOverrideSuspended = false;
-        m_OrbitYawInitialized = false;
-        m_CameraElevationReady = false;
-        m_CameraHeightOffset = 0.0f;
-        m_Memory.WriteF32(CameraHeightOffsetAddress, 0.0f);
-        m_OrbitYaw = 0;
-    }
-
-    if (PreserveConstrainedCameras && !FreeJumpCameraAllowed &&
-        (!ConstrainedCameraStateAvailable || JoyDisabled != 0 || !MouseCameraAllowed))
-    {
-        m_CameraOverrideActive = false;
-        m_CameraOverrideSuspended = false;
-        m_OrbitYawInitialized = false;
-        m_CameraElevationReady = false;
-        return false;
-    }
-
-    if (AimMode || JoyDisabled != 0 || FreeCameraBlockedByJump ||
-        (PreserveConstrainedCameras && !FreeJumpCameraAllowed &&
-         CameraMode != PlayerCameraModeNormal))
-    {
-        if (m_CameraOverrideActive)
-        {
-            if (AimMode)
-            {
-                AlignPlayerYawToOrbitCamera(PlayerObject, PlayerData);
-            }
-            m_Memory.WriteS16(Camera + CameraPitchOffset, 0);
-            m_Memory.WriteS16(PlayerData + PlayerCameraYawOffset, 0);
-            m_CameraOverrideActive = false;
-            m_CameraOverrideSuspended = true;
-            m_OrbitYawInitialized = false;
-        }
-        m_CameraElevationReady = false;
-        return CameraInputEnabled;
-    }
-
-    m_CameraOverrideSuspended = false;
-    m_CameraOverrideActive = true;
-    if (!m_OrbitYawInitialized)
-    {
-        if (!m_Memory.ReadS16(PlayerData + PlayerCameraOrbitYawOffset, m_OrbitYaw))
-        {
-            return CameraInputEnabled;
-        }
-        m_OrbitYawInitialized = true;
-    }
-
-    int16_t CameraBaseYaw;
-    if (!GetCameraBaseYaw(PlayerObject, PlayerData, CameraBaseYaw))
-    {
-        return CameraInputEnabled;
-    }
-
-    m_OrbitYaw = (int16_t)((int64_t)m_OrbitYaw + (int64_t)MouseX * MouseCameraYawSensitivity);
-    m_Memory.WriteS16(PlayerData + PlayerCameraOrbitYawOffset, m_OrbitYaw);
-    m_Memory.WriteS16(
-        PlayerData + PlayerCameraYawOffset, (int16_t)((int32_t)m_OrbitYaw - (int32_t)CameraBaseYaw));
-    m_Memory.WriteU8(PlayerData + PlayerCameraCenterOffset, 0);
-
-    if (JumpCameraMode)
-    {
-        m_CameraHeightOffset = 0.0f;
-        m_Memory.WriteF32(CameraHeightOffsetAddress, m_CameraHeightOffset);
-        m_CameraElevationReady = false;
-        return CameraInputEnabled;
-    }
-
-    m_CameraHeightOffset = ClampCameraHeight(
-        m_CameraHeightOffset + (float)MouseY * MouseCameraHeightSensitivity);
-    if (m_CameraElevationReady)
-    {
-        m_CameraHeightOffset =
-            ClampCameraElevation(PlayerObject, Camera, m_CameraHeightOffset);
+        ResetOrbitCamera(Orbit);
     }
     else
     {
-        m_CameraElevationReady = true;
+        if (Eval.Camera != Orbit.TrackedCamera || Eval.PlayerObject != Orbit.TrackedPlayerObject)
+        {
+            ResetOrbitCamera(Orbit);
+            Orbit.TrackedCamera = Eval.Camera;
+            Orbit.TrackedPlayerObject = Eval.PlayerObject;
+            Orbit.HeightOffset = 0.0f;
+            Orbit.OrbitYaw = 0;
+        }
+
+        if (Eval.PreserveConstrainedCameras && !Eval.FreeJumpCameraAllowed &&
+            (!Eval.ConstrainedStateAvailable || Eval.JoyDisabled != 0 || !Eval.MouseCameraAllowed))
+        {
+            Orbit.OverrideActive = false;
+            Orbit.OverrideSuspended = false;
+            Orbit.OrbitYawInitialized = false;
+            Orbit.ElevationReady = false;
+            Result = false;
+        }
+        else if (AimMode || Eval.JoyDisabled != 0 || Eval.FreeCameraBlockedByJump ||
+                 (Eval.PreserveConstrainedCameras && !Eval.FreeJumpCameraAllowed &&
+                  Eval.CameraMode != PlayerCameraModeNormal))
+        {
+            if (Orbit.OverrideActive)
+            {
+                if (AimMode)
+                {
+                    AlignPlayerYawToOrbitCamera(Orbit, Eval.PlayerObject, Eval.PlayerData);
+                }
+                m_Memory.WriteS16(Eval.Camera + CameraPitchOffset, 0);
+                m_Memory.WriteS16(Eval.PlayerData + PlayerCameraYawOffset, 0);
+                Orbit.OverrideActive = false;
+                Orbit.OverrideSuspended = true;
+                Orbit.OrbitYawInitialized = false;
+            }
+            Orbit.ElevationReady = false;
+        }
+        else
+        {
+            Orbit.OverrideSuspended = false;
+            Orbit.OverrideActive = true;
+            bool Ready = true;
+            if (!Orbit.OrbitYawInitialized)
+            {
+                Ready = m_Memory.ReadS16(Eval.PlayerData + PlayerCameraOrbitYawOffset, Orbit.OrbitYaw);
+                Orbit.OrbitYawInitialized = Ready;
+            }
+
+            int16_t CameraBaseYaw = 0;
+            if (Ready && GetCameraBaseYaw(Eval.PlayerObject, Eval.PlayerData, CameraBaseYaw))
+            {
+                Orbit.OrbitYaw = (int16_t)((int64_t)Orbit.OrbitYaw + (int64_t)MouseX * MouseCameraYawSensitivity);
+                m_Memory.WriteS16(Eval.PlayerData + PlayerCameraOrbitYawOffset, Orbit.OrbitYaw);
+                m_Memory.WriteS16(
+                    Eval.PlayerData + PlayerCameraYawOffset,
+                    (int16_t)((int32_t)Orbit.OrbitYaw - (int32_t)CameraBaseYaw));
+                m_Memory.WriteU8(Eval.PlayerData + PlayerCameraCenterOffset, 0);
+
+                if (Eval.JumpCameraMode)
+                {
+                    Orbit.HeightOffset = 0.0f;
+                    Orbit.ElevationReady = false;
+                }
+                else
+                {
+                    Orbit.HeightOffset = ClampCameraHeight(
+                        Orbit.HeightOffset + (float)MouseY * MouseCameraHeightSensitivity);
+                    if (Orbit.ElevationReady)
+                    {
+                        Orbit.HeightOffset = ClampCameraElevation(
+                            PlayerIndex, Eval.PlayerObject, Eval.Camera, Orbit.HeightOffset);
+                    }
+                    else
+                    {
+                        Orbit.ElevationReady = true;
+                    }
+                    HeightToApply = Orbit.HeightOffset;
+                    m_Memory.WriteS16(Eval.Camera + CameraPitchOffset, 0);
+                }
+            }
+        }
     }
-    m_Memory.WriteF32(CameraHeightOffsetAddress, m_CameraHeightOffset);
-    m_Memory.WriteS16(Camera + CameraPitchOffset, 0);
-    return CameraInputEnabled;
+
+    WriteCameraHeightOffset(PlayerIndex, HeightToApply);
+    return Result;
+}
+
+// The video-frame pass of a port beyond the first: its right stick orbits the
+// camera of the player on that port exactly as port one's does, through the
+// same state and writes. The shared camera code is installed by port one's
+// pass, which runs first each frame and honours FreeOrbitWanted from here, so
+// a port with no source has to say so and clear its height word. Mouse travel
+// routed to these ports is still ignored, and the trigger's aim being the
+// game's own here (see MapSecondaryPort) the stick does not feed the camera
+// while it is held.
+void CJetForceGeminiRuntime::ProcessSecondaryVideoFrame(int32_t Control, const JFG_PORT_INPUT & Input)
+{
+    if (Control < 1 || Control >= (int32_t)CameraPlayerCount)
+    {
+        return;
+    }
+    ORBIT_CAMERA_STATE & Orbit = m_Orbit[Control];
+    const uint8_t PlayerIndex = (uint8_t)Control;
+
+    uint32_t RobotMission = 0;
+    const bool Driven = Input.HasSource() && IsSupportedRom() && m_Enabled && m_GameplayReady &&
+                        m_CameraPatchApplied &&
+                        m_Memory.ReadU32(RobotMissionAddress, RobotMission) && RobotMission == 0;
+    if (!Driven)
+    {
+        ResetOrbitCamera(Orbit);
+        Orbit.MouseDeltaX = 0;
+        Orbit.MouseDeltaY = 0;
+        Orbit.StickCarryX = 0.0f;
+        Orbit.StickCarryY = 0.0f;
+        Orbit.FreeOrbitWanted = false;
+        if (IsSupportedRom())
+        {
+            WriteCameraHeightOffset(PlayerIndex, 0.0f);
+        }
+        return;
+    }
+
+    JFG_CONTROLS Controls;
+    ReadControls(Input, Controls);
+    if (Controls.AimPad)
+    {
+        Orbit.StickCarryX = 0.0f;
+        Orbit.StickCarryY = 0.0f;
+    }
+    else
+    {
+        BankStickCamera(Orbit, Input);
+    }
+    const int32_t MouseX = Orbit.MouseDeltaX;
+    const int32_t MouseY = Orbit.MouseDeltaY;
+    Orbit.MouseDeltaX = 0;
+    Orbit.MouseDeltaY = 0;
+
+    ORBIT_CAMERA_EVAL Eval;
+    EvaluateOrbitCamera(PlayerIndex, Orbit, Controls.Aim, Eval);
+    Orbit.FreeOrbitWanted = Eval.EnableFreeOrbit;
+    ApplyOrbitCamera(PlayerIndex, Orbit, Eval, MouseX, MouseY, Controls.Aim);
 }
 
 void CJetForceGeminiRuntime::ApplyCameraRelativeStrafe(void)
@@ -9337,7 +9724,7 @@ void CJetForceGeminiRuntime::ApplyCameraRelativeStrafe(void)
     uint32_t PlayerData;
     uint32_t JoyDisabled;
     uint8_t CameraMode;
-    if (!m_CameraOverrideActive || !m_OrbitYawInitialized ||
+    if (!m_Orbit[0].OverrideActive || !m_Orbit[0].OrbitYawInitialized ||
         !GetPlayerData(PlayerObject, PlayerData) ||
         !m_Memory.ReadU32(DisableJoyAddress, JoyDisabled) || JoyDisabled != 0 ||
         !m_Memory.ReadU8(PlayerData + PlayerCameraModeOffset, CameraMode) ||
@@ -9346,7 +9733,7 @@ void CJetForceGeminiRuntime::ApplyCameraRelativeStrafe(void)
         return;
     }
 
-    AlignPlayerYawToOrbitCamera(PlayerObject, PlayerData);
+    AlignPlayerYawToOrbitCamera(m_Orbit[0], PlayerObject, PlayerData);
     m_Memory.WriteS16(PlayerData + PlayerCameraYawOffset, 0);
 }
 
@@ -9491,12 +9878,12 @@ void CJetForceGeminiRuntime::MapController(
     // the game performs itself. Steering the drone with the stick is the one
     // case that needs the button pass.
     const bool SpendMouse = DroneOnStick ? !ApplyCamera : ApplyCamera;
-    int32_t MouseX = SpendMouse ? m_MouseDeltaX : 0;
-    int32_t MouseY = SpendMouse ? m_MouseDeltaY : 0;
+    int32_t MouseX = SpendMouse ? m_Orbit[0].MouseDeltaX : 0;
+    int32_t MouseY = SpendMouse ? m_Orbit[0].MouseDeltaY : 0;
     if (SpendMouse)
     {
-        m_MouseDeltaX = 0;
-        m_MouseDeltaY = 0;
+        m_Orbit[0].MouseDeltaX = 0;
+        m_Orbit[0].MouseDeltaY = 0;
     }
 
     if (ApplyCamera)
@@ -9506,7 +9893,7 @@ void CJetForceGeminiRuntime::MapController(
             // The drone owns its own camera, so the on foot orbit has nothing to
             // say here. Dropping the tracked yaw makes it read the game again on
             // the way out rather than snapping to where it left off.
-            m_OrbitYawInitialized = false;
+            m_Orbit[0].OrbitYawInitialized = false;
 
             if (DroneCameraDirect)
             {

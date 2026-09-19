@@ -164,10 +164,18 @@ is reported to the game as plugged in even when the input plugin leaves it
 empty. A gamepad that is switched on but not connected leaves its port to the
 input plugin.
 
-Mouse look and the right stick camera are only available on player 1: the
-game-specific camera hooks are bound to the first player's objects. On players
-2 to 4 the buttons, the left stick and the D-pad map as above, while the right
-stick and mouse travel are ignored.
+On players 2 to 4 the buttons, the left stick and the D-pad map as above, and
+mouse travel is ignored: mouse look is player 1's alone. The right stick turns
+that player's own camera in split-screen multiplayer the way player 1's does,
+at the same **Right stick camera speed**, and aims while the left trigger is
+held: it then moves the game's own reticle, with the left stick moving the
+character on the C buttons as the game does when targeting, whatever the
+**Gamepad aim uses the game's reticle** option says. When the second controller
+takes Floyd in a solo game, either stick aims him. The camera code being one
+copy for every player, the free camera on any port needs a JFG source on
+player 1, which installs it; while another player is orbiting, a player who is
+aiming keeps the game's own look-ahead and turn smoothing rather than the
+snappier variant used when nobody orbits.
 
 ## Requirements
 

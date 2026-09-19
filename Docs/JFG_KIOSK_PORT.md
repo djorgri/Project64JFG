@@ -120,6 +120,13 @@ Tous confirmés par désassemblage des deux côtés.
 | --- | --- | --- | --- | --- | --- |
 | `ManualAimCursorXStore` | `8003B014` | **`8003ADDC`** | `A7190000` | `A5F80000` | 21/21, +10 |
 | `ManualAimCursorYStore` | `8003B058` | **`8003AE20`** | `A58D0000` | `A56C0000` | 21/21, +10 |
+
+Les gardes de division qui précèdent ces deux stores (onze mots, réécrits sur
+place par `FillManualAimCursorPatches`) ont la même forme dans les deux
+builds ; seul le `bne $tX, $at` de la garde change de registre, d'où les mots
+`ManualAimCursorXGuardWord` / `YGuardWord` (`15E10002` / `15610002` en US,
+`15C10002` / `17210002` en Kiosk). Le `mflo` se déduit du registre du store.
+Vérifié par désassemblage des deux ROMs.
 | `WaterWakeStockDrawEntry` | `80014C44` | **`80014908`** | `0C01ADA7` | `0C01AE78` | 21/21, +12 |
 | `WaterWakeDrawFallbackEntry` | `80014CA0` | **`80014964`** | `0C01A2D5` | `0C01A39D` | 26/29, +17 |
 
@@ -226,7 +233,7 @@ offset pour offset.
 
 **La cartographie est terminée, la table C++ est écrite, et le code est migré.**
 
-Les 118 champs de `JFG_ADDRESSES` — 110 adresses et 8 mots d'instruction —
+Les 125 champs de `JFG_ADDRESSES` — 115 adresses et 10 mots d'instruction —
 alimentent désormais l'ensemble du hack. `ApplyAddressTable()` place les
 adresses, recalcule les valeurs dérivées et reconstruit les 241 entrées des
 tables de patch ; `SelectAddressTable()` la déclenche au changement de ROM.

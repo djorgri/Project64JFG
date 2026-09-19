@@ -44,11 +44,11 @@ void initialize_tooltips(HWND dialog)
     add_tooltip(tooltip, dialog, IDC_GSH_GAMEPAD1,
         L"Feeds the selected port from the first connected gamepad: left stick moves, right stick looks, A jumps, B crouches, X/Y cycle weapons, right trigger fires, left trigger aims. Xbox, PlayStation and Switch layouts are recognised.");
     add_tooltip(tooltip, dialog, IDC_GSH_GAMEPAD1_PORT,
-        L"N64 controller port fed by gamepad 1. Right stick camera control is available on player 1 only.");
+        L"N64 controller port fed by gamepad 1. On players 2 to 4 the right stick turns that player's own camera in split-screen multiplayer and aims while the left trigger is held.");
     add_tooltip(tooltip, dialog, IDC_GSH_GAMEPAD2,
         L"Feeds the selected port from the second connected gamepad, with the same layout as gamepad 1.");
     add_tooltip(tooltip, dialog, IDC_GSH_GAMEPAD2_PORT,
-        L"N64 controller port fed by gamepad 2. Right stick camera control is available on player 1 only.");
+        L"N64 controller port fed by gamepad 2. On players 2 to 4 the right stick turns that player's own camera in split-screen multiplayer and aims while the left trigger is held.");
     add_tooltip(tooltip, dialog, IDC_GSH_GAMEPAD_STOCK_AIM,
         L"While aiming with the left trigger, keeps the game's own aiming: the right stick moves the reticle inside its box and the view turns once the reticle reaches the edge. Aiming with the right mouse button keeps the mouse behaviour.");
     add_tooltip(tooltip, dialog, IDC_GSH_STICK_CAMERA_SPEED,

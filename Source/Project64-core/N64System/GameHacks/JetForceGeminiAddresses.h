@@ -141,6 +141,11 @@ struct JFG_ADDRESSES
     uint32_t CameraHelperCallWord;
     uint32_t FramePacing60SignatureWord0;
     uint32_t FramePacingSignatureWord1;
+    // The reticle cursor stores of controlGetManualAim and, ten words before
+    // each, the `bne $tX, $at` of the division guard the runtime rewrites in
+    // place; see FillManualAimCursorPatches.
+    uint32_t ManualAimCursorXGuardWord;
+    uint32_t ManualAimCursorYGuardWord;
     uint32_t ManualAimCursorXStoreWord;
     uint32_t ManualAimCursorYStoreWord;
     uint32_t SchedulerFrameGateAddWord;

@@ -34,6 +34,8 @@ public:
     void ProcessRuntimeFrame(void);
     void ProcessController(int32_t Control, const JFG_PORT_INPUT & Input, BUTTONS & Buttons);
     void ProcessVideoFrame(const JFG_PORT_INPUT & Input, BUTTONS & Buttons);
+    void ProcessSecondaryVideoFrame(int32_t Control, const JFG_PORT_INPUT & Input);
+    void QueueSecondaryScroll(int32_t Control, const JFG_PORT_INPUT & Input);
     bool IsEnabled(void) const;
     bool UsesExclusiveInput(const JFG_PORT_INPUT & Input) const;
     bool UsesKeyboardMouse(void) const;
@@ -90,6 +92,53 @@ private:
         bool NextDown[2];
     };
 
+    // The free orbit camera, one per player. Player one's is fed by the mouse
+    // and the right stick of port one, the others by the right stick of the
+    // port routed to them; the camera code itself is shared, see
+    // ApplyOrbitCamera and SetCameraCode.
+    struct ORBIT_CAMERA_STATE
+    {
+        bool OverrideActive;
+        bool OverrideSuspended;
+        uint32_t TrackedCamera;
+        uint32_t TrackedPlayerObject;
+        bool OrbitYawInitialized;
+        bool ElevationReady;
+        float HeightOffset;
+        int16_t OrbitYaw;
+        // Mouse counts banked between the two sampling paths, see BankMouseDelta
+        int32_t MouseDeltaX;
+        int32_t MouseDeltaY;
+        // Right stick camera: the sub-count fraction left over each video
+        // frame, see BankStickCamera
+        float StickCarryX;
+        float StickCarryY;
+        // Whether this player asked for the free orbit code on its last video
+        // frame; the shared patches stay in while any player does
+        bool FreeOrbitWanted;
+    };
+
+    // What the state checks concluded for one player this video frame, the
+    // first half of what ApplyMouseCamera used to do; see EvaluateOrbitCamera
+    struct ORBIT_CAMERA_EVAL
+    {
+        uint32_t PlayerObject;
+        uint32_t PlayerData;
+        uint32_t Camera;
+        uint32_t JoyDisabled;
+        uint8_t CameraMode;
+        bool BasicStateAvailable;
+        bool ConstrainedStateAvailable;
+        bool NormalCamera;
+        bool MouseCameraAllowed;
+        bool JumpCameraMode;
+        bool FreeJumpCameraAllowed;
+        bool FreeCameraBlockedByJump;
+        bool PreserveConstrainedCameras;
+        bool FreeCameraStateAllowed;
+        bool EnableFreeOrbit;
+    };
+
     static bool IsSupportedRom(void);
     void PatchHudRaster(bool Enabled, bool TextOnly = false);
     static bool KeyDown(const KEYBOARD_MOUSE_STATE & Input, KeyboardMouseKey Key);
@@ -100,7 +149,7 @@ private:
     void MapSecondaryPort(int32_t Control, const JFG_PORT_INPUT & Input, BUTTONS & Buttons);
     bool UpdateEnabledState(const JFG_PORT_INPUT & Input);
     void BankMouseDelta(const KEYBOARD_MOUSE_STATE & Input);
-    void BankStickCamera(const JFG_PORT_INPUT & Input);
+    void BankStickCamera(ORBIT_CAMERA_STATE & Orbit, const JFG_PORT_INPUT & Input);
     void QueueMouseWheel(const KEYBOARD_MOUSE_STATE & Input);
     void QueueGamepadScroll(const JFG_PORT_INPUT & Input);
     void Deactivate(void);
@@ -108,17 +157,30 @@ private:
     bool SetCameraCode(bool EnableFreeOrbit, bool EnableManualAim, bool InstallRuntime, bool StockAim);
     void PatchManualAimCode(bool Enabled);
     bool GetPlayerData(uint32_t & PlayerObject, uint32_t & PlayerData) const;
+    bool GetPlayerDataByIndex(uint8_t PlayerIndex, uint32_t & PlayerObject, uint32_t & PlayerData) const;
+    bool GetPlayerCamera(uint8_t PlayerIndex, uint32_t & Camera) const;
     bool GetCameraBaseYaw(uint32_t PlayerObject, uint32_t PlayerData, int16_t & BaseYaw) const;
     bool GetControlCamera(uint32_t & Camera) const;
     bool TopDownCameraWasUpdated(uint32_t Counter);
     bool GetNormalCameraState(
-        uint32_t PlayerData, bool & NormalCamera, bool & MouseCameraAllowed);
-    float ClampCameraElevation(uint32_t PlayerObject, uint32_t Camera, float HeightOffset) const;
+        uint32_t PlayerData, const ORBIT_CAMERA_STATE & Orbit, bool UpdateTopDown,
+        bool & NormalCamera, bool & MouseCameraAllowed);
+    float ClampCameraElevation(
+        uint8_t PlayerIndex, uint32_t PlayerObject, uint32_t Camera, float HeightOffset) const;
     bool ApplyMouseCamera(int32_t MouseX, int32_t MouseY, bool AimMode, bool StockAim);
+    void EvaluateOrbitCamera(
+        uint8_t PlayerIndex, const ORBIT_CAMERA_STATE & Orbit, bool AimMode, ORBIT_CAMERA_EVAL & Eval);
+    bool ApplyOrbitCamera(
+        uint8_t PlayerIndex, ORBIT_CAMERA_STATE & Orbit, const ORBIT_CAMERA_EVAL & Eval,
+        int32_t MouseX, int32_t MouseY, bool AimMode);
+    void ResetOrbitCamera(ORBIT_CAMERA_STATE & Orbit);
+    void WriteCameraHeightOffset(uint8_t PlayerIndex, float HeightOffset);
+    bool AnyFreeOrbitWanted(void) const;
     void ApplyManualAimMouse(int32_t MouseX, int32_t MouseY);
     void ApplyBossAimCameraTurn(uint32_t PlayerObject, int32_t Reticle);
     void ApplyDroneCamera(int32_t MouseX, int32_t MouseY);
-    void AlignPlayerYawToOrbitCamera(uint32_t PlayerObject, uint32_t PlayerData);
+    void AlignPlayerYawToOrbitCamera(
+        const ORBIT_CAMERA_STATE & Orbit, uint32_t PlayerObject, uint32_t PlayerData);
     void ApplyCameraRelativeStrafe(void);
     void UpdateSprintBlend(void);
     void ApplySprint(uint32_t PlayerObject);
@@ -172,14 +234,9 @@ private:
     CGameHackCodePatcher m_CodePatcher;
     bool m_Enabled;
     bool m_CameraPatchApplied;
-    bool m_CameraOverrideActive;
-    bool m_CameraOverrideSuspended;
-    uint32_t m_TrackedCamera;
-    uint32_t m_TrackedPlayerObject;
-    bool m_OrbitYawInitialized;
-    bool m_CameraElevationReady;
-    float m_CameraHeightOffset;
-    int16_t m_OrbitYaw;
+    // Indexed by player, which is the port for the secondary ports; see
+    // ProcessSecondaryVideoFrame
+    ORBIT_CAMERA_STATE m_Orbit[4];
 
     // Sniper zoom aware aim, see ApplyManualAimMouse. The reference is the widest
     // field of view seen while aiming; the carries hold the sub unit fraction of
@@ -199,18 +256,14 @@ private:
     uint32_t m_TopDownCounter;
     int32_t m_TopDownHoldPolls;
 
-    // Mouse movement banked between the two sampling paths, see BankMouseDelta
-    int32_t m_MouseDeltaX;
-    int32_t m_MouseDeltaY;
     int32_t m_QueuedMouseWheel;
 
-    // Right stick camera: the sub-count fraction left over each video frame,
-    // see BankStickCamera. The scroll states track the X/Y weapon buttons for
-    // port one and for the three secondary ports respectively.
-    float m_StickCameraCarryX;
-    float m_StickCameraCarryY;
+    // The scroll states track the X/Y weapon buttons for port one and for the
+    // three secondary ports respectively; the secondary queue is those ports'
+    // counterpart of m_QueuedMouseWheel, see QueueSecondaryScroll.
     SCROLL_BUTTON_STATE m_ScrollButtons;
     SCROLL_BUTTON_STATE m_SecondaryScrollButtons[3];
+    int32_t m_SecondaryQueuedScroll[3];
 
     bool m_FramePacingPatchApplied;
     bool m_FramePacing60PatchApplied;

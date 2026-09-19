@@ -61,10 +61,15 @@ the implementation still validates the live instructions before modifying them.
 
 1. `ProcessController()` maps the sources routed to a port, keyboard/mouse and
    up to two gamepads, to that N64 controller. Port one gets the full scheme;
-   ports two to four get `MapSecondaryPort()`, the button layout alone. Port
-   two reverses stick Y while `cooperativeGame` is set and `multiPlayerGame`
-   is clear, matching Floyd's aim when the second player joins solo play.
-   The flags are read on each poll, including after a state load.
+   ports two to four get `MapSecondaryPort()`: the button layout, plus the
+   game's own aim from the trigger (right stick on the N64 stick, left stick
+   on the C buttons) since no camera hook exists for those ports. Port two
+   reverses stick Y while `cooperativeGame` is set and `multiPlayerGame` is
+   clear, matching Floyd's aim when the second player joins solo play, and
+   reads either stick there. The flags are read on each poll, including after
+   a state load. The X/Y weapon notches of these ports are edge detected on
+   both the poll and the video interrupt and queued per port, see
+   `QueueSecondaryScroll()`, as port one's are in `m_QueuedMouseWheel`.
 2. `ProcessVideoFrame()` performs camera work and applies timing/gameplay
    patches once the level has a valid player object. It also turns the right
    stick into mouse counts, see `BankStickCamera()`.
@@ -122,6 +127,13 @@ The current MIPS stubs and their small host-to-game control words use the
 - `0x8009FD00`, `0x8009FD60`, `0x8009FD80`, `0x8009FE00`: injected code;
 - nearby words are also used by historical water-wake probes.
 
+The camera uses a second, ten-word zero gap at `0x8009F228`-`0x8009F24C` (US;
+`0x8009FAB8` in Kiosk): the per-player native camera height at `F228`-`F234`,
+the per-player free-orbit height offset at `F238`-`F244`, the retired single
+height offset word at `F248`, and the top-down camera counter at `F24C`. An
+older prototype kept a player-object pointer at `F240`, so the tables are
+zeroed whenever the camera state is cleared.
+
 Do not add another stub in this area casually. Check every occupied word,
 avoid overlap, and assume save states may retain old contents. Prefer a new,
 verified free region if the existing layout cannot accommodate a hook.
@@ -156,15 +168,51 @@ gamepad scheme (pad A/B on C-up/C-down, X/Y as the weapon notches, LB/RB on
 C-left/C-right) are written for that layout. With
 `Setting_JfgGamepadStockAim`, an aim held from the trigger alone (`StockAim`
 in `MapController()`) hands the manual aim back to the game: `SetCameraCode()`
-restores the reticle cursor and velocity stores, the angle helper calls and the
-overlay `BoyAimPatches` to their original words, `ApplyManualAimMouse()` is
-skipped, and the right stick is written straight to the N64 stick so
-`controlGetManualAim` places the reticle and turns the view itself. The right
+restores the reticle cursor windows, the angle helper calls and the overlay
+`BoyAimPatches` to their original words, `ApplyManualAimMouse()` is skipped,
+and the right stick is written straight to the N64 stick so
+`controlGetManualAim` places the reticle and turns the view itself.
+
+`controlGetManualAim` is shared by every player, and its two reticle cursor
+stores used to be replaced by `sh $zero` outright, which also took the reticle
+away from a second controller in split screen and in co-op. They are now
+gated per player: the eleven words of each store's dead division guard
+(`ManualAimCursorXStore - 0x28` onwards, the divisor being the constant 0x28)
+are rewritten in place to test the player index byte at `PlayerData + 0`,
+store nothing for player one and the game's own value for anyone else. See
+`ManualAimCursorPatches` / `FillManualAimCursorPatches()` for the listing and
+the register argument; the guard's `bne` and the store come from the address
+table since the two builds allocate them differently. The velocity stores of
+the same function are no longer redirected: their target is zero whenever
+player one's stick is at rest and the runtime zeroes them every video frame,
+so the redirect only cost the other players their smoothing. Their table
+entries remain so a state saved with the old word is restored. The right
 stick otherwise joins the mouse bank through `BankStickCamera()`, at
 `GamepadCameraCountsPerSpeed` mouse counts per video frame per step of
 `Setting_JfgGamepadCameraSpeed`, so every camera path reads it as mouse travel.
-The runtime's camera, sprint and drone work is bound to the first player's
-objects, which is why only port one runs it.
+The sprint, the drone work and the mouse aim are bound to the first player's
+objects, so only port one runs them. The free orbit camera is per player:
+`ORBIT_CAMERA_STATE m_Orbit[4]` holds each player's tracked camera, orbit yaw,
+height and banked stick counts, `EvaluateOrbitCamera()` / `ApplyOrbitCamera()`
+are the state checks and writes that `ApplyMouseCamera()` used to do for
+player one alone, and `ProcessSecondaryVideoFrame()` runs them for ports two
+to four from their right stick after port one's pass each video frame. A
+player's object is found by its index byte (`PlayerData + 0`) in the player
+list and its camera is the array slot of that index, `controlcam` being only
+the camera the game processed last. The camera code is one copy for every
+player: its free orbit words go in while any driven player wants them
+(`FreeOrbitWanted`, OR-ed in `SetCameraCode()`'s caller), the mode-gated
+helpers already tell the players apart, and the camera height is per player:
+the height blend at `CameraHeightBlendBase` is rewritten over 31 words, up to
+the position copies that followed it, to index `CameraHeightTableAddress` and
+`CameraNativeYTableAddress` (`CameraNativeYAddress - 0x0C` and `- 0x1C`, four
+words each in the same zero gap) by the player index in `$s0`. Every pass
+writes its player's height word, zero while its orbit is inactive, since the
+blend adds whatever it finds there. What remains shared is the trio of words
+at `CameraLookHelperCall + 0x0C/+0x38` and `CameraYawHelperCall + 0x14`, whose
+"original" values are a tuned variant (no look-ahead, unsmoothed yaw) for the
+states where nobody orbits: while one player orbits, another who is aiming
+gets the game's stock look-ahead and smoothing instead.
 
 The gamepad itself comes from the `GetGamepadState` plugin extension in
 `Project64-plugin-spec/Input.h`. The Project64 input plugin fills it from

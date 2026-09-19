@@ -285,6 +285,13 @@ void CControl_Plugin::UpdateGameHackInput(void)
     }
 
     RefreshJfgInput();
+    // Ports two to four have no video-frame work of their own, but their X/Y
+    // weapon notches are edge detected, so sample them here as well and let
+    // the runtime hold a tap until the game's next poll of that port.
+    for (int32_t Control = 1; Control < 4; Control++)
+    {
+        m_JfgRuntime->QueueSecondaryScroll(Control, JfgPortInput(Control));
+    }
     const JFG_PORT_INPUT PortInput = JfgPortInput(0);
     const bool JfgExclusiveInput = m_JfgRuntime->UsesExclusiveInput(PortInput);
     if (!JfgExclusiveInput && GetKeys == nullptr)
@@ -298,6 +305,13 @@ void CControl_Plugin::UpdateGameHackInput(void)
         GetKeys(0, &Buttons);
     }
     m_JfgRuntime->ProcessVideoFrame(PortInput, Buttons);
+    // The other ports' right sticks orbit their own players' cameras. They
+    // run after port one, whose pass installs the shared camera code and
+    // decides whether a level is live at all.
+    for (int32_t Control = 1; Control < 4; Control++)
+    {
+        m_JfgRuntime->ProcessSecondaryVideoFrame(Control, JfgPortInput(Control));
+    }
     SetGameInputCapture(m_JfgRuntime->UsesKeyboardMouse());
 }
 
