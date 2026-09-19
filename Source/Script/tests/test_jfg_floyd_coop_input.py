@@ -25,13 +25,14 @@ def translation_unit():
     methods = "\n".join(function(source, signature) for signature in (
         "bool CJetForceGeminiRuntime::KeyDown(", "bool CJetForceGeminiRuntime::MouseButtonDown(",
         "void CJetForceGeminiRuntime::ReadControls(", "int32_t CJetForceGeminiRuntime::ReadScrollButtons(",
-        "void CJetForceGeminiRuntime::MapSecondaryPort("))
+        "void CJetForceGeminiRuntime::QueueSecondaryScroll(", "void CJetForceGeminiRuntime::MapSecondaryPort("))
     declarations = "\n".join(method[:method.index("{")].replace("CJetForceGeminiRuntime::", "") + ";"
                              for method in (function(source, signature) for signature in (
                                  "bool CJetForceGeminiRuntime::KeyDown(",
                                  "bool CJetForceGeminiRuntime::MouseButtonDown(",
                                  "void CJetForceGeminiRuntime::ReadControls(",
                                  "int32_t CJetForceGeminiRuntime::ReadScrollButtons(",
+                                 "void CJetForceGeminiRuntime::QueueSecondaryScroll(",
                                  "void CJetForceGeminiRuntime::MapSecondaryPort(")))
     tables = "\n".join("const JFG_ADDRESSES " + name + " = {" + re.search(
         r"const JFG_ADDRESSES " + name + r"\s*=\s*\{(.*?)\};", tables, re.S).group(1) + "};"
@@ -49,6 +50,7 @@ def translation_unit():
             function(header, "struct SCROLL_BUTTON_STATE") + ";\n" +
             "CGameHackMemory m_Memory; bool supported = true;\n"
             "SCROLL_BUTTON_STATE m_SecondaryScrollButtons[3] = {};\n"
+            "int32_t m_SecondaryQueuedScroll[3] = {};\n"
             "bool IsSupportedRom() { return supported; }\n" + declarations + "\n};\n" + methods + CASES)
 
 

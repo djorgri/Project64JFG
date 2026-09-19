@@ -337,7 +337,6 @@ enum SettingID
     Logging_LogUnknown,
 
     Setting_JfgKeyboardMouse,
-    Setting_JfgLateralMovementInFreeCamera,
     Setting_JfgPreserveCameraInGameLimits,
     Setting_JfgFreeCameraInJump,
     Setting_JfgUncapFramePacing,

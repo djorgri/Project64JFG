@@ -1,526 +1,515 @@
-# État du prototype 16/9 de Jet Force Gemini
+# Jet Force Gemini 16:9 prototype - status
 
-État au 9 septembre 2026. La case **Correct widescreen HUD** active le prototype.
-L'utilisateur a validé le placement et les proportions du compteur de munitions,
-avec une légère perte de netteté acceptée. La correction des segments du
-réticule a également été validée visuellement par l'utilisateur sur son essai
-du 8 septembre. Les formes 3D, déjà correctes, restent intactes. L'utilisateur
-a également validé le bandeau de ramassage affichant **Gemini Capacity Increased**.
-Le dernier réglage des barres vertes et leur changement de format sont couverts
-par les tests automatiques ; leur validation visuelle reste en attente.
-Le contour de l'icône de Floyd reçoit également une correction ciblée de
-centrage et de pente des diagonales, à valider visuellement en jeu.
-Les observations historiques de Claude sont distinguées des mesures de reprise.
+Status as of 9 September 2026, with later additions dated inline. The
+**Correct widescreen HUD** checkbox enables the prototype. The user validated
+the placement and proportions of the ammunition counter, accepting a slight
+loss of sharpness. The reticle segment correction was also validated visually
+by the user during the 8 September trial. The 3D shapes, already correct, are
+untouched. The user also validated the pickup banner showing **Gemini Capacity
+Increased**. The last adjustment of the green bars and their format change are
+covered by the automated tests; their visual validation is still pending.
+Floyd's icon outline also receives a targeted correction of its centring and
+of the slope of its diagonals, to be validated visually in game. Claude's
+historical observations are kept separate from the follow-up measurements.
 
-Les [mesures des marges et du centrage du HUD d'origine](./JFG_HUD_LAYOUT_MEASUREMENTS.md)
-proviennent des coordonnées ROM et des sommets du jeu : marges haute/basse de
-13 unités, marges gauches de 19 pour le cadre d'arme et 24 pour l'arc de vie,
-et pivot de l'icône décalé de 1 unité à gauche et 2 vers le haut par rapport
-au centre de l'arc, dans le repère logique 320 × 240.
+The [measurements of the original HUD margins and centring](./JFG_HUD_LAYOUT_MEASUREMENTS.md)
+come from the ROM coordinates and the game's vertices: top and bottom margins
+of 13 units, left margins of 19 for the weapon frame and 24 for the health
+arc, and an icon pivot offset 1 unit left and 2 up from the arc's centre, in
+the 320 x 240 logical frame.
 
-## Activer le prototype
+## Enabling the prototype
 
-1. Utiliser la ROM USA commerciale prise en charge par le projet. Le patch HUD
-   exclut explicitement la version Kiosk, même si d'autres adaptations la gèrent.
-2. Sélectionner le mode widescreen dans les options du jeu lui-même.
-3. Dans les paramètres du plugin **Project64 Parallel RDP**, activer
-   **Force 16:9 display (stretches image)** pour présenter l'image en 16/9.
-4. Dans **Options → Game-specific hacks**, cocher **Correct widescreen HUD**,
-   puis reprendre une partie pour observer la correction.
+1. Use the USA retail ROM supported by the project. The HUD patch explicitly
+   excludes the Kiosk build, even though other adaptations handle it.
+2. Select the widescreen mode in the game's own options.
+3. In the **Project64 Parallel RDP** plugin settings, enable **Force 16:9
+   display (stretches image)** to present the image in 16:9.
+4. Under **Options -> Game-specific hacks**, tick **Correct widescreen HUD**,
+   then resume a game to observe the correction.
 
-Ces réglages sont indépendants : le plugin choisit le format de présentation,
-le jeu choisit son mode vidéo et le hack corrige certains dessins du HUD. La
-case HUD n'active pas le mode vidéo du jeu. Elle ne nécessite pas les commandes
-clavier/souris et reste désactivée par défaut.
+These settings are independent: the plugin chooses the presentation aspect,
+the game chooses its video mode, and the hack corrects some HUD drawing. The
+HUD checkbox does not switch the game's video mode. It does not require the
+keyboard/mouse controls and is **enabled by default**.
 
-## Activation limitée au widescreen du jeu
+## Activation limited to the game's widescreen mode
 
-Le contrôle utilise l'octet du **mode vidéo actif** à `0x800FECA8`, écrit par
-`viChangeMode` : `0` et `2` correspondent au 4/3, `1` et `3` au widescreen
-basse et haute résolution de la ROM USA. La préférence du menu n'est pas
-utilisée comme substitut au mode actif. Le format forcé dans le plugin
-graphique n'entre pas dans cette décision.
+The check uses the **active video mode** byte at `0x800FECA8`, written by
+`viChangeMode`: `0` and `2` are 4:3, `1` and `3` the low- and high-resolution
+widescreen modes of the USA ROM. The menu preference is not used as a
+substitute for the active mode. The aspect forced in the graphics plugin plays
+no part in this decision.
 
-L'installateur vérifie lui-même que le mode vaut `1` ou `3`, en plus du
-contrôle effectué à chaque image. Revenir en 4/3 demande le retrait de tous
-les appels corrigés ainsi que des constantes du bandeau. Les coordonnées natives
-des jauges restent désormais intactes pendant le dessin. La
-case peut donc rester cochée lorsque le jeu est en 4/3. Les routines MIPS de
-dessin possèdent également leur propre garde sur le bit widescreen.
+The installer itself checks that the mode is `1` or `3`, in addition to the
+per-frame check. Returning to 4:3 removes every corrected call as well as the
+banner constants. The gauges' native coordinates now stay intact while they
+are drawn, so the checkbox can stay ticked while the game runs in 4:3. The
+MIPS drawing routines also carry their own guard on the widescreen bit.
 
-Le chargement d'une ancienne sauvegarde contenant les signatures connues du
-prototype déclenche désormais leur récupération et leur retrait même en
-4/3 ou avec la case décochée. Les overlays actuellement chargés sont vérifiés,
-y compris lorsqu'ils ont changé d'adresse. Une signature invalide du réticule
-n'empêche plus le nettoyage indépendant du bandeau et des jauges ; les zones
-de code restent disponibles tant qu'un appel reconnu pourrait encore y mener.
-Le diagnostic de portée forcée n'est plus réarmé pendant un retrait.
-Les quatre anciennes corrections numériques, abandonnées pendant la recherche
-du compteur de munitions, sont également retirées lorsqu'elles subsistent
-seules dans une sauvegarde, sans installation HUD reconnue.
+Loading an old state that contains the prototype's known signatures now
+triggers their recovery and removal, even in 4:3 or with the box unticked.
+The overlays currently loaded are checked, including when they have moved.
+An invalid reticle signature no longer prevents the independent cleanup of the
+banner and gauges; the code caves stay available for as long as a recognised
+call could still lead into them. The forced-scope diagnostic is no longer
+re-armed during a removal. The four old digit corrections, abandoned while the
+ammunition counter was being tracked down, are also removed when they remain
+alone in a state, without a recognised HUD installation.
 
-Les tests exécutent les méthodes C++ réelles contre une mémoire simulée pour
-vérifier ces transitions et chargements. Les tests MIPS comparent également
-les sorties des routines au comportement d'origine en modes `0` et `2`, même
-avec une portée HUD active. Ils ne remplacent pas un essai visuel du passage
-4/3 ↔ 16/9 dans l'émulateur.
+The tests run the real C++ methods against a simulated memory to verify these
+transitions and loads. The MIPS tests also compare the routines' output to the
+original behaviour in modes `0` and `2`, even with an active HUD scope. They do
+not replace a visual check of the 4:3 <-> 16:9 switch in the emulator.
 
-## Architecture existante
+## Existing architecture
 
-Le travail se trouve principalement dans
+The work lives mostly in
 [`JetForceGemini.cpp`](../Source/Project64-core/N64System/GameHacks/JetForceGemini.cpp),
-dans les constantes `WidescreenHud*`, `ProcessRuntimeFrame()` et
+in the `WidescreenHud*` constants, `ProcessRuntimeFrame()` and
 `PatchWidescreenHud()`.
 
-Le patch attend un index de résolution égal à `1` ou `3`, un joueur et une caméra valides,
-`DisableJoy == 0` et la signature reconnue de l'overlay 14. Il installe des
-instructions MIPS dans une zone de diagnostic devenue inutilisée pendant le
-jeu, de `0x80067280` à `0x80067690` exclu. Cette installation tardive évite
-d'écraser du code encore exécuté au démarrage. L'extension pour le compteur
-occupe le début de `diCpuReportWatchpoint`, une fonction de diagnostic de panne
-inutilisée en partie, et s'arrête avant `diCpuLogMessage` à `0x800676B4`.
-Le réticule, les jauges et Floyd utilisent un second segment
-séparé, de `0x80067790` à `0x80067950` exclu, dans l'ancien affichage du journal
-de diagnostic. Le code du réticule se termine toujours à `0x800677F4` ; le wrapper
-des jauges commence à cette adresse et son helper d'ancrage à `0x80067810`.
-Le wrapper de Floyd commence à `0x80067844`. La fonction de rapport d'erreur
-mémoire à `0x800678C4` est neutralisée avant de réutiliser son corps ; sa totalité
-est restaurée au retrait, y compris après adoption d'une ancienne sauvegarde
-contenant ce correctif. `diCpuTraceGetFault` à `0x80067950` reste intacte.
-L'unique appelant de l'ancien affichage, à `0x800674BC`, est déjà remplacé
-par la cave HUD. L'image mémoire concatène les
-deux segments : le code entre eux, notamment `diCpuLogMessage`, n'est ni lu ni
-écrit par l'installateur de cave.
+The patch expects a resolution index of `1` or `3`, a valid player and camera,
+`DisableJoy == 0` and the recognised signature of overlay 14. It installs MIPS
+instructions in a diagnostic area that goes unused during play, from
+`0x80067280` to `0x80067690` exclusive. This late installation avoids
+overwriting code that is still executing at boot. The counter's extension
+occupies the start of `diCpuReportWatchpoint`, a partly unused fault
+diagnostic, and stops before `diCpuLogMessage` at `0x800676B4`. The reticle,
+the gauges and Floyd use a second, separate segment from `0x80067790` to
+`0x80067950` exclusive, in the old diagnostic log display. The reticle code
+still ends at `0x800677F4`; the gauge wrapper starts at that address and its
+anchoring helper at `0x80067810`. Floyd's wrapper starts at `0x80067844`. The
+memory error reporting function at `0x800678C4` is neutralised before its body
+is reused; all of it is restored on removal, including after adopting an old
+state that carries this fix. `diCpuTraceGetFault` at `0x80067950` stays
+intact. The only caller of the old display, at `0x800674BC`, is already
+replaced by the HUD cave. The memory image concatenates the two segments: the
+code between them, `diCpuLogMessage` in particular, is neither read nor
+written by the cave installer.
 
-La plupart des corrections s'appliquent entre l'entrée et la sortie du dessin
-`frontSingleInstruments`, aux offsets `+0xC00` et `+0x10D0` de l'overlay 14.
-Un octet à `0x80102553` indique si cette portion du HUD est en cours de dessin.
-Le réticule est dessiné avant l'entrée : ses segments disposent désormais de
-sept appels corrigés distincts dans l'overlay 13. Les polices texturées consultent seulement le mode vidéo une fois
-leurs hooks installés.
+Most corrections apply between the entry and the exit of the
+`frontSingleInstruments` drawing, at offsets `+0xC00` and `+0x10D0` of overlay
+14. A byte at `0x80102553` says whether that part of the HUD is being drawn.
+The reticle is drawn before the entry: its segments now have seven distinct
+corrected calls in overlay 13. The textured fonts only consult the video mode
+once their hooks are installed.
 
-Le prototype de correction place dix-neuf stubs : deux pour ouvrir/fermer la portée,
-dix pour le rendu HUD, un pour les segments du réticule et deux pour identifier
-et ancrer le dessin des jauges, ainsi qu'un wrapper et trois helpers pour Floyd.
-Les dix corrections HUD
-vérifient toutes le bit widescreen ; huit vérifient aussi la portée.
-Le stub du réticule vérifie le mode widescreen et l'absence de portée HUD, afin
-d'éviter une double correction lorsque le diagnostic O force cette portée.
-Les deux stubs de police texturée sont volontairement globaux
-pendant le mode widescreen. Le garde manquant évoqué dans le compte rendu
-n'a donc pas été retrouvé dans ces chemins actuels. Le helper des barres de
-tir s'exécute seulement après les gardes de mode et de portée du stub de rectangles.
+The correction prototype places nineteen stubs: two to open and close the
+scope, ten for HUD rendering, one for the reticle segments and two to identify
+and anchor the gauge drawing, plus a wrapper and three helpers for Floyd. All
+ten HUD corrections check the widescreen bit; eight also check the scope. The
+reticle stub checks the widescreen mode and the absence of a HUD scope, to
+avoid a double correction when the O diagnostic forces that scope. The two
+textured font stubs are deliberately global while the widescreen mode is
+active. The missing guard mentioned in the report was therefore not found in
+these current paths. The shot-bar helper only runs after the mode and scope
+guards of the rectangle stub.
 
-| Élément ou chemin de dessin | Correction présente dans le code |
+| Element or drawing path | Correction present in the code |
 | --- | --- |
-| Matrice orthographique du HUD | Échelle horizontale multipliée par 0,75. |
-| Sprites et icônes d'armes | Deux chemins de `camDo2DSprite` corrigés en largeur, avec compensation de position gauche/droite. |
-| Cadres et jauges utilisant des matrices | Compensation de l'ancrage dans `matrixTranslate`. |
-| Police texturée | Agrandissement vertical proche de 21/16 et pas de texture de 3/4 pour préserver les colonnes fines des glyphes. |
-| Lignes, radar et petite police en traits | Coordonnées X transformées à la mise en file, avant le dessin différé. |
-| Rectangles pleins | Compression horizontale avant émission des commandes de dessin. |
-| Six barres vertes de capacité de tir | Ancrage du cadre d'arme appliqué aux rectangles pendant leur dessin ; table native conservée, gardes de mode et de portée. |
-| Contour de l'icône de Floyd | Même ancrage droit que l'icône ; diagonales adaptées au rapport 16/9 en conservant le trait vert natif de deux pixels. |
-| Chiffres du compteur de munitions | `frontPrintNum` : compression horizontale des glyphes et de leur espacement, ancrage sur le panneau gauche et adaptation du pas de texture ; premier rendu validé en interpréteur. |
-| Bandeau de ramassage | Extrémité attachée à gauche pendant toute l'animation, texte centré à pleine ouverture et découpe alignée sur le bandeau ; affichage complet validé visuellement par l'utilisateur. |
-| Segments des réticules | Compression horizontale autour du point visé, avant découpe et dessin CPU ; arrondi symétrique et formes 3D intactes. Rendu validé par l'utilisateur sur son essai du 8 septembre. |
+| HUD orthographic matrix | Horizontal scale multiplied by 0.75. |
+| Sprites and weapon icons | Two `camDo2DSprite` paths corrected in width, with left/right position compensation. |
+| Frames and gauges using matrices | Anchor compensation in `matrixTranslate`. |
+| Textured font | Vertical enlargement close to 21/16 and a texture step of 3/4 to preserve the thin glyph columns. |
+| Lines, radar and small stroke font | X coordinates transformed at queue time, before the deferred drawing. |
+| Filled rectangles | Horizontal compression before the drawing commands are emitted. |
+| Six green shot-capacity bars | Weapon-frame anchor applied to the rectangles while they are drawn; native table preserved, mode and scope guards. |
+| Floyd's icon outline | Same right anchor as the icon; diagonals adapted to the 16:9 ratio while keeping the native two-pixel green stroke. |
+| Ammunition counter digits | `frontPrintNum`: horizontal compression of the glyphs and their spacing, anchoring on the left panel and adapted texture step; first rendering validated in the interpreter. |
+| Pickup banner | Cap attached to the left for the whole animation, text centred at full opening and clipping aligned with the banner; full display validated visually by the user. |
+| Reticle segments | Horizontal compression around the aimed point, before clipping and CPU drawing; symmetric rounding and 3D shapes intact. Rendering validated by the user during the 8 September trial. |
 
-L'installateur vérifie les instructions originales et les limites de la zone
-des stubs. Il gère aussi le retrait des hooks, les changements d'overlay et
-certains patches hérités des anciennes sauvegardes.
+The installer checks the original instructions and the bounds of the stub
+area. It also handles hook removal, overlay changes and some patches
+inherited from old states.
 
-## Barres vertes de capacité de tir
+## Green shot-capacity bars
 
-L'ancien patch soustrayait 45 aux coordonnées X des sept rectangles de
-l'overlay 14 : six barres et leur fond. Leur ancrage en basse résolution
-restait environ 2,25 pixels à droite de celui du cadre. Si le mode widescreen
-ou la portée HUD se désactivait avant le retrait côté émulateur, le renderer
-lisait encore ces coordonnées déplacées avec son comportement 4/3. Ce décalage
-vers la gauche est reproduit par les tests de transition.
+The old patch subtracted 45 from the X coordinates of the seven rectangles of
+overlay 14: six bars and their background. Their low-resolution anchor stayed
+about 2.25 pixels to the right of the frame's. If the widescreen mode or the
+HUD scope was switched off before the emulator-side removal, the renderer
+still read these shifted coordinates with its 4:3 behaviour. This leftward
+shift is reproduced by the transition tests.
 
-L'appel à `frontDrawRectangles` à `overlay14 +0x2B28` passe maintenant par un
-wrapper dédié. Son adresse de retour fixe permet au stub de rectangles de
-reconnaître les jauges, sans modifier leur table ni les autres appels de rectangles.
-Après les gardes de mode et de portée, l'ancrage devient
-`X' = floor(0,75 × X + 4)` en basse résolution et
-`X' = floor(0,75 × X + 53)` en haute résolution. Ces formules suivent le cadre
-d'arme, dont l'origine est exprimée dans le repère de la matrice, tandis que
-la table des jauges conserve ses coordonnées de référence 320 pixels.
-La translation optionnelle **Align HUD elements** s'applique ensuite à l'ensemble.
+The `frontDrawRectangles` call at `overlay14 +0x2B28` now goes through a
+dedicated wrapper. Its fixed return address lets the rectangle stub recognise
+the gauges without modifying their table or the other rectangle calls. After
+the mode and scope guards, the anchor becomes `X' = floor(0.75 x X + 4)` in
+low resolution and `X' = floor(0.75 x X + 53)` in high resolution. These
+formulas follow the weapon frame, whose origin is expressed in the matrix
+frame, while the gauge table keeps its 320-pixel reference coordinates. The
+optional **Align HUD elements** translation is then applied to the whole.
 
-Les anciennes sauvegardes sont migrées en restaurant seulement les X reconnus
-comme natifs ou décalés de −45, y compris un mélange de ces deux variantes.
-Les Y et couleurs du jeu sont préservés. Un X inconnu empêche toute migration
-de la table ; l'installateur ne remplace pas arbitrairement ces données.
+Old states are migrated by restoring only the X values recognised as native
+or shifted by -45, including a mix of the two variants. The game's Y values
+and colours are preserved. An unknown X prevents any migration of the table;
+the installer does not replace these data arbitrarily.
 
-Les tests exécutent les stubs MIPS réels pour les sept rectangles, les deux
-résolutions widescreen et les changements de mode/portée avant retrait des
-hooks. Ils vérifient aussi les autres rectangles, les arguments du wrapper
-et l'absence d'écriture dans la table. Les tests C++ couvrent l'installation,
-le retrait et la migration. Le 9 septembre, les 67 tests JFG passent et la
-compilation Release x64 termine sans erreur ni avertissement.
-La comparaison visuelle de ce dernier réglage,
-notamment lors des bascules 4/3 ↔ 16/9, reste à effectuer.
+The tests run the real MIPS stubs for the seven rectangles, the two widescreen
+resolutions and the mode/scope changes before the hooks are removed. They also
+check the other rectangles, the wrapper's arguments and the absence of writes
+to the table. The C++ tests cover installation, removal and migration. On
+9 September the 67 JFG tests passed and the x64 Release build completed
+without errors or warnings. The visual comparison of this last adjustment,
+notably across 4:3 <-> 16:9 switches, is still to be done.
 
-## Contour de l'icône de Floyd
+## Floyd's icon outline
 
-La sauvegarde `floyd widescreen.pj.zip` confirme que l'icône pleine utilise
-`frontDrawObj(12)`, déjà corrigé par le chemin des sprites. Son contour passe
-par un appel distinct à `fxDrawLine`, dans l'overlay 14 à `+0x468`, avec une
-table de 22 segments à `+0x4678`. La compression générale déplaçait son centre
-vers X=244, alors que le pivot du sprite corrigé est proche de X=281.
+The `floyd widescreen.pj.zip` state confirms that the filled icon uses
+`frontDrawObj(12)`, already corrected by the sprite path. Its outline goes
+through a separate `fxDrawLine` call, in overlay 14 at `+0x468`, with a table
+of 22 segments at `+0x4678`. The general compression moved its centre to
+X=244, while the corrected sprite's pivot is close to X=281.
 
-Le wrapper recale le centre converti stocké dans la pile du jeu avant la
-compression des lignes. Le contour aboutit à `(280,192)` en basse résolution
-et `(359,240)` en haute résolution, à moins d'un pixel du pivot réel du sprite.
-L'icône pleine et la table de segments ne sont pas modifiées. Le wrapper exige
-les modes 1/3 et la portée HUD active ; le 4/3 suit le chemin original.
+The wrapper re-anchors the converted centre stored on the game's stack before
+the lines are compressed. The outline ends up at `(280,192)` in low resolution
+and `(359,240)` in high resolution, less than a pixel from the sprite's real
+pivot. The filled icon and the segment table are not modified. The wrapper
+requires modes 1/3 and an active HUD scope; 4:3 follows the original path.
 
-Le style 13 de `fxOutputLines` dessine normalement une colonne de deux pixels
-par ligne, avec un pas X fixe de −1, 0 ou +1. Les diagonales demeuraient donc
-à 45° malgré la compression de leurs extrémités. Seuls les segments de Floyd
-marqués lors de leur mise en file utilisent désormais un accumulateur entier
-qui répartit les déplacements X entre les lignes Y. Le rendu garde les deux
-pixels verts, leur addition saturée et l'inclusion des deux extrémités.
-Les autres tracés conservent leur fonctionnement d'origine. La file ne reçoit
-aucun segment supplémentaire.
+Style 13 of `fxOutputLines` normally draws a two-pixel column per line, with a
+fixed X step of -1, 0 or +1. The diagonals therefore stayed at 45 degrees
+despite the compression of their endpoints. Only the Floyd segments marked at
+queue time now use an integer accumulator that spreads the X moves across the
+Y lines. The rendering keeps the two green pixels, their saturated addition
+and the inclusion of both endpoints. The other strokes keep their original
+behaviour. The queue receives no additional segment.
 
-Les tests exécutent les instructions de mise en file et de rastérisation,
-vérifient les centres dans les deux résolutions et les pixels des diagonales.
-Les 88 tests JFG passent ; la compilation Release x64 du 9 septembre termine
-sans erreur ni avertissement.
-La comparaison visuelle dans l'émulateur reste à effectuer.
+The tests run the queueing and rasterisation instructions, check the centres
+in both resolutions and the pixels of the diagonals. The 88 JFG tests pass;
+the x64 Release build of 9 September completes without errors or warnings.
+The visual comparison in the emulator is still to be done.
 
-## Segments des réticules
+## Reticle segments
 
-L'utilisateur a confirmé le bon résultat visuel après l'essai de la version
-corrigée avec sa sauvegarde `reticle.pj.zip`. Cette validation ne couvre pas
-encore explicitement toutes les armes ni la haute résolution.
+The user confirmed the correct visual result after trying the corrected
+version with the `reticle.pj.zip` state. That validation does not yet
+explicitly cover every weapon or the high resolution.
 
-`frontPlayerTarget` projette le point visé, puis `frontDrawTarget` (overlay 13,
-offset `+0x4A8`) dessine les réticules. Les segments ordinaires passent par
-`fxDrawLineInWindow` avant leur mise en file et leur dessin CPU dans le
-framebuffer. Ils étaient hors de la portée HUD et conservaient donc leur
-largeur 4/3 à l'affichage 16/9.
+`frontPlayerTarget` projects the aimed point, then `frontDrawTarget` (overlay
+13, offset `+0x4A8`) draws the reticles. The ordinary segments go through
+`fxDrawLineInWindow` before being queued and drawn by the CPU into the
+framebuffer. They were outside the HUD scope and therefore kept their 4:3
+width on a 16:9 display.
 
-Sept appels des types de segment 0 à 4 passent maintenant par le nouveau stub,
-qui transforme chaque extrémité : `X' = centreX + arrondi(0,75 × (X − centreX))`.
-L'arrondi des demi-entiers s'éloigne de zéro pour que les côtés restent
-symétriques. Le centre projeté est conservé même lorsque la visée est décentrée.
-La correction intervient après les rotations/symétries et avant le découpage ;
-le moteur de lignes conserve son trait natif. Les coordonnées Y, couleurs,
-arguments de pile et calculs de collision/visée restent inchangés.
+Seven calls of segment types 0 to 4 now go through the new stub, which
+transforms each endpoint: `X' = centreX + round(0.75 x (X - centreX))`. Half
+integers round away from zero so the sides stay symmetric. The projected
+centre is preserved even when the aim is off-centre. The correction happens
+after the rotations/mirrors and before clipping; the line engine keeps its
+native stroke. Y coordinates, colours, stack arguments and the
+collision/aiming computations are unchanged.
 
-Depuis le 16 septembre, à la demande de l'utilisateur, le lance-roquettes
-(Tri-Rocket Launcher, index 5) et les missiles téléguidés (Homing Missiles,
-index 1) sont exclus de la compression. Le filtre lit l'index sauvegardé par
-`frontDrawTarget` à `sp+0x50` à chaque appel : il suit immédiatement les
-changements d'arme et conserve les coordonnées d'origine des deux viseurs.
-Les autres réticules gardent leur correction actuelle. Le filtre occupe les
-20 octets libres à `0x8006738C`, sans déplacer les autres stubs.
+Since 16 September, at the user's request, the rocket launcher (Tri-Rocket
+Launcher, index 5) and the homing missiles (index 1) are excluded from the
+compression. The filter reads the index saved by `frontDrawTarget` at
+`sp+0x50` on every call: it follows weapon changes immediately and keeps the
+original coordinates of these two reticles. The other reticles keep their
+current correction. The filter occupies the 20 free bytes at `0x8006738C`,
+without moving the other stubs.
 
-Essai suivant du 16 septembre : les deux exclusions proposent désormais leurs
-segments natifs à une couche de présentation de Parallel-RDP. En solo, avec
-**Correct widescreen HUD** et un mode jeu 16/9, le plugin accepte les traits
-et le jeu ne les inscrit plus dans son
-framebuffer. Sans cette prise en charge, le chemin d'origine reste utilisé.
-Le centre vient de `s4/s3`, les couleurs et le verrouillage des arguments du
-jeu. Les chiffres de distance/angle restent dans le rendu d'origine.
+Next trial of 16 September: the two exclusions now offer their native
+segments to a presentation layer of Parallel-RDP. In single player, with
+**Correct widescreen HUD** and a 16:9 game mode, the plugin accepts the
+strokes and the game no longer writes them into its framebuffer. Without that
+support the original path is still used. The centre comes from `s4/s3`, the
+colours and the lock state from the game's arguments. The distance/angle
+digits stay in the original rendering.
 
-Le diagnostic `cpuXYPrintf` est retiré à son entrée et son image US exacte
-est conservée pour restauration (`0x800682F0..0x800683D4`). Deux écritures
-privées ISViewer transmettent le paquet sur pile et la fin de file à un export
-optionnel du plugin. Celui-ci associe les segments à la file CPU puis à
-l'adresse du framebuffer traité par `fxOutputLines`. Chaque lecture GPU
-asynchrone emporte sa copie des traits et des registres VI ; le maintien d'une
-image précédente maintient aussi son viseur. Le chargement d'état vide les
-copies hôte. Les traits sont composés après l'étirement, à échelle X/Y uniforme,
-avant une seule copie vers la fenêtre. Aucun BMP de remplacement n'est requis.
+The `cpuXYPrintf` diagnostic is retired at its entry and its exact US image is
+kept for restoration (`0x800682F0..0x800683D4`). Two private ISViewer writes
+pass the stack packet and the end of queue to an optional plugin export. The
+plugin matches the segments to the CPU queue, then to the framebuffer address
+processed by `fxOutputLines`. Each asynchronous GPU readback carries its own
+copy of the strokes and VI registers; holding a previous image also holds its
+reticle. Loading a state empties the host copies. The strokes are composited
+after the stretch, at a uniform X/Y scale, before a single copy to the window.
+No replacement BMP is required.
 
-Les tests exécutent les trampolines acceptés/refusés, les transitions et
-restaurations, comparent le raster hôte au raster MIPS natif et contrôlent les
-files alternées, le changement d'image et les pixels carrés hors centre.
-La compilation x64 de l'émulateur et de Parallel-RDP est vérifiée. Le rendu
-en jeu reste à valider par essai utilisateur, notamment en verrouillage et
-en haute résolution. Le multijoueur conserve les viseurs d'origine.
+The tests run the accepted/refused trampolines, the transitions and
+restorations, compare the host raster to the native MIPS raster and check the
+alternating queues, the image change and the square pixels off centre. The
+x64 build of the emulator and of Parallel-RDP is verified. In-game rendering
+is still to be validated by a user trial, notably with a target lock and in
+high resolution. Multiplayer keeps the original reticles.
 
-Correction après le premier essai : l'activation ne dépend plus de l'option
-vidéo **Force widescreen**, qui était désactivée dans la configuration de test
-et provoquait systématiquement le retour au dessin étiré d'origine. Le mode
-du jeu et les hooks HUD suffisent, y compris après chargement d'état ; le
-format global de la fenêtre reste contrôlé par les réglages vidéo existants.
+Fix after the first trial: activation no longer depends on the **Force
+widescreen** video option, which was disabled in the test configuration and
+systematically caused the fallback to the original stretched drawing. The
+game's mode and the HUD hooks are enough, including after a state load; the
+window's overall aspect stays under the existing video settings.
 
-Après validation visuelle des deux lance-roquettes par l'utilisateur, le même
-chemin est étendu à tous les index d'arme de `frontDrawTarget` (0 à 13). Les
-segments locaux passent sans compression au dessinateur hôte : styles 0/2,
-traits épais de style 1 et motifs de pixels 4 à 7. Ces derniers sont copiés
-depuis les tables du jeu au moment du dessin, avec leur symétrie et couleur,
-puis conservés avec l'image présentée. Les cadres du sniper ancrés aux bords
-(types 5/6), les chiffres et la géométrie 3D conservent leur traitement actuel.
-Les sauvegardes du prototype limité aux roquettes sont reconnues et migrées.
-La comparaison automatisée avec le dessinateur MIPS couvre les segments des
-14 tables d'arme, les rotations et les motifs inversés ; la validation visuelle
-des autres armes reste à effectuer en jeu.
+After the user validated both rocket reticles visually, the same path was
+extended to every weapon index of `frontDrawTarget` (0 to 13). The local
+segments go uncompressed to the host drawer: styles 0/2, thick strokes of
+style 1 and pixel patterns 4 to 7. The latter are copied from the game's
+tables at draw time, with their mirroring and colour, then kept with the
+presented image. The edge-anchored sniper frames (types 5/6), the digits and
+the 3D geometry keep their current treatment. States from the rocket-only
+prototype are recognised and migrated. The automated comparison against the
+MIPS drawer covers the segments of the 14 weapon tables, the rotations and the
+inverted patterns; the visual validation of the other weapons is still to be
+done in game.
 
-L'essai de correction du dessinateur de diagonales de style 2 a été retiré,
-son rendu ayant été jugé insatisfaisant. Ses anciennes instructions sont
-restaurées aussi lorsqu'une sauvegarde contient encore ce patch. Les notes
-précédentes identifiaient à tort le viseur concerné comme celui du sniper.
+The attempted correction of the style 2 diagonal drawer was withdrawn, its
+rendering having been judged unsatisfactory. Its old instructions are also
+restored when a state still carries that patch. Earlier notes wrongly
+identified the affected reticle as the sniper's.
 
-Un masque monochrome éditable du lance-roquettes est disponible dans
-`Exports/Viseur-lance-roquettes/viseur-lance-roquettes.bmp` : 65 × 65 pixels,
-centre en (32, 32), tracé blanc sur fond noir, rendu d'origine sans texte
-variable. `Source/Script/export_jfg_reticle.py` reconstruit ce masque depuis
-une sauvegarde utilisateur avec les instructions du dessinateur d'origine.
-Le BMP est une référence pour retouche, pas encore une texture chargée en jeu.
+An editable monochrome mask of the rocket launcher reticle can be regenerated
+from a user state with `Source/Script/export_jfg_reticle.py`, which replays
+the original drawer's instructions: 65 x 65 pixels, centre at (32, 32), white
+stroke on black, original rendering without the variable text. The BMP is a
+reference for retouching, not yet a texture loaded in game. (The exported
+folder that used to be committed under `Exports/` has been removed from the
+repository.)
 
-Les quatre appels des cadres ancrés aux bords (types 5/6) et les petites formes
-3D restent intacts. Il ne faut pas appliquer la compression à la projection 3D
-du réticule, que l'utilisateur a validée. Le mode 4/3 et la désactivation de
-**Correct widescreen HUD** conservent les appels originaux.
+The four calls of the edge-anchored frames (types 5/6) and the small 3D shapes
+stay intact. The compression must not be applied to the reticle's 3D
+projection, which the user validated. The 4:3 mode and a disabled **Correct
+widescreen HUD** keep the original calls.
 
-L'installateur vérifie le module 13 actif, le prologue de `frontDrawTarget`, les
-sept appels et leurs instructions suivantes. Les appels sont installés après
-la cave et retirés avant sa restauration. Un module déchargé ou déplacé est
-oublié sans écriture dans son ancienne allocation. Les signatures ont été
-vérifiées dans la sauvegarde utilisateur `Save/reticle.pj.zip`.
+The installer checks the active module 13, the prologue of `frontDrawTarget`,
+the seven calls and the instructions that follow them. The calls are
+installed after the cave and removed before its restoration. An unloaded or
+moved module is forgotten without writing to its old allocation. The
+signatures were verified in the user state `Save/reticle.pj.zip`.
 
-Pour le test visuel, charger cette sauvegarde avec la case cochée, déplacer la
-visée horizontalement et verticalement, puis comparer case décochée. Vérifier
-la symétrie, le point visé, les changements d'arme et la haute résolution. Ne
-pas utiliser le diagnostic O pour cette comparaison.
+For the visual test, load that state with the box ticked, move the aim
+horizontally and vertically, then compare with the box unticked. Check the
+symmetry, the aimed point, weapon changes and the high resolution. Do not use
+the O diagnostic for this comparison.
 
-Le script [`jfg-reticle-trace.js`](../Source/Script/jfg-reticle-trace.js), à lancer
-manuellement avec le cœur Interpreter, compare les coordonnées à l'entrée du
-stub et à celle du moteur de découpe. Il écrit au maximum 512 relevés distincts
-dans `JfgReticleTrace.log` près de l'exécutable, sans modifier la mémoire ni les
-registres du jeu. Les tests automatiques du réticule couvrent les modes, la portée, le centre
-décentré, les arrondis, les arguments, la découpe et les exclusions par arme ; ils
-ne remplacent pas cette observation du rendu.
+The [`jfg-reticle-trace.js`](../Source/Script/jfg-reticle-trace.js) script,
+run manually with the Interpreter core, compares the coordinates at the stub's
+entry and at the clipping engine's. It writes at most 512 distinct records to
+`JfgReticleTrace.log` next to the executable, without modifying the game's
+memory or registers. The automated reticle tests cover the modes, the scope,
+the off-centre aim, the rounding, the arguments, the clipping and the
+per-weapon exclusions; they do not replace this observation of the rendering.
 
-## Bandeau de ramassage
+## Pickup banner
 
-La trace du ramassage **Gemini Capacity Increased** confirme que le fond du
-bandeau passe par `matrixTranslate`, l'extrémité par `frontDrawObj(5)` puis
-`camDo2DSprite`, et les deux passes du texte par `fontPrintXY` dans l'overlay 14.
-L'objet 5 se déplace de X = −78 à 122. L'ancienne classification gauche/centre/
-droite changeait son ancrage pendant ce trajet, jusqu'à ajouter 72 pixels de
-séparation en basse résolution par rapport au fond resté attaché à gauche.
+The trace of the **Gemini Capacity Increased** pickup confirms that the
+banner's background goes through `matrixTranslate`, the cap through
+`frontDrawObj(5)` then `camDo2DSprite`, and the two text passes through
+`fontPrintXY` in overlay 14. Object 5 travels from X = -78 to 122. The old
+left/centre/right classification changed its anchor during that travel, adding
+up to 72 pixels of separation in low resolution from the background, which
+stayed attached to the left.
 
-Le stub de position reconnaît cet objet à `v1 = 0x800FF820` et lui conserve
-l'ancrage gauche. Il occupe 30 mots dans son emplacement de 32 mots. Le choix
-de biais en haute résolution est également corrigé : ±68 n'est plus écrasé par
-±48 dans les chemins gauche/droite.
+The position stub recognises this object at `v1 = 0x800FF820` and keeps its
+left anchor. It occupies 30 words of its 32-word slot. The high-resolution
+bias selection is also corrected: +/-68 is no longer overwritten by +/-48 in
+the left/right paths.
 
-Douze instructions de l'overlay 14 corrigent le texte et sa découpe sans
-agrandir la cave. Le texte conserve ses glyphes et coulisse à la même vitesse
-que l'extrémité : `X = 0,75 × capX + 46` en 320 pixels, `+95` en 448 pixels.
-L'alignement horizontal centré place le message au milieu du fond entièrement
-ouvert. Le décalage d'un pixel entre les deux passes et les coordonnées Y
-restent inchangés. La largeur de **Gemini Capacity Increased**, calculée depuis
-la conversion de caractères et la police 2 de la ROM USA, est de 136 pixels.
+Twelve instructions of overlay 14 correct the text and its clipping without
+enlarging the cave. The text keeps its glyphs and slides at the same speed as
+the cap: `X = 0.75 x capX + 46` at 320 pixels, `+95` at 448 pixels. The
+centred horizontal alignment places the message in the middle of the fully
+open background. The one-pixel offset between the two passes and the Y
+coordinates are unchanged. The width of **Gemini Capacity Increased**,
+computed from the character conversion and font 2 of the USA ROM, is
+136 pixels.
 
-La découpe suit le même ancrage : `[65,5 ; 0,75 × capX + 124]` en basse résolution
-et `[114,5 ; 0,75 × capX + 173]` en haute résolution. Elle passe d'une largeur
-nulle à 150 pixels pendant l'ouverture. Les signatures originales des douze
-instructions ont été vérifiées dans l'overlay USA chargé. L'installateur
-reconnaît les variantes des deux résolutions lors du changement de mode ou du
-retrait ; il restaure les instructions originales à la désactivation et ne
-touche pas à une ancienne allocation après le déchargement de l'overlay.
-Le retrait reconnaît aussi l'ancienne version complète du stub de position
-(27 instructions), pour qu'une sauvegarde expérimentale ne réintroduise pas
-l'ancien ancrage pendant qu'une installation plus récente est déjà active.
+The clipping follows the same anchor: `[65.5 ; 0.75 x capX + 124]` in low
+resolution and `[114.5 ; 0.75 x capX + 173]` in high resolution. It goes from
+a zero width to 150 pixels during the opening. The original signatures of the
+twelve instructions were verified in the loaded USA overlay. The installer
+recognises the variants of both resolutions on a mode change or a removal; it
+restores the original instructions on deactivation and does not touch an old
+allocation after the overlay is unloaded. The removal also recognises the old
+full version of the position stub (27 instructions), so an experimental state
+does not reintroduce the old anchor while a newer installation is already
+active.
 
-Les tests d'instructions du HUD et de son cycle d'activation se lancent avec :
+The HUD instruction tests and the activation lifecycle tests run with:
 
 ```text
 python -m unittest discover -s Source/Script/tests -p "test_jfg_*.py" -v
 ```
 
-Les tests du cycle d'activation compilent les méthodes C++ de production avec
-MSVC sous Windows (ou un compilateur C++17 disponible ailleurs). Ils sont
-signalés comme ignorés si aucun compilateur n'est disponible. Aucune ROM
-n'est nécessaire pour cette suite.
+The lifecycle tests compile the production C++ methods with MSVC on Windows
+(or an available C++17 compiler elsewhere). They are reported as skipped when
+no compiler is available. No ROM is needed for this suite.
 
-Les tests du bandeau exécutent les remplacements MIPS sur 9 648 scénarios :
-course complète de l'extrémité, seuils gauche/centre/droite, portée, modes vidéo,
-texte, ombre et découpe. Ils vérifient aussi la préservation des coordonnées Y
-et de l'état de contrôle de la FPU. Ils ne remplacent pas la comparaison en jeu.
+The banner tests run the MIPS replacements over 9,648 scenarios: the cap's
+full travel, the left/centre/right thresholds, the scope, the video modes,
+the text, the shadow and the clipping. They also check that the Y coordinates
+and the FPU control state are preserved. They do not replace the in-game
+comparison.
 
-Le script de diagnostic
-[`jfg-banner-trace.js`](../Source/Script/jfg-banner-trace.js) consigne ces chemins,
-les coordonnées et la largeur du texte dans `JfgBannerTrace.log` près de
-l'exécutable. Comme la trace du compteur, il nécessite le cœur Interpreter et
-lit uniquement les registres et la mémoire. Il doit être lancé avant le
-chargement de la sauvegarde. Pour la validation visuelle, reprendre la même
-sauvegarde, ramasser l'objet et comparer la case activée/désactivée ; vérifier
-l'ouverture, l'affichage complet et la fermeture du bandeau.
+The diagnostic script
+[`jfg-banner-trace.js`](../Source/Script/jfg-banner-trace.js) logs these
+paths, the coordinates and the text width to `JfgBannerTrace.log` next to the
+executable. Like the counter trace, it requires the Interpreter core and only
+reads registers and memory. It must be started before the state is loaded.
+For the visual validation, reload the same state, pick up the item and
+compare with the box on and off; check the opening, the full display and the
+closing of the banner.
 
-## Observations rapportées par Claude
+## Observations reported by Claude
 
-Le cadre d'arme, les jauges, le radar, les sprites et le texte réagissaient
-correctement aux corrections pendant ses essais. Le compteur de munitions
-restait inchangé. La qualité du texte était légèrement inférieure à la
-référence 4/3.
+The weapon frame, the gauges, the radar, the sprites and the text responded
+correctly to the corrections during its trials. The ammunition counter stayed
+unchanged. The text quality was slightly below the 4:3 reference.
 
-| Chemin testé | Observation rapportée |
+| Path tested | Reported observation |
 | --- | --- |
-| File `fxDrawDigitalNumber` | Aucun item de ce type sur environ 2 400 images ; comprimer son curseur n'a eu aucun effet visible. |
-| Renderer de police `fontPrintXY` | La correction de ses `TextureRectangle` modifiait « Battle Cruiser », mais pas le compteur. |
-| Six chemins sous la portée d'instruments | Forcer la portée ouverte ne modifiait pas le compteur. |
-| File du texte fin | Claude avait proposé un test au pas quadruplé, sans résultat visuel recueilli. La sonde de reprise à `0x8006ED3C` n'a ensuite jamais été atteinte pendant l'essai utilisateur. |
+| `fxDrawDigitalNumber` queue | No item of that type over about 2,400 frames; compressing its cursor had no visible effect. |
+| `fontPrintXY` font renderer | Correcting its `TextureRectangle` commands changed "Battle Cruiser", but not the counter. |
+| Six paths under the instrument scope | Forcing the scope open did not change the counter. |
+| Thin text queue | Claude had proposed a test with a quadrupled step, without a collected visual result. The follow-up probe at `0x8006ED3C` was then never reached during the user trial. |
 
-Ces résultats orientent la reprise dans les situations observées. Ils ne
-prouvent pas qu'un renderer n'est jamais utilisé par le jeu dans une autre
-scène ou un autre mode.
+These results steer the follow-up in the situations observed. They do not
+prove that a renderer is never used by the game in another scene or mode.
 
-## Compteur de munitions : renderer confirmé
+## Ammunition counter: renderer confirmed
 
-La sonde de rapprochement à `0x8006ED3C` était installée, mais son témoin
-persistant n'a pas été déclenché : `JfgAmmoTextProbe.log` indiquait **path NOT
-SEEN after 120 runtime checks**. L'utilisateur n'observait aucun changement,
-y compris en tirant et en changeant d'arme. Cette mesure écarte ce site pour
-l'essai réalisé ; elle ne démontre pas que le moteur de texte fin n'est jamais
-utilisé ailleurs. La case de diagnostic et sa sonde ont été retirées.
+The follow-up probe at `0x8006ED3C` was installed, but its persistent marker
+was never triggered: `JfgAmmoTextProbe.log` reported **path NOT SEEN after 120
+runtime checks**. The user observed no change, including while firing and
+changing weapons. This measurement rules that site out for the trial
+performed; it does not show that the thin text engine is never used
+elsewhere. The diagnostic checkbox and its probe have been removed.
 
-Le compteur utilise en réalité `frontPrintNum` à `0x80058EF0`. Cette fonction
-émet ses propres commandes `TextureRectangle`, sans passer par le renderer
-de `fontPrintXY`, par `fxDrawDigitalNumber` ou par la chaîne candidate
-`fxInttostr` (`0x8006D70C`) / `fxTinyPrint` (`0x8006D60C`). Cela explique
-l'absence d'effet des patches précédents, y compris celui de la police texturée.
-Les quatre patches `WidescreenHudDigitalRetired` restent uniquement destinés
-à restaurer les instructions d'anciennes sauvegardes.
+The counter actually uses `frontPrintNum` at `0x80058EF0`. This function
+emits its own `TextureRectangle` commands, bypassing the `fontPrintXY`
+renderer, `fxDrawDigitalNumber` and the candidate chain `fxInttostr`
+(`0x8006D70C`) / `fxTinyPrint` (`0x8006D60C`). That explains why the earlier
+patches had no effect, including the textured font one. The four
+`WidescreenHudDigitalRetired` patches remain only to restore the instructions
+of old states.
 
-L'analyse de l'overlay 14 a identifié deux appels à `frontPrintNum`, puis une
-trace d'exécution en interpréteur les a confirmés sur une copie de la partie
-affichant **96 / 100**, avec `resolution=1` et `hudScope=1` :
+The analysis of overlay 14 identified two calls to `frontPrintNum`, and an
+execution trace in the interpreter then confirmed them on a copy of the game
+showing **96 / 100**, with `resolution=1` and `hudScope=1`:
 
-| Appel dans l'overlay 14 | Valeur `a0` | Coordonnées centrées `a1`, `a2` | Texture `a3` | Chiffres et couleurs |
+| Call in overlay 14 | `a0` value | Centred coordinates `a1`, `a2` | Texture `a3` | Digits and colours |
 | --- | --- | --- | --- | --- |
-| `+0x2C2C`, retour `+0x2C34` | 96 (`0x60`), munitions disponibles | -99, 74 | 8 | 3 positions, jaune `FFFF00A0`, zéros atténués `FFFF0040` |
-| `+0x2CA8`, retour `+0x2CB0` | 100 (`0x64`), capacité | -102, 61 | 9 | 3 positions, blanc `FFFFFFA0`, zéros atténués `FFFFFF40` |
+| `+0x2C2C`, return `+0x2C34` | 96 (`0x60`), available ammunition | -99, 74 | 8 | 3 positions, yellow `FFFF00A0`, dimmed zeroes `FFFF0040` |
+| `+0x2CA8`, return `+0x2CB0` | 100 (`0x64`), capacity | -102, 61 | 9 | 3 positions, white `FFFFFFA0`, dimmed zeroes `FFFFFF40` |
 
-Dans cette capture, la base de l'overlay vaut `0x80342740` : les adresses de
-retour observées sont donc `0x80345374` et `0x803453F0`. La base peut changer
-avec le chargement du jeu. Des commandes de dessin correspondantes sont aussi
-présentes dans la RAM de la sauvegarde : la première ligne emploie des glyphes
-larges de 11 pixels, espacés de 12 ; la seconde des glyphes de 8 pixels,
-espacés de 8. Le moteur dessine les chiffres de droite à gauche.
+In that capture the overlay base is `0x80342740`: the observed return
+addresses are therefore `0x80345374` and `0x803453F0`. The base can change as
+the game loads. Matching drawing commands are also present in the state's RAM:
+the first line uses 11-pixel wide glyphs spaced 12 apart; the second 8-pixel
+glyphs spaced 8 apart. The engine draws the digits from right to left.
 
-### Correction ajoutée
+### Correction added
 
-`WidescreenHudAmmoCode` contient 32 mots MIPS dans la plage
-`0x80067610..0x80067690` exclu. Cinq patches l'intègrent à `frontPrintNum` :
-un saut à `0x8005900C`, deux chargements à `0x800590D0` et `0x8005921C`, et
-deux suppressions d'anciens ORI à `0x800590F4` et `0x80059228`.
-Les deux chemins sont couverts : chiffres significatifs et zéros atténués.
+`WidescreenHudAmmoCode` holds 32 MIPS words in the range
+`0x80067610..0x80067690` exclusive. Five patches wire it into `frontPrintNum`:
+a jump at `0x8005900C`, two loads at `0x800590D0` and `0x8005921C`, and two
+removals of old ORIs at `0x800590F4` and `0x80059228`. Both paths are
+covered: significant digits and dimmed zeroes.
 
-Le stub exige la portée HUD active, le bit widescreen, et une texture égale
-à l'un des pointeurs des items 8 ou 9. Il multiplie la largeur de destination
-et l'espacement par 0,75 ; les espacements deviennent respectivement 9 et
-6 pixels. Les coordonnées de rectangles conservent leur précision au quart
-de pixel. L'ancrage suit le panneau gauche : `x' = 0,75*x + 4` en mode 1
-(320 pixels de large), `x' = 0,75*x + 5` en mode 3 (448 pixels).
+The stub requires the active HUD scope, the widescreen bit, and a texture
+equal to one of the pointers of items 8 or 9. It multiplies the destination
+width and the spacing by 0.75; the spacings become 9 and 6 pixels
+respectively. The rectangle coordinates keep their quarter-pixel precision.
+The anchor follows the left panel: `x' = 0.75*x + 4` in mode 1 (320 pixels
+wide), `x' = 0.75*x + 5` in mode 3 (448 pixels).
 
-La largeur source conservée à `stack+0x9C` continue de sélectionner les colonnes
-de l'atlas : elle n'est pas comprimée. Seuls la largeur de destination,
-l'espacement à `stack+0xA0` et `dsdx` changent. Le pas horizontal passe de
-1024 à 1365, approximation fixe de 4/3. Les coordonnées Y, les UV de départ et
-le pas vertical `dtdy=-1024` restent inchangés. La police ordinaire conserve
-sa correction existante.
+The source width kept at `stack+0x9C` still selects the atlas columns: it is
+not compressed. Only the destination width, the spacing at `stack+0xA0` and
+`dsdx` change. The horizontal step goes from 1024 to 1365, a fixed
+approximation of 4/3. The Y coordinates, the starting UVs and the vertical
+step `dtdy=-1024` are unchanged. The ordinary font keeps its existing
+correction.
 
-Le local inutilisé `stack+0x88` transporte le mot de pas de texture. Il est
-initialisé à la valeur normale même lorsque les gardes refusent la correction,
-puisque les deux instructions qui le chargent sont installées globalement.
-L'installateur capture et restaure les mots de la cave et vérifie les signatures
-des instructions. La borne de la cave empêche d'empiéter sur `diCpuLogMessage`.
+The unused local `stack+0x88` carries the texture step word. It is initialised
+to the normal value even when the guards refuse the correction, since the two
+instructions that load it are installed globally. The installer captures and
+restores the cave words and verifies the instruction signatures. The cave
+bound prevents encroaching on `diCpuLogMessage`.
 
-Une exécution avec la correction compilée confirme les valeurs préparées avant
-la boucle qui place les chiffres :
+A run with the compiled correction confirms the values prepared before the
+loop that places the digits:
 
-| Texture | Coordonnées X préparées en 10.2 (quart de pixel) | Largeur source | Espacement corrigé | Mot de pas de texture |
+| Texture | X coordinates prepared in 10.2 (quarter pixel) | Source width | Corrected spacing | Texture step word |
 | --- | --- | --- | --- | --- |
-| 8 | Gauche 199, droite 232 | 11 | 9 pixels | `0555FC00` |
-| 9 | Gauche 190, droite 214 | 8 | 6 pixels | `0555FC00` |
+| 8 | Left 199, right 232 | 11 | 9 pixels | `0555FC00` |
+| 9 | Left 190, right 214 | 8 | 6 pixels | `0555FC00` |
 
-Le pas `0555FC00` est observé dans les chemins des chiffres significatifs et
-des zéros atténués. Une première capture de la scène **96 / 100**, en
-interpréteur et basse résolution, montre les deux lignes comprimées dans le
-cadre. Cette validation porte sur une seule scène : la lisibilité selon les
-chiffres, les transitions, les changements d'arme, la haute résolution et le
-cœur recompilateur doivent encore être vérifiés.
+The `0555FC00` step is observed in both the significant-digit and dimmed-zero
+paths. A first capture of the **96 / 100** scene, in the interpreter and in
+low resolution, shows both lines compressed inside the frame. This validation
+covers a single scene: legibility across digits, transitions, weapon changes,
+the high resolution and the recompiler core still have to be checked.
 
-### Reproduire la trace sans modifier la RAM du jeu
+### Reproducing the trace without modifying the game's RAM
 
-Le script [`jfg-ammo-trace.js`](../Source/Script/jfg-ammo-trace.js) utilise les
-événements `events.onexec` du débogueur. Il lit les registres et la RAM ; il ne
-patche aucune instruction et ne modifie pas les compteurs.
+The [`jfg-ammo-trace.js`](../Source/Script/jfg-ammo-trace.js) script uses the
+debugger's `events.onexec` events. It reads registers and RAM; it patches no
+instruction and modifies no counter.
 
-1. Utiliser la ROM USA et sélectionner temporairement le cœur **Interpreter**.
-   Les événements d'exécution de ce script nécessitent ce cœur.
-2. Lancer le script depuis la fenêtre **Scripts** du débogueur avant de charger
-   la sauvegarde de partie. Il est aussi possible de le copier dans le dossier
-   `Scripts` près de l'exécutable et de l'activer au démarrage.
-3. Charger la scène, observer le compteur, tirer et changer d'arme.
-4. Lire `JfgAmmoRendererTrace.log` près de l'exécutable. Pour `frontPrintNum`,
-   chaque ligne donne l'appelant, la valeur, les coordonnées, l'item de texture,
-   les couleurs, la résolution et la profondeur de portée HUD.
-5. Arrêter le script, retirer son lancement automatique s'il a été configuré,
-   puis rétablir le cœur habituel pour les essais de rendu.
+1. Use the USA ROM and temporarily select the **Interpreter** core. The
+   script's execution events require that core.
+2. Start the script from the debugger's **Scripts** window before loading the
+   game state. It can also be copied to the `Scripts` folder next to the
+   executable and enabled at start-up.
+3. Load the scene, watch the counter, fire and change weapons.
+4. Read `JfgAmmoRendererTrace.log` next to the executable. For
+   `frontPrintNum`, each line gives the caller, the value, the coordinates, the
+   texture item, the colours, the resolution and the HUD scope depth.
+5. Stop the script, remove its automatic start if it was configured, then
+   restore the usual core for the rendering trials.
 
-Le script trace aussi les anciens candidats `fxInttostr`, `fxTinyPrint`,
-`tinyRender` et `tinyAdvance`. Il conserve au maximum **512 combinaisons
-distinctes d'arguments**, sans compter les répétitions. Il écrit le journal
-uniquement à l'initialisation et lorsqu'une nouvelle combinaison est observée.
-Chaque lancement recommence le fichier : conserver une copie pour comparer
-deux sessions. Une absence de ligne n'est exploitable qu'après avoir vérifié
-que le script était actif en interpréteur pendant la scène concernée.
+The script also traces the old candidates `fxInttostr`, `fxTinyPrint`,
+`tinyRender` and `tinyAdvance`. It keeps at most **512 distinct argument
+combinations**, not counting repetitions. It writes the log only at
+initialisation and when a new combination is observed. Each run starts the
+file over: keep a copy to compare two sessions. A missing line is only
+meaningful once it has been checked that the script was active in the
+interpreter during the scene concerned.
 
-## Défauts et limites repérés à la lecture
+## Defects and limits noticed while reading
 
-- **Touche de diagnostic O :** elle force le compteur de périmètre à `0x20`.
-  Au second appui, seul le booléen est désactivé ; l'octet n'est pas remis à
-  zéro. Les entrées et sorties normales s'équilibrent et peuvent le laisser
-  non nul. Le message « scope restored » ne prouve donc pas le retour au
-  comportement normal. Pour une comparaison fiable, repartir d'une session
-  neuve sans utiliser O. Cette touche nécessite les commandes clavier/souris.
-- **Dessins hors périmètre :** les chemins différés ou exécutés hors de
-  `frontSingleInstruments` ne bénéficient pas automatiquement de la correction.
-  De plus, `DisableJoy != 0` entraîne le retrait des hooks : le rendu des
-  dialogues, cinématiques et transitions reste à vérifier, même pour la police
-  décrite comme globale.
-- **Échantillonnage du texte :** le facteur nominal de destination `21/16`
-  multiplié par le pas source `3/4` donne `63/64`, soit environ 98,44 % de la
-  hauteur source. Le calcul réel est `H + 2 * floor(5H/32)` en coordonnées
-  10.2 ; les arrondis et la rastérisation influencent donc la couverture exacte.
-  Un pas de `3/4` correspond à une destination de `4/3`, tandis qu'une
-  destination de `21/16` demanderait un pas de `16/21`. Les commentaires du
-  code expliquent le choix actuel par la stabilité du motif d'interpolation.
-  La dégradation rapportée concerne ce compromis avec la fonte bitmap native ;
-  elle ne démontre pas qu'une autre fonte ou un autre chemin de rendu serait
-  incapable de produire une meilleure image.
+- **O diagnostic key:** it forces the scope counter to `0x20`. On the second
+  press only the boolean is cleared; the byte is not reset to zero. The
+  normal entries and exits balance out and can leave it non-zero. The "scope
+  restored" message therefore does not prove a return to normal behaviour.
+  For a reliable comparison, start from a fresh session without using O. This
+  key requires the keyboard/mouse controls.
+- **Drawing outside the scope:** the deferred paths, or those executed outside
+  `frontSingleInstruments`, do not automatically benefit from the correction.
+  Moreover, `DisableJoy != 0` removes the hooks: the rendering of dialogues,
+  cinematics and transitions is still to be checked, even for the font
+  described as global.
+- **Text sampling:** the nominal destination factor `21/16` multiplied by the
+  source step `3/4` gives `63/64`, about 98.44% of the source height. The
+  actual computation is `H + 2 * floor(5H/32)` in 10.2 coordinates; rounding
+  and rasterisation therefore affect the exact coverage. A step of `3/4`
+  corresponds to a destination of `4/3`, while a destination of `21/16` would
+  call for a step of `16/21`. The code comments explain the current choice by
+  the stability of the interpolation pattern. The reported degradation
+  concerns this compromise with the native bitmap font; it does not show that
+  another font or another rendering path could not produce a better image.
 
-Ces limites des corrections existantes restent documentées pour la reprise.
-Le défaut de choix 48/68 des sprites a été corrigé avec le bandeau ; son
-résultat visuel en haute résolution reste à valider.
+These limits of the existing corrections remain documented for the follow-up.
+The 48/68 selection defect of the sprites was fixed together with the banner;
+its visual result in high resolution is still to be validated.
 
-## Comparaisons à effectuer en jeu
+## Comparisons to perform in game
 
-Garder la même scène, la même arme et les mêmes réglages du plugin pour chaque
-comparaison. Commencer à 30 fps, en basse résolution, sans diagnostic O.
+Keep the same scene, the same weapon and the same plugin settings for each
+comparison. Start at 30 fps, in low resolution, without the O diagnostic.
 
-1. Comparer la référence 4/3, le widescreen natif sans correction du HUD, puis
-   le widescreen natif avec correction.
-2. Prioriser les deux lignes du compteur, y compris les zéros atténués, les
-   passages 100/99/10/9/0 et les changements d'arme. Vérifier que les autres
-   éléments du HUD conservent leur rendu validé.
-3. Refaire la comparaison en haute résolution pour vérifier l'accord entre les
-   cadres, les sprites et le bandeau avec le biais de 68 pixels.
-4. Tester les menus, dialogues, cinématiques et retours en partie.
-5. Vérifier l'activation/désactivation, un démarrage à froid, un changement de
-   niveau et le chargement d'une sauvegarde, puis répéter à 60 fps. Observer
-   particulièrement l'ancrage des barres vertes pendant les bascules 4/3 ↔ 16/9.
+1. Compare the 4:3 reference, the native widescreen without HUD correction,
+   then the native widescreen with the correction.
+2. Prioritise the two lines of the counter, including the dimmed zeroes, the
+   100/99/10/9/0 transitions and the weapon changes. Check that the other HUD
+   elements keep their validated rendering.
+3. Repeat the comparison in high resolution to check the agreement between the
+   frames, the sprites and the banner with the 68-pixel bias.
+4. Test the menus, dialogues, cinematics and returns to play.
+5. Check enabling/disabling, a cold start, a level change and a state load,
+   then repeat at 60 fps. Watch the anchoring of the green bars during the
+   4:3 <-> 16:9 switches in particular.
 
-La compilation et les vérifications d'instructions ne remplacent pas cette
-validation du rendu. La trace établit quel renderer dessine le compteur ; elle
-ne juge ni ses proportions ni sa lisibilité après correction.
+Compilation and instruction checks do not replace this rendering validation.
+The trace establishes which renderer draws the counter; it judges neither its
+proportions nor its legibility after correction.

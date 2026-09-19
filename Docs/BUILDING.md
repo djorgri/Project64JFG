@@ -35,18 +35,15 @@ changes we carry are recorded in `Docs/PARALLEL_VENDOR_PROVENANCE.md`.
 
 SDL is still a submodule and is the only one left to initialize.
 
-```
-git clone <repository-url>
-cd <clone-directory>
-git submodule update --init external/sdl
-```
-
 Enable long paths before the first checkout. One vendored SPIR-V-Cross test
 reference is 262 characters deep, past the classic Windows limit, and Git
 silently skips it otherwise.
 
 ```
 git config --global core.longpaths true
+git clone <repository-url>
+cd <clone-directory>
+git submodule update --init external/sdl
 ```
 
 ## Build in Visual Studio
@@ -90,9 +87,16 @@ requires on Win32 is part of the vendored `external\parallel-rsp\rsp_jit.cpp`.
 Without that headroom GNU Lightning can produce a null function pointer and
 crash when the game starts. See `Docs\PARALLEL_VENDOR_PROVENANCE.md`.
 
-This integration requires a Vulkan 1.3-capable GPU and driver. There is no
-automated release-packaging step; assemble any distributable manually from the
-rebuilt executable, plugins, configuration, language, and license files.
+This integration requires a Vulkan 1.3-capable GPU and driver.
+
+## Release packaging
+
+`New-ReleasePackages.ps1` at the repository root turns every complete
+`Bin\<platform>\<configuration>` export into a ZIP under the ignored `Package`
+directory (`Project64JFG-<version>-win64.zip`, `-win32.zip`, and `-debug`
+variants). It strips build artefacts and personal runtime data, resets the
+configuration to the portable template, and adds the cheats, enhancements,
+languages and license files. Incomplete exports are skipped with a warning.
 For a public binary release, build from an immutable release tag and name that
 tag as the corresponding source in the release notes. The source and replacement
 path for the statically linked GNU Lightning component are described in

@@ -154,6 +154,7 @@ private:
     void QueueGamepadScroll(const JFG_PORT_INPUT & Input);
     void Deactivate(void);
     void ClearCameraState(void);
+    void ClearMovementState(void);
     bool SetCameraCode(bool EnableFreeOrbit, bool EnableManualAim, bool InstallRuntime, bool StockAim);
     void PatchManualAimCode(bool Enabled);
     bool GetPlayerData(uint32_t & PlayerObject, uint32_t & PlayerData) const;
@@ -181,10 +182,8 @@ private:
     void ApplyDroneCamera(int32_t MouseX, int32_t MouseY);
     void AlignPlayerYawToOrbitCamera(
         const ORBIT_CAMERA_STATE & Orbit, uint32_t PlayerObject, uint32_t PlayerData);
-    void ApplyCameraRelativeStrafe(void);
     void UpdateSprintBlend(void);
     void ApplySprint(uint32_t PlayerObject);
-    void ApplyDroneLateralMovement(void);
     void PatchFramePacing(bool Enabled);
     void PatchFramePacing60(bool Enabled);
     void PatchSchedulerRelease(bool Enabled);
@@ -295,18 +294,6 @@ private:
     bool m_DroneLateralRight;
     bool m_DroneLateralApplied;
     uint32_t m_DroneLateralState;
-    uint32_t m_DroneLateralDebugStatus;
-    struct DroneLateralCandidate
-    {
-        uint32_t Object;
-        float PreviousX;
-        float PreviousZ;
-    };
-    bool m_DroneLateralPositionValid;
-    uint32_t m_DroneLateralObject;
-    float m_DroneLateralPreviousX;
-    float m_DroneLateralPreviousZ;
-    std::vector<DroneLateralCandidate> m_DroneLateralCandidates;
     uint32_t m_DroneLateralHookHits;
     uint32_t m_DroneLateralControllerEntry;
     uint32_t m_DroneLateralControllerWord0;

@@ -1,163 +1,170 @@
-# Parallel x64 — état des lieux
+# Parallel x64 - status report
 
-État relevé le 8 août 2026, à partir de la configuration, des scripts, des
-artefacts locaux et de l'historique Git du dépôt.
+Status recorded on 8 August 2026, from the configuration, the scripts, the
+local artefacts and the repository's Git history.
+
+> **Later developments.** This is a dated snapshot, kept for the reasoning it
+> records. Since it was written: the x64 and Win32 pairs are both rebuilt by
+> the solution build and shipped in every release; `New-ReleasePackages.ps1`
+> at the repository root produces the release ZIPs (the "no export or ZIP
+> script" statement below no longer holds); 60 fps is the default target;
+> and the reproducibility work proposed at the end has been done, see
+> `Docs/PARALLEL_VENDOR_PROVENANCE.md`.
 
 ## Conclusion
 
-Le chemin x64 est déjà intégré : l'exécutable, les adaptateurs Parallel-RDP et
-Parallel-RSP, les scripts de build et l'export x64 existent. Il ne s'agit donc
-pas d'un port à recommencer, mais d'un cycle de reconstruction, de validation
-et de mesure.
+The x64 path is already integrated: the executable, the Parallel-RDP and
+Parallel-RSP adapters, the build scripts and the x64 export exist. This is
+therefore not a port to start over, but a cycle of rebuilding, validation and
+measurement.
 
-L'export x64 actuel ne doit cependant pas être utilisé comme référence de
-performance. Ses DLL Parallel sont plus anciennes que les optimisations
-récentes réalisées pour Win32. Il faut d'abord reconstruire la paire x64 depuis
-les sources actuelles, puis la tester avec une scène JFG reproductible.
+The current x64 export must not however be used as a performance reference.
+Its Parallel DLLs are older than the recent optimisations made for Win32. The
+x64 pair has to be rebuilt from the current sources first, then tested with a
+reproducible JFG scene.
 
-## Ce qui fonctionne déjà
+## What already works
 
-* Les deux adaptateurs source sont présents :
-  `Source/Project64-parallel-rdp` et `Source/Project64-parallel-rsp`.
-* Les arbres Parallel sont figés dans `external/parallel-rdp` et
-  `external/parallel-rsp`, nos modifications comprises.
-* `Source/Script/build_parallel_x64.cmd` construit la paire x64 :
-  Parallel-RDP avec CMake / Visual Studio et Parallel-RSP avec MSYS2 UCRT64 /
-  Ninja.
-* La solution `Project64.sln` construit l'émulateur avec les plugins Project64
-  Audio et Project64 Input. Il n'y a pas de script d'export ou de ZIP ; une
-  distribution est assemblée manuellement à partir des binaires reconstruits.
-* Les valeurs par défaut de Project64 sélectionnent
-  `GFX/Project64-ParallelRDP.dll` et `RSP/Project64-ParallelRSP.dll`.
+* Both source adapters are present: `Source/Project64-parallel-rdp` and
+  `Source/Project64-parallel-rsp`.
+* The Parallel trees are frozen in `external/parallel-rdp` and
+  `external/parallel-rsp`, our modifications included.
+* `Source/Script/build_parallel_x64.cmd` builds the x64 pair: Parallel-RDP
+  with CMake / Visual Studio and Parallel-RSP with MSYS2 UCRT64 / Ninja.
+* The `Project64.sln` solution builds the emulator with the Project64 Audio
+  and Project64 Input plugins. There was no export or ZIP script at the time;
+  a distribution was assembled by hand from the rebuilt binaries.
+* Project64's defaults select `GFX/Project64-ParallelRDP.dll` and
+  `RSP/Project64-ParallelRSP.dll`.
 
-Le cœur Project64 possède également un recompiler x64 natif. L'émulateur et
-tous les plugins chargés doivent évidemment avoir la même architecture.
+The Project64 core also has a native x64 recompiler. The emulator and every
+loaded plugin must obviously share the same architecture.
 
-## État des artefacts locaux
+## State of the local artefacts
 
-Le décalage relevé le 8 août — DLL x64 du 4 et du 5, antérieures aux
-optimisations de commande du 6 — **est résorbé**. Les deux paires ont été
-reconstruites depuis les arbres figés, avec le correctif SIMD ci-dessous :
+The mismatch noted on 8 August - x64 DLLs from the 4th and 5th, older than
+the command optimisations of the 6th - **is resolved**. Both pairs were
+rebuilt from the frozen trees, with the SIMD fix below:
 
-| Artefact | Horodatage |
+| Artefact | Timestamp |
 | --- | --- |
-| `Bin/Win32/Release/Plugin/{GFX,RSP}` | 8 août, 15h58 |
-| `Bin/x64/Release/Plugin/{GFX,RSP}` | 8 août, 18h48 |
+| `Bin/Win32/Release/Plugin/{GFX,RSP}` | 8 August, 15:58 |
+| `Bin/x64/Release/Plugin/{GFX,RSP}` | 8 August, 18:48 |
 
-Le Win32 date d'avant le correctif SIMD sans que ce soit un problème : ses
-drapeaux étaient déjà ceux-là, et sa reconstruction ne produit aucun objet
-nouveau. Les deux paires proviennent donc du même état de source.
+The Win32 pair predates the SIMD fix without that being a problem: its flags
+were already those, and rebuilding it produces no new object. Both pairs
+therefore come from the same source state.
 
-`Export/x64/` reste à régénérer avant toute mesure sur l'export.
+`Export/x64/` was still to be regenerated before any measurement on the
+export.
 
-## Ce que les optimisations Win32 apportent à x64
+## What the Win32 optimisations bring to x64
 
-Le commit `b54a9e7` (« Optimize Win32 Parallel RDP command processing for
-improved 60 FPS performance ») porte un nom Win32, mais l'essentiel de ses
-changements est dans les adaptateurs communs :
+Commit `b54a9e7` ("Optimize Win32 Parallel RDP command processing for
+improved 60 FPS performance") carries a Win32 name, but most of its changes
+are in the shared adapters:
 
-* RDP : regroupement des petites commandes RDP, ring buffer plus grand,
-  traitement asynchrone des commandes, triple readback de scanout, présentation
-  non bloquante et journal de mesures.
-* RSP : instrumentation du coût des tâches et du callback RDP.
+* RDP: batching of small RDP commands, larger ring buffer, asynchronous
+  command processing, triple scanout readback, non-blocking presentation and
+  a measurement log.
+* RSP: instrumentation of the task cost and of the RDP callback.
 
-Ces sources sont partagées par les scripts Win32 et x64. Une reconstruction x64
-les inclura automatiquement ; il n'y a pas de second port à écrire pour cette
-partie.
+These sources are shared by the Win32 and x64 scripts. An x64 rebuild
+includes them automatically; there is no second port to write for this part.
 
-**Résolu.** Le build RSP n'activait `-mssse3 -msse4.1` que sur un pointeur de
-quatre octets, donc uniquement en Win32. La base x86-64 de GCC s'arrêtant à
-SSE2, le x64 compilait les replis du cœur vectoriel — et notamment celui de
-`rsp_vect_load_and_shuffle_operand`, exécuté pour chaque opérande de chaque
-instruction vectorielle : au lieu d'un `pshufb` registre à registre, un store
-vectoriel, seize accès scalaires octet par octet et un rechargement, avec le
-blocage de store-forwarding correspondant. Dix-neuf autres sites sélectionnent
-des chemins de blend et de clamp sur SSE4.1.
+**Resolved.** The RSP build only enabled `-mssse3 -msse4.1` on a four-byte
+pointer, i.e. only for Win32. GCC's x86-64 baseline stopping at SSE2, the x64
+build compiled the vector core's fallbacks - notably that of
+`rsp_vect_load_and_shuffle_operand`, executed for every operand of every
+vector instruction: instead of a register-to-register `pshufb`, a vector
+store, sixteen scalar byte accesses and a reload, with the matching
+store-forwarding stall. Nineteen other sites select blend and clamp paths on
+SSE4.1.
 
-Le x64 était donc **plus lent que le Win32**, et non l'inverse. La garde porte
-désormais sur `MINGW` seul. Mesuré sur `rsp/vfunctions.cpp` : 0 instruction
-SSSE3/SSE4.1 avant, 63 après, pour un objet plus petit de 452 octets. Le Win32
-est inchangé — ses drapeaux étaient déjà ceux-là, et sa recompilation ne produit
-aucun objet nouveau.
+x64 was therefore **slower than Win32**, not the other way round. The guard
+now tests `MINGW` alone. Measured on `rsp/vfunctions.cpp`: 0 SSSE3/SSE4.1
+instructions before, 63 after, for an object 452 bytes smaller. Win32 is
+unchanged - its flags were already those, and recompiling it produces no new
+object.
 
-SSE4.1 est le plafond utile : le cœur vectoriel n'a aucun chemin AVX, donc
-relever davantage le plancher CPU coûterait de la compatibilité sans rien
-rapporter.
+SSE4.1 is the useful ceiling: the vector core has no AVX path, so raising the
+CPU floor further would cost compatibility without bringing anything.
 
-Conséquence pour la suite : toute mesure x64 antérieure à ce correctif ne
-compare pas des architectures, elle mesure ce handicap.
+Consequence for what follows: any x64 measurement taken before this fix does
+not compare architectures, it measures that handicap.
 
-Les ombres de JFG reposent sur la synchronisation RDP/CPU à `SyncFull`. Cette
-barrière limite nécessairement les gains possibles ; la supprimer pour gagner
-des images/seconde risquerait de réintroduire les défauts de rendu déjà corrigés.
+JFG's shadows rely on RDP/CPU synchronisation at `SyncFull`. That barrier
+necessarily limits the possible gains; removing it to gain frames per second
+would risk reintroducing rendering defects that were already fixed.
 
-## Dette de reproductibilité — résolue
+## Reproducibility debt - resolved
 
-Les arbres Parallel ne sont plus des sous-modules : ils sont figés dans le
-dépôt, à l'état compilé et validé, et plus rien n'est récupéré depuis l'amont.
-Nos trois jeux de modifications font désormais partie de la source. Le détail,
-les bases amont figées et les licences sont dans
+The Parallel trees are no longer submodules: they are frozen in the
+repository, at the compiled and validated state, and nothing is fetched from
+upstream any more. Our three sets of modifications are now part of the
+source. The details, the frozen upstream bases and the licences are in
 `Docs/PARALLEL_VENDOR_PROVENANCE.md`.
 
-Deux constats de ce nettoyage méritent d'être retenus ici :
+Two findings of that clean-up are worth keeping here:
 
-* Le patch RSP versionné **était cassé et faisait échouer toute reconstruction
-  Parallel**, sur les deux architectures. Il écrivait la marge JIT sous forme
-  d'une constante `JitEmissionPadding`, alors que la source portait
-  `code_size += 4096;` : le test du script ne trouvait pas la constante, puis
-  `git apply --check` échouait à son tour sur un contexte modifié. C'était
-  l'étape 1 des deux scripts de build, ce qui explique que la procédure
-  ci-dessous n'ait jamais pu aboutir. Patch et script sont supprimés.
-* Une partie du « bruit » qui masquait ces modifications n'en était pas :
-  trois fichiers GNU Lightning n'avaient aucune différence de contenu (fins de
-  ligne réécrites par `core.autocrlf`), et le fichier spirv-cross signalé
-  supprimé a simplement un chemin de 262 caractères que Git ne pouvait pas
-  extraire sous Windows. `.gitattributes` et `core.longpaths` règlent les deux.
+* The versioned RSP patch **was broken and made every Parallel rebuild
+  fail**, on both architectures. It wrote the JIT headroom as a
+  `JitEmissionPadding` constant, while the source carried
+  `code_size += 4096;`: the script's test did not find the constant, then
+  `git apply --check` failed in turn on a changed context. That was step 1 of
+  both build scripts, which explains why the procedure below could never be
+  completed. Patch and script are removed.
+* Part of the "noise" that hid these modifications was not noise: three GNU
+  Lightning files had no content difference (line endings rewritten by
+  `core.autocrlf`), and the spirv-cross file reported as deleted simply has a
+  262-character path that Git could not check out on Windows. `.gitattributes`
+  and `core.longpaths` settle both.
 
-## Procédure recommandée
+## Recommended procedure
 
-1. Initialiser la seule dépendance restante :
+1. Initialise the only remaining dependency:
 
    ```bat
    git submodule update --init external/sdl
    ```
 
-2. Vérifier les prérequis x64 : Visual Studio 2022, Python 3.12+, MSYS2 UCRT64,
-   `mingw-w64-ucrt-x86_64-toolchain`, CMake et Ninja, plus un pilote Vulkan 1.3.
-3. Ouvrir `Project64.sln` dans Visual Studio et construire `Release|x64`, puis
-   lancer `Source\Script\build_parallel_x64.cmd` si les DLL Parallel doivent
-   être reconstruites.
-4. Tester l'EXE sous `Bin/x64/Release` avec les DLL Parallel correspondantes.
-5. Mesurer une même sauvegarde JFG, avec les mêmes réglages Parallel, dans des   scènes calmes et chargées, en 30 fps puis en 60 fps si ce dernier mode est
-   réactivé.
-6. Vérifier systématiquement : démarrage à froid, passage titre → jeu,
-   chargement de save state, fermeture de l'émulateur, ombres, texte/HUD,
-   absence de grésillement audio et cadence vidéo.
-7. Consulter `Logs/Project64-ParallelRDP.log` et
-   `Logs/Project64-ParallelRSP.log` pour séparer un blocage GPU / `SyncFull`,
-   un coût de présentation, un débit de commandes RDP ou une tâche RSP coûteuse.
+2. Check the x64 prerequisites: Visual Studio 2022, Python 3.12+, MSYS2
+   UCRT64, `mingw-w64-ucrt-x86_64-toolchain`, CMake and Ninja, plus a Vulkan
+   1.3 driver.
+3. Open `Project64.sln` in Visual Studio and build `Release|x64`, then run
+   `Source\Script\build_parallel_x64.cmd` if the Parallel DLLs have to be
+   rebuilt.
+4. Test the EXE under `Bin/x64/Release` with the matching Parallel DLLs.
+5. Measure the same JFG state, with the same Parallel settings, in quiet and
+   busy scenes, at 30 fps and then at 60 fps.
+6. Systematically check: cold start, title -> game transition, save-state
+   load, emulator shutdown, shadows, text/HUD, absence of audio crackle and
+   video cadence.
+7. Consult `Logs/Project64-ParallelRDP.log` and
+   `Logs/Project64-ParallelRSP.log` to separate a GPU / `SyncFull` stall, a
+   presentation cost, an RDP command throughput issue or an expensive RSP
+   task.
 
-## Critères de décision
+## Decision criteria
 
-Adopter x64 comme plateforme principale lorsque la paire reconstruite :
+Adopt x64 as the main platform when the rebuilt pair:
 
-* ne régresse pas visuellement face à Win32 ;
-* démarre, charge les save states et se ferme de façon stable ;
-* maintient au minimum des performances équivalentes à Win32 dans les scènes
-  JFG retenues ;
-* apporte un gain mesurable, ou au moins une meilleure marge pour les futures
-  optimisations ;
-* est reconstruisible depuis un clone propre — acquis depuis le gel des arbres
-  Parallel, sous réserve d'activer `core.longpaths` avant le premier checkout.
+* does not regress visually against Win32;
+* starts, loads save states and shuts down reliably;
+* keeps at least performance equivalent to Win32 in the selected JFG scenes;
+* brings a measurable gain, or at least better headroom for future
+  optimisations;
+* can be rebuilt from a clean clone - achieved since the Parallel trees were
+  frozen, provided `core.longpaths` is enabled before the first checkout.
 
-Le mode 60 fps doit être jugé séparément : ses limites actuelles mêlent charge
-Parallel/RSP, synchronisation audio et hacks JFG. Une amélioration x64 ne
-garantit donc pas à elle seule un 60 fps stable.
+The 60 fps mode has to be judged separately: its current limits mix
+Parallel/RSP load, audio synchronisation and the JFG hacks. An x64
+improvement alone therefore does not guarantee a stable 60 fps.
 
-## Prochaine étape proposée
+## Proposed next step (as of 8 August)
 
-Rendre les modifications de `external/parallel-rdp` reproductibles, reconstruire
-la paire x64 depuis les sources du 6 août, puis faire un benchmark Win32/x64
-strictement identique avec les journaux Parallel activés. C'est la manière la
-plus courte de savoir si le goulot est l'architecture hôte, le RDP, le RSP, la
-présentation ou la synchronisation nécessaire à JFG.
+Make the `external/parallel-rdp` modifications reproducible, rebuild the x64
+pair from the 6 August sources, then run a strictly identical Win32/x64
+benchmark with the Parallel logs enabled. That is the shortest way to know
+whether the bottleneck is the host architecture, the RDP, the RSP, the
+presentation or the synchronisation JFG needs.

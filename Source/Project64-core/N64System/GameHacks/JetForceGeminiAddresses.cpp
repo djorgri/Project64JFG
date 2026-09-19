@@ -279,16 +279,43 @@ const JFG_ADDRESSES JfgKioskAddresses =
     /* SchedulerSignatureWord2             */ 0x2D610002,
 };
 
+namespace
+{
+// Every entry point of the runtime funnels through IsSupportedRom(), so this is
+// asked several times per controller poll and per video interrupt. The ROM
+// identifier is a string load and two comparisons; resolve it once per ROM and
+// drop the answer when Game_IniKey changes, which is what a ROM load writes.
+const JFG_ADDRESSES * ResolvedAddresses = nullptr;
+bool ResolvedAddressesValid = false;
+bool RomChangeCallbackRegistered = false;
+
+void RomChanged(void *)
+{
+    ResolvedAddressesValid = false;
+}
+} // namespace
+
 const JFG_ADDRESSES * JfgAddresses(void)
 {
-    const stdstr Rom = g_Settings->LoadStringVal(Game_IniKey);
-    if (Rom == JfgUsAddresses.RomIdentifier)
+    if (!RomChangeCallbackRegistered)
     {
-        return &JfgUsAddresses;
+        g_Settings->RegisterChangeCB(Game_IniKey, nullptr, RomChanged);
+        RomChangeCallbackRegistered = true;
+        ResolvedAddressesValid = false;
     }
-    if (Rom == JfgKioskAddresses.RomIdentifier)
+    if (!ResolvedAddressesValid)
     {
-        return &JfgKioskAddresses;
+        const stdstr Rom = g_Settings->LoadStringVal(Game_IniKey);
+        ResolvedAddresses = nullptr;
+        if (Rom == JfgUsAddresses.RomIdentifier)
+        {
+            ResolvedAddresses = &JfgUsAddresses;
+        }
+        else if (Rom == JfgKioskAddresses.RomIdentifier)
+        {
+            ResolvedAddresses = &JfgKioskAddresses;
+        }
+        ResolvedAddressesValid = true;
     }
-    return nullptr;
+    return ResolvedAddresses;
 }

@@ -2325,61 +2325,6 @@ GAME_HACK_CODE_PATCH PlayerVelocityPatches[] =
     { PlayerVelocityEntry + 0x04, 0x27BD0020, 0x00000000 },
 };
 
-// The dedicated Floyd controller ends with s0 still pointing to Floyd's
-// object. This trampoline runs after its native movement calculation and
-// changes only the resulting X/Z displacement while Q/D is held. It also keeps
-// a per-object previous position, so no correction is applied on the first
-// call after an object change.
-const uint32_t FloydMoveHookCode[] =
-{
-    0x3C01800A, // lui   $at, 0x800A
-    0xC600000C, // lwc1  $f0, 0x0C($s0)
-    0xC6020014, // lwc1  $f2, 0x14($s0)
-    0x8C2BFCD8, // lw    $t3, 0xFCD8($at)
-    0x160B0021, // bne   $s0, $t3, initialise
-    0x00000000, // nop
-    0xC424FCD0, // lwc1  $f4, 0xFCD0($at)
-    0xC426FCD4, // lwc1  $f6, 0xFCD4($at)
-    0x46040201, // sub.s $f8, $f0, $f4
-    0x46061281, // sub.s $f10, $f2, $f6
-    0x8C29FCE4, // lw    $t1, 0xFCE4($at)
-    0x312A0001, // andi  $t2, $t1, 1
-    0x11400015, // beq   $t2, $zero, keep native movement
-    0x00000000, // nop
-    0x312A0002, // andi  $t2, $t1, 2
-    0x1140000A, // beq   $t2, $zero, move left
-    0x00000000, // nop
-    0x46005307, // neg.s $f12, $f10
-    0x460C2100, // add.s $f4, $f4, $f12
-    0xE604000C, // swc1  $f4, 0x0C($s0)
-    0x46083180, // add.s $f6, $f6, $f8
-    0xE6060014, // swc1  $f6, 0x14($s0)
-    0xE424FCD0, // swc1  $f4, 0xFCD0($at)
-    0xE426FCD4, // swc1  $f6, 0xFCD4($at)
-    0x1000000F, // b     finish
-    0x00000000, // nop
-    0x460A2100, // move left: add.s $f4, $f4, $f10
-    0xE604000C, // swc1  $f4, 0x0C($s0)
-    0x46083181, // sub.s $f6, $f6, $f8
-    0xE6060014, // swc1  $f6, 0x14($s0)
-    0xE424FCD0, // swc1  $f4, 0xFCD0($at)
-    0xE426FCD4, // swc1  $f6, 0xFCD4($at)
-    0x10000007, // b     finish
-    0x00000000, // nop
-    0xE420FCD0, // keep native movement: swc1 $f0, 0xFCD0($at)
-    0xE422FCD4, // swc1  $f2, 0xFCD4($at)
-    0x10000003, // b     finish
-    0x00000000, // nop
-    0xE420FCD0, // initialise: swc1 $f0, 0xFCD0($at)
-    0xE422FCD4, // swc1  $f2, 0xFCD4($at)
-    0xAC30FCD8, // finish: sw $s0, 0xFCD8($at)
-    0x02002025, // or    $a0, $s0, $zero
-    0x8FBF001C, // lw    $ra, 0x1C($sp)
-    0x8FB00018, // lw    $s0, 0x18($sp)
-    0x03E00008, // jr    $ra
-    0x27BD0050, // addiu $sp, $sp, 0x50
-};
-
 // sidekickpadMovePlayer prepares objMoveXYZ(Floyd, dx, dy, dz). Redirecting
 // only this call leaves its collision and all surrounding mission logic intact
 // while rotating the final horizontal delta for Q/D.
@@ -3451,11 +3396,6 @@ CJetForceGeminiRuntime::CJetForceGeminiRuntime(CMipsMemoryVM & MMU, CRecompiler 
     m_DroneLateralRight(false),
     m_DroneLateralApplied(false),
     m_DroneLateralState(0),
-    m_DroneLateralDebugStatus(0),
-    m_DroneLateralPositionValid(false),
-    m_DroneLateralObject(0),
-    m_DroneLateralPreviousX(0.0f),
-    m_DroneLateralPreviousZ(0.0f),
     m_DroneLateralHookHits(0),
     m_DroneLateralControllerEntry(0),
     m_DroneLateralControllerWord0(0),
@@ -3549,6 +3489,13 @@ void CJetForceGeminiRuntime::Reset(void)
 // let the next video frame put it back.
 void CJetForceGeminiRuntime::StateSaving(void)
 {
+    // The guest words below exist only in a supported ROM, see Deactivate; the
+    // host-side bookkeeping is dropped for every game.
+    if (!IsSupportedRom())
+    {
+        ClearMovementState();
+        return;
+    }
     PatchHudRaster(false);
     PatchHudAlignment(false, false);
     PatchWidescreenHud(false);
@@ -3580,29 +3527,27 @@ void CJetForceGeminiRuntime::StateSaving(void)
     m_Memory.WriteF32(DroneVerticalVelocityAddress, 0.0f);
     m_Memory.WriteU32(DroneLateralPreviousObjectAddress, 0);
 
-    m_SprintApplied = false;
-    m_SprintPositionValid = false;
-    m_SprintPlayerObject = 0;
-    m_SprintTimeValid = false;
-    m_SprintBlend = 0.0f;
-    m_SprintAnimationApplied = false;
-    m_SprintAnimationValid = false;
-    m_SprintAnimation = 0;
-    m_DroneLateralApplied = false;
-    m_DroneLateralPositionValid = false;
-    m_DroneLateralObject = 0;
-    m_DroneLateralCandidates.clear();
+    ClearMovementState();
 }
 
 void CJetForceGeminiRuntime::StateLoaded(void)
 {
+    // The guest words below exist only in a supported ROM, see Deactivate; the
+    // host-side bookkeeping is dropped for every game.
+    if (!IsSupportedRom())
+    {
+        ApplyViBudget(false);
+        ClearCameraState();
+        ClearMovementState();
+        return;
+    }
     PatchHudRaster(false);
     PatchHudAlignment(false, false);
     PatchWidescreenHud(false);
     // States made by the first HUD prototype may contain an interrupted scope.
     // This byte is reserved alignment padding, so normalise it even when the
     // host-side ownership bookkeeping was reset before loading the state.
-    if (IsSupportedRom() && JfgAddresses() == &JfgUsAddresses)
+    if (JfgAddresses() == &JfgUsAddresses)
     {
         m_Memory.WriteU8(WidescreenHudScopeDepthAddress, 0);
     }
@@ -3623,14 +3568,7 @@ void CJetForceGeminiRuntime::StateLoaded(void)
     PatchSquaddieMove(false);
     PatchSquadsTimeStep(false);
     ClearCameraState();
-    m_SprintApplied = false;
-    m_SprintPositionValid = false;
-    m_SprintPlayerObject = 0;
-    m_SprintTimeValid = false;
-    m_SprintBlend = 0.0f;
-    m_SprintAnimationApplied = false;
-    m_SprintAnimationValid = false;
-    m_SprintAnimation = 0;
+    ClearMovementState();
 
     PatchObjectMove(false);
     PatchDroneLateralMove(false);
@@ -3646,10 +3584,6 @@ void CJetForceGeminiRuntime::StateLoaded(void)
     m_Memory.WriteF32(DroneVerticalThrustAddress, 0.0f);
     m_Memory.WriteF32(DroneVerticalVelocityAddress, 0.0f);
     m_Memory.WriteU32(DroneLateralPreviousObjectAddress, 0);
-    m_DroneLateralApplied = false;
-    m_DroneLateralPositionValid = false;
-    m_DroneLateralObject = 0;
-    m_DroneLateralCandidates.clear();
 }
 
 bool CJetForceGeminiRuntime::IsEnabled(void) const
@@ -3677,10 +3611,10 @@ bool CJetForceGeminiRuntime::SupportsCurrentRom(void) const
     return IsSupportedRom();
 }
 
-// Enhancements which do not consume keyboard/mouse state run on their own VI
+// Enhancements which do not consume controller input run on their own VI
 // path. In particular, do not put this behind UpdateEnabledState(): that helper
-// deliberately requires Setting_JfgKeyboardMouse and would uninstall an
-// otherwise independent HUD option every frame. The prototype is intentionally
+// requires a JFG source on port one and would uninstall an otherwise
+// independent HUD option every frame. The prototype is intentionally
 // exact-US-only until its overlay signatures have been established elsewhere.
 void CJetForceGeminiRuntime::ProcessRuntimeFrame(void)
 {
@@ -7120,159 +7054,6 @@ bool CJetForceGeminiRuntime::PatchSidekickPadControlProbe(bool Enabled)
     return true;
 }
 
-#if 0 // Replaced by the smaller objMoveXYZ call-site hook below.
-bool CJetForceGeminiRuntime::PatchDroneLateralMove(bool Enabled)
-{
-    const size_t StubCount = sizeof(FloydMoveHookCode) / sizeof(FloydMoveHookCode[0]);
-
-    auto BuildStubWrites = [this, StubCount](std::vector<GAME_HACK_CODE_WRITE> & Writes, bool Install) {
-        Writes.resize(StubCount);
-        for (size_t Index = 0; Index < StubCount; Index++)
-        {
-            GAME_HACK_CODE_WRITE & Write = Writes[Index];
-            Write.Address = FloydMoveHookStub + (uint32_t)(Index * sizeof(uint32_t));
-            Write.Desired = Install ? FloydMoveHookCode[Index] : m_DroneLateralMoveHookStubOriginal[Index];
-            Write.Allowed[0] = m_DroneLateralMoveHookStubOriginal[Index];
-            Write.Allowed[1] = FloydMoveHookCode[Index];
-            Write.AllowedCount = 2;
-        }
-    };
-
-    if (!Enabled)
-    {
-        if (!m_DroneLateralMoveHookApplied)
-        {
-            // A state created by an experimental build can restore the hook
-            // without restoring this host-side flag. Detect that exact entry
-            // pattern and take it down before the emulation thread resumes.
-            UpdateDroneLateralControllerProbe();
-            if (m_DroneLateralControllerReturn >= 0x0C)
-            {
-                const uint32_t StaleEntry = m_DroneLateralControllerReturn - 0x0C;
-                uint32_t StaleWord = 0;
-                if (m_Memory.ReadU32(StaleEntry, StaleWord) && StaleWord == FloydMoveHookJump)
-                {
-                    const GAME_HACK_CODE_PATCH StaleEntryPatches[] =
-                    {
-                        { StaleEntry, FloydMoveHookJump, 0x02002025 },
-                        { StaleEntry + 0x04, 0x00000000, 0x8FBF001C },
-                    };
-                    m_CodePatcher.SetEnabled(
-                        StaleEntryPatches,
-                        sizeof(StaleEntryPatches) / sizeof(StaleEntryPatches[0]), true);
-                }
-            }
-            m_Memory.WriteU32(DroneLateralPreviousObjectAddress, 0);
-            return true;
-        }
-
-        const GAME_HACK_CODE_PATCH EntryPatches[] =
-        {
-            { m_DroneLateralMoveHookEntry, 0x02002025, FloydMoveHookJump },
-            { m_DroneLateralMoveHookEntry + 0x04, 0x8FBF001C, 0x00000000 },
-        };
-        CGameHackCodePatcher::Result EntryResult = m_CodePatcher.SetEnabled(
-            EntryPatches, sizeof(EntryPatches) / sizeof(EntryPatches[0]), false);
-        if (EntryResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-            EntryResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-        {
-            return false;
-        }
-
-        if (!m_DroneLateralMoveHookStubOriginal.empty())
-        {
-            if (m_DroneLateralMoveHookStubOriginal.size() != StubCount)
-            {
-                return false;
-            }
-            std::vector<GAME_HACK_CODE_WRITE> Writes;
-            BuildStubWrites(Writes, false);
-            CGameHackCodePatcher::Result StubResult = m_CodePatcher.Apply(Writes.data(), Writes.size());
-            if (StubResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-                StubResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-            {
-                return false;
-            }
-        }
-
-        m_DroneLateralMoveHookStubOriginal.clear();
-        m_DroneLateralMoveHookApplied = false;
-        m_DroneLateralMoveHookEntry = 0;
-        m_Memory.WriteU32(DroneLateralPreviousObjectAddress, 0);
-        return true;
-    }
-
-    if (m_DroneLateralControllerReturn < 0x0C)
-    {
-        return false;
-    }
-    const uint32_t HookEntry = m_DroneLateralControllerReturn - 0x0C;
-    if (m_DroneLateralMoveHookApplied)
-    {
-        if (m_DroneLateralMoveHookEntry == HookEntry)
-        {
-            return true;
-        }
-        if (!PatchDroneLateralMove(false))
-        {
-            return false;
-        }
-    }
-
-    uint32_t EntryWord = 0;
-    uint32_t DelayWord = 0;
-    if (!m_Memory.ReadU32(HookEntry, EntryWord) || !m_Memory.ReadU32(HookEntry + 0x04, DelayWord) ||
-        EntryWord != 0x02002025 || DelayWord != 0x8FBF001C)
-    {
-        return false;
-    }
-
-    m_DroneLateralMoveHookStubOriginal.resize(StubCount);
-    for (size_t Index = 0; Index < StubCount; Index++)
-    {
-        if (!m_Memory.ReadU32(
-                FloydMoveHookStub + (uint32_t)(Index * sizeof(uint32_t)),
-                m_DroneLateralMoveHookStubOriginal[Index]))
-        {
-            m_DroneLateralMoveHookStubOriginal.clear();
-            return false;
-        }
-    }
-
-    std::vector<GAME_HACK_CODE_WRITE> Writes;
-    BuildStubWrites(Writes, true);
-    CGameHackCodePatcher::Result StubResult = m_CodePatcher.Apply(Writes.data(), Writes.size());
-    if (StubResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-        StubResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        m_DroneLateralMoveHookStubOriginal.clear();
-        return false;
-    }
-
-    const GAME_HACK_CODE_PATCH EntryPatches[] =
-    {
-        { HookEntry, 0x02002025, FloydMoveHookJump },
-        { HookEntry + 0x04, 0x8FBF001C, 0x00000000 },
-    };
-    CGameHackCodePatcher::Result EntryResult = m_CodePatcher.SetEnabled(
-        EntryPatches, sizeof(EntryPatches) / sizeof(EntryPatches[0]), true);
-    if (EntryResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-        EntryResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        BuildStubWrites(Writes, false);
-        m_CodePatcher.Apply(Writes.data(), Writes.size());
-        m_DroneLateralMoveHookStubOriginal.clear();
-        return false;
-    }
-
-    m_DroneLateralMoveHookApplied = true;
-    m_DroneLateralMoveHookEntry = HookEntry;
-    m_Memory.WriteU32(DroneLateralPreviousObjectAddress, 0);
-    return true;
-}
-
-#endif
-
 bool CJetForceGeminiRuntime::PatchDroneLateralMove(bool Enabled)
 {
     const size_t StubCount = sizeof(FloydMoveCallHookCode) / sizeof(FloydMoveCallHookCode[0]);
@@ -8719,6 +8500,18 @@ void CJetForceGeminiRuntime::PatchWaterWakeRingRate(bool Enabled)
 
 void CJetForceGeminiRuntime::Deactivate(void)
 {
+    // This runs on every controller poll and video interrupt for as long as no
+    // JFG source feeds port one, whatever ROM is loaded. Every patch and scratch
+    // word below is an address inside a supported ROM: in any other game they
+    // are someone else's memory, so only the host-side bookkeeping is reset.
+    if (!IsSupportedRom())
+    {
+        ApplyViBudget(false);
+        m_Enabled = false;
+        ClearCameraState();
+        ClearMovementState();
+        return;
+    }
     PatchLandingCinematicSkip(false);
     PatchIntroCinematicSkip(false);
     m_Memory.WriteU32(LandingCinematicSkipInputAddress, 0);
@@ -8750,17 +8543,21 @@ void CJetForceGeminiRuntime::Deactivate(void)
     PatchWaterWakeStockDrawProbe(false);
     PatchFramePacing60(false);
     PatchFramePacing(false);
-    if (m_Enabled || m_CameraPatchApplied || IsSupportedRom())
+    SetCameraCode(false, false, false, false);
+    m_Memory.WriteF32(CameraHeightOffsetAddress, 0.0f);
+    for (uint8_t Player = 0; Player < CameraPlayerCount; Player++)
     {
-        SetCameraCode(false, false, false, false);
-        m_Memory.WriteF32(CameraHeightOffsetAddress, 0.0f);
-        for (uint8_t Player = 0; Player < CameraPlayerCount; Player++)
-        {
-            WriteCameraHeightOffset(Player, 0.0f);
-        }
+        WriteCameraHeightOffset(Player, 0.0f);
     }
     m_Enabled = false;
     ClearCameraState();
+    ClearMovementState();
+}
+
+// The host-side sprint and Floyd thruster bookkeeping, dropped whenever the
+// guest side is reset: on deactivation and around a state save or load.
+void CJetForceGeminiRuntime::ClearMovementState(void)
+{
     m_SprintApplied = false;
     m_SprintPositionValid = false;
     m_SprintPlayerObject = 0;
@@ -8770,9 +8567,6 @@ void CJetForceGeminiRuntime::Deactivate(void)
     m_SprintAnimationValid = false;
     m_SprintAnimation = 0;
     m_DroneLateralApplied = false;
-    m_DroneLateralPositionValid = false;
-    m_DroneLateralObject = 0;
-    m_DroneLateralCandidates.clear();
 }
 
 void CJetForceGeminiRuntime::ClearCameraState(void)
@@ -9718,25 +9512,6 @@ void CJetForceGeminiRuntime::ProcessSecondaryVideoFrame(int32_t Control, const J
     ApplyOrbitCamera(PlayerIndex, Orbit, Eval, MouseX, MouseY, Controls.Aim);
 }
 
-void CJetForceGeminiRuntime::ApplyCameraRelativeStrafe(void)
-{
-    uint32_t PlayerObject;
-    uint32_t PlayerData;
-    uint32_t JoyDisabled;
-    uint8_t CameraMode;
-    if (!m_Orbit[0].OverrideActive || !m_Orbit[0].OrbitYawInitialized ||
-        !GetPlayerData(PlayerObject, PlayerData) ||
-        !m_Memory.ReadU32(DisableJoyAddress, JoyDisabled) || JoyDisabled != 0 ||
-        !m_Memory.ReadU8(PlayerData + PlayerCameraModeOffset, CameraMode) ||
-        CameraMode != PlayerCameraModeNormal)
-    {
-        return;
-    }
-
-    AlignPlayerYawToOrbitCamera(m_Orbit[0], PlayerObject, PlayerData);
-    m_Memory.WriteS16(PlayerData + PlayerCameraYawOffset, 0);
-}
-
 // How hard the stick gets pushed for a frame of mouse travel, clamped to the
 // same limit the keyboard uses so the drone never turns faster than the pad
 // could ask for.
@@ -9779,9 +9554,6 @@ void CJetForceGeminiRuntime::MapController(
     // and the boss section keeps its mouse-driven copy of that same rule.
     const bool StockAim = AimMode && Controls.AimPad && !Controls.AimMouse &&
                           g_Settings->LoadBool(Setting_JfgGamepadStockAim);
-    bool CameraRelativeLateralMovement =
-        false;
-
     // Read here rather than relying on ApplyMouseCamera having run, since the
     // boss camera path below returns before reaching it.
     uint32_t PlayerObject = 0;
@@ -9908,11 +9680,7 @@ void CJetForceGeminiRuntime::MapController(
         }
         else
         {
-            bool CameraInputEnabled = ApplyMouseCamera(MouseX, MouseY, AimMode, StockAim);
-            if (CameraInputEnabled && !AimMode && CameraRelativeLateralMovement && Left != Right)
-            {
-                ApplyCameraRelativeStrafe();
-            }
+            ApplyMouseCamera(MouseX, MouseY, AimMode, StockAim);
         }
     }
 
@@ -9978,8 +9746,7 @@ void CJetForceGeminiRuntime::MapController(
         CameraMode == PlayerCameraModeCrouch ||
         (CameraMode == PlayerCameraModeProne &&
          g_Settings->LoadBool(Setting_JfgCrouchProneStickStrafe));
-    bool StrafeOnCButtons =
-        AimMode || CameraRelativeLateralMovement || BossCam || PostureStrafe;
+    bool StrafeOnCButtons = AimMode || BossCam || PostureStrafe;
     // The pad's shoulder buttons sidestep on those same C buttons in any state
     Buttons.L_CBUTTON = Controls.CLeft || (Left && StrafeOnCButtons);
     Buttons.R_CBUTTON = Controls.CRight || (Right && StrafeOnCButtons);
@@ -10187,84 +9954,4 @@ void CJetForceGeminiRuntime::ApplySprint(uint32_t PlayerObject)
         }
     }
     m_SprintPreviousAnimationFrame = AnimationFrame;
-}
-
-// Floyd has no retail strafe control. Q/D therefore hold the game's forward
-// thrust, then this pass turns the resulting displacement of the exact object
-// that sidekickpadControl is controlling. The probe supplies that object;
-// using the control camera here moved only the camera, not Floyd.
-void CJetForceGeminiRuntime::ApplyDroneLateralMovement(void)
-{
-    m_DroneLateralApplied = false;
-    m_DroneLateralDebugStatus = 0;
-
-    uint32_t Object = 0;
-    float PositionX = 0.0f;
-    float PositionZ = 0.0f;
-    if (!m_Memory.ReadU32(SidekickPadProbeObjectAddress, Object) || Object == 0 ||
-        !m_Memory.IsRdramAddress(Object, TransformZOffset + sizeof(float)))
-    {
-        m_DroneLateralDebugStatus = 1;
-        m_DroneLateralPositionValid = false;
-        m_DroneLateralObject = 0;
-        return;
-    }
-    if (!m_Memory.ReadF32(Object + TransformXOffset, PositionX) ||
-        !m_Memory.ReadF32(Object + TransformZOffset, PositionZ) ||
-        !IsCameraFloat(PositionX) || !IsCameraFloat(PositionZ))
-    {
-        m_DroneLateralDebugStatus = 2;
-        m_DroneLateralPositionValid = false;
-        m_DroneLateralObject = Object;
-        return;
-    }
-    if (!m_DroneLateralPositionValid || m_DroneLateralObject != Object)
-    {
-        m_DroneLateralDebugStatus = 3;
-        m_DroneLateralPositionValid = true;
-        m_DroneLateralObject = Object;
-        m_DroneLateralPreviousX = PositionX;
-        m_DroneLateralPreviousZ = PositionZ;
-        return;
-    }
-
-    const float DeltaX = PositionX - m_DroneLateralPreviousX;
-    const float DeltaZ = PositionZ - m_DroneLateralPreviousZ;
-    m_DroneLateralPreviousX = PositionX;
-    m_DroneLateralPreviousZ = PositionZ;
-    if (!m_DroneLateralActive)
-    {
-        m_DroneLateralDebugStatus = 4;
-        return;
-    }
-    if (fabs(DeltaX) > SprintMaximumStep || fabs(DeltaZ) > SprintMaximumStep)
-    {
-        m_DroneLateralDebugStatus = 5;
-        return;
-    }
-    if (DeltaX == 0.0f && DeltaZ == 0.0f)
-    {
-        m_DroneLateralDebugStatus = 6;
-        return;
-    }
-
-    const float LateralX = m_DroneLateralRight ? -DeltaZ : DeltaZ;
-    const float LateralZ = m_DroneLateralRight ? DeltaX : -DeltaX;
-    const float StrafeX = PositionX - DeltaX + LateralX;
-    const float StrafeZ = PositionZ - DeltaZ + LateralZ;
-    if (!IsCameraFloat(StrafeX) || !IsCameraFloat(StrafeZ))
-    {
-        m_DroneLateralDebugStatus = 7;
-        return;
-    }
-    if (m_Memory.WriteF32(Object + TransformXOffset, StrafeX) &&
-        m_Memory.WriteF32(Object + TransformZOffset, StrafeZ))
-    {
-        m_DroneLateralDebugStatus = 8;
-        m_DroneLateralPreviousX = StrafeX;
-        m_DroneLateralPreviousZ = StrafeZ;
-        m_DroneLateralApplied = true;
-        return;
-    }
-    m_DroneLateralDebugStatus = 9;
 }

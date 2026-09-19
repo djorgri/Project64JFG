@@ -42,6 +42,8 @@ Thumbs.db
 /git.properties
 /ipch
 /Source/Script/Release
+__pycache__/
+*.pyc
 /Source/Script/x64
 /Package
 /Plugin/Win32/Audio/Project64-Audio_d.dll

@@ -1,74 +1,73 @@
-# Parallel — arbres figés et provenance
+# Parallel - vendored trees and provenance
 
-Les arbres Parallel ne sont plus des sous-modules. Ils sont figés dans ce dépôt,
-à l'état exact qui a été compilé et validé, et plus rien n'est récupéré depuis
-`github.com/Themaister`.
+The Parallel trees are no longer submodules. They are frozen in this
+repository, at the exact state that was compiled and validated, and nothing
+is fetched from `github.com/Themaister` any more.
 
-Ce fichier ne crée aucune dépendance réseau. Il existe pour qu'on puisse encore
-répondre, dans un an, à « sur quelle base est-on parti » et « qu'a-t-on changé ».
+This file creates no network dependency. It exists so that, a year from now,
+"which base did we start from" and "what did we change" can still be
+answered.
 
-## Ce que nous avons modifié
+## What we modified
 
-Trois jeux de modifications, 96 lignes au total, déjà présentes dans les arbres
-figés. Elles n'ont plus besoin d'être appliquées : elles *sont* le code.
+Three sets of changes, 96 lines in total, already present in the frozen
+trees. They no longer need applying: they *are* the code.
 
-| Emplacement | Delta | Rôle |
+| Location | Delta | Role |
 | --- | --- | --- |
-| `external/parallel-rdp/parallel-rdp/` (4 fichiers) | +80 lignes | `enqueue_command_batch()`, `drain_commands()`, ring de commandes agrandi. Requis par l'adaptateur RDP optimisé. |
-| `external/parallel-rdp/Granite/util/bitops.hpp` | +10 lignes | Contournement MSVC 32 bits : `_BitScanReverse64`/`_BitScanForward64` n'existent pas en x86. **Sans lui, Parallel-RDP ne compile pas en Win32.** Inerte en x64. |
-| `external/parallel-rsp/rsp_jit.cpp` | +6 lignes | `code_size += 4096;` dans `init_jit_thunks()` et `jit_region()`. GNU Lightning sous-estime la taille d'émission x86 sur MinGW32 et `jit_emit()` ne peut pas redimensionner un tampon fourni : sans cette marge, pointeur de fonction nul et plantage au lancement. |
+| `external/parallel-rdp/parallel-rdp/` (4 files) | +80 lines | `enqueue_command_batch()`, `drain_commands()`, enlarged command ring. Required by the optimised RDP adapter. |
+| `external/parallel-rdp/Granite/util/bitops.hpp` | +10 lines | 32-bit MSVC workaround: `_BitScanReverse64`/`_BitScanForward64` do not exist on x86. **Without it, Parallel-RDP does not compile for Win32.** Inert on x64. |
+| `external/parallel-rsp/rsp_jit.cpp` | +6 lines | `code_size += 4096;` in `init_jit_thunks()` and `jit_region()`. GNU Lightning underestimates the x86 emission size on MinGW32 and `jit_emit()` cannot grow a caller-supplied buffer: without this headroom, a null function pointer and a crash at launch. |
 
-### Le patch RSP a été supprimé, et il était déjà cassé
+### The RSP patch was removed, and it was already broken
 
-`Source/Script/Patches/parallel-rsp-jit-emission-padding.patch` et le script
-`apply_parallel_rsp_patch.cmd` qui l'appliquait ont été retirés, ainsi que leur
-appel dans les deux scripts de build.
+`Source/Script/Patches/parallel-rsp-jit-emission-padding.patch` and the
+`apply_parallel_rsp_patch.cmd` script that applied it were removed, together
+with their call in the two build scripts.
 
-Ils étaient non seulement devenus inutiles — la source figée porte la
-modification — mais **déjà en panne avant le gel**. Le patch écrivait la marge
-sous la forme d'une constante `JitEmissionPadding` avec une variable
-`allocation_size` distincte, alors que la source de travail portait la forme
-`code_size += 4096;`. Le `findstr` du script cherchait la constante, ne la
-trouvait pas, puis tentait `git apply --check`, qui échouait à son tour parce
-que le contexte des hunks avait changé. Le script sortait donc en erreur et
-faisait échouer toute reconstruction des plugins Parallel, sur les deux
-architectures.
+They had not only become useless - the frozen source carries the change - but
+were **already broken before the freeze**. The patch wrote the headroom as a
+`JitEmissionPadding` constant with a separate `allocation_size` variable,
+while the working source carried the form `code_size += 4096;`. The script's
+`findstr` looked for the constant, did not find it, then tried
+`git apply --check`, which failed in turn because the hunk context had
+changed. The script therefore exited with an error and made every Parallel
+plugin rebuild fail, on both architectures.
 
-C'est exactement le premier pas de la procédure décrite dans
-`Docs/PARALLEL_X64_STATUS.md`, ce qui explique qu'elle n'ait jamais pu être
-menée à bien.
+That is exactly the first step of the procedure described in
+`Docs/PARALLEL_X64_STATUS.md`, which explains why it could never be completed.
 
-## Deux fausses pistes, réglées définitivement
+## Two false leads, settled for good
 
-Tant que ces arbres étaient des sous-modules, Git signalait en permanence des
-fichiers « modifiés » qui ne l'étaient pas. C'est ce bruit qui avait fait passer
-le correctif Granite ci-dessus pour un inconnu à inspecter.
+While these trees were submodules, Git constantly reported "modified" files
+that were not. That noise is what had made the Granite fix above look like
+an unknown to inspect.
 
-* `external/parallel-rsp/lightning/` (3 fichiers) : différence de contenu
-  **nulle**. `core.autocrlf` est actif sur ce dépôt et réécrivait leurs fins de
-  ligne. Réglé par `.gitattributes`, qui met ces arbres en `-text` : les octets
-  figés sont exactement ceux donnés au compilateur.
-* `.../third_party/spirv-cross/reference/opt/shaders-msl/comp/overlapping-bindings…comp` :
-  signalé comme supprimé. Son chemin fait **262 caractères** et Git ne pouvait
-  pas l'extraire sous Windows. `core.longpaths` est désormais activé sur le
-  dépôt. Ce fichier est une référence de test Metal, sans effet sur la build.
+* `external/parallel-rsp/lightning/` (3 files): content difference **nil**.
+  `core.autocrlf` is active on this repository and rewrote their line
+  endings. Settled by `.gitattributes`, which marks these trees `-text`: the
+  frozen bytes are exactly those given to the compiler.
+* `.../third_party/spirv-cross/reference/opt/shaders-msl/comp/overlapping-bindings...comp`:
+  reported as deleted. Its path is **262 characters** long and Git could not
+  check it out on Windows. `core.longpaths` is now enabled on the repository.
+  This file is a Metal test reference, with no effect on the build.
 
-## Exclusions volontaires
+## Deliberate exclusions
 
-* `external/parallel-rsp/win32/mman/sys/.vs/mman/v14/.suo` et
-  `mman.vcxproj.user` : état local Visual Studio, non figé.
-* `external/parallel-rsp/lightning/gnulib` était un gitlink sans entrée
-  `.gitmodules` — jamais extrait, absent du disque, non nécessaire à la build.
-  Il disparaît avec le passage en arbre figé.
-* `external/sdl` reste un sous-module : il vient de `libsdl-org`, pas de
-  l'amont Parallel, et n'entre pas dans ce gel.
+* `external/parallel-rsp/win32/mman/sys/.vs/mman/v14/.suo` and
+  `mman.vcxproj.user`: local Visual Studio state, not frozen.
+* `external/parallel-rsp/lightning/gnulib` was a gitlink without a
+  `.gitmodules` entry - never checked out, absent from disk, not needed by
+  the build. It disappears with the move to a frozen tree.
+* `external/sdl` remains a submodule: it comes from `libsdl-org`, not from
+  the Parallel upstream, and is not part of this freeze.
 
-## Bases amont figées
+## Frozen upstream bases
 
-État des 31 arbres au moment du gel. Les URL sont indiquées pour mémoire ; rien
-dans la build ne les consulte.
+State of the 31 trees at the time of the freeze. The URLs are given for the
+record; nothing in the build consults them.
 
-| Chemin | Commit | Version amont | Origine (pour mémoire) |
+| Path | Commit | Upstream version | Origin (for the record) |
 | --- | --- | --- | --- |
 | `external/parallel-rdp/Granite/third_party/astc-encoder/Source/GoogleTest` | `e2239ee6043f` | release-1.11.0 | https://github.com/google/googletest.git |
 | `external/parallel-rdp/Granite/third_party/astc-encoder` | `77e0ce653414` | 4.2.0-5-g77e0ce6 | https://github.com/ARM-software/astc-encoder |
@@ -104,14 +103,14 @@ dans la build ne les consulte.
 
 ## Licences
 
-Les notices d'origine sont conservées dans chaque arbre et doivent le rester.
+The original notices are kept in each tree and must stay there.
 
-* `external/parallel-rdp` et `Granite` : licence de type MIT.
-* `external/parallel-rsp` : mixte, avec `LICENSE.LESSER` (LGPLv3) et
-  `LICENSE.MIT`, parce qu'il embarque **GNU Lightning**
-  (`lightning/COPYING` GPLv3, `COPYING.LESSER` LGPLv3).
+* `external/parallel-rdp` and `Granite`: MIT-style licence.
+* `external/parallel-rsp`: mixed, with `LICENSE.LESSER` (LGPLv3) and
+  `LICENSE.MIT`, because it embeds **GNU Lightning** (`lightning/COPYING`
+  GPLv3, `COPYING.LESSER` LGPLv3).
 
-Toute distribution binaire incluant la RSP reste soumise aux obligations LGPL
-de mise à disposition de la source. Le gel ne change pas cette situation ; il
-rend simplement la source correspondante disponible au même endroit que le
-reste.
+Any binary distribution that includes the RSP remains subject to the LGPL
+obligations to make the source available. The freeze does not change that
+situation; it simply makes the corresponding source available in the same
+place as the rest.

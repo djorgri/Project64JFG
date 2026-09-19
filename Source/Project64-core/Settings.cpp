@@ -131,7 +131,6 @@ void CSettings::AddHowToHandleSetting(const char * BaseDirectory)
     AddHandler(Setting_UpdateControllerOnRefresh, new CSettingTypeTempBool(false));
     AddHandler(Setting_AllocatedRdramSize, new CSettingTypeTempNumber(0, "AllocatedRdramSize"));
     AddHandler(Setting_JfgKeyboardMouse, new CSettingTypeApplication("Game Specific Hacks", "JFG Keyboard Mouse", true));
-    AddHandler(Setting_JfgLateralMovementInFreeCamera, new CSettingTypeApplication("Game Specific Hacks", "JFG Lateral Movement In Free Camera", false));
     AddHandler(Setting_JfgPreserveCameraInGameLimits, new CSettingTypeApplication("Game Specific Hacks", "JFG Preserve Camera In Game Limits", true));
     AddHandler(Setting_JfgFreeCameraInJump, new CSettingTypeApplication("Game Specific Hacks", "JFG Free Camera In Jump", true));
     AddHandler(Setting_JfgUncapFramePacing, new CSettingTypeApplication("Game Specific Hacks", "JFG Uncap Frame Pacing", true));

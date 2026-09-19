@@ -101,19 +101,25 @@ The Jet Force Gemini settings list three input sources, **Keyboard/mouse**,
 | E / Enter | Skip certain cinematics, when Fast Cutscenes is on |
 | Numpad + / Numpad − | Switch to 60 / 30 FPS live |
 
-During crouch, Q/D are routed to N64 C-left/C-right. The equivalent prone
-behaviour is configurable in the **Controls** tab. Floyd lateral movement is
-experimental and enabled by default; Q/D move sideways during Floyd missions.
-Jump/Crouch (Space/Ctrl on keyboard, A/B on gamepad) accelerate upward/downward
-with the same inertia and gradual braking. Opposite inputs cancel the thrust.
-Its contextual flight controls use W/S (or E/F) for A/B throttle, while the
-mouse controls its reticle or camera according to the selected Floyd option.
+The keyboard accepts both layouts at once: W/Z move forward and A/Q strafe
+left, so the strafe keys are A/D on QWERTY and Q/D on AZERTY. The Numpad
+switch works only while the keyboard is routed to player 1.
+
+During crouch, the strafe keys are routed to N64 C-left/C-right. The
+equivalent prone behaviour is configurable in the **Controls** tab (*Prone A/D
+(Q/D) use C left/right*). Floyd lateral movement is experimental and enabled by
+default; the strafe keys move sideways during Floyd missions. Jump/Crouch
+(Space/Ctrl on keyboard, A/B on gamepad) accelerate upward/downward with the
+same inertia and gradual braking. Opposite inputs cancel the thrust. Its
+contextual flight controls use W/S (or E/F) for A/B throttle, while the mouse
+controls its reticle or camera according to the selected Floyd option.
 
 ### Gamepad
 
-**Gamepad 1** and **Gamepad 2** are the first and second gamepads connected,
-in the order Windows lists them. The following mappings apply to either when it
-is enabled. Xbox names are used; PlayStation and Switch pads are read through
+**Gamepad 1** and **Gamepad 2** are the first and second gamepads SDL
+recognises as game controllers, in its enumeration order (normally the order
+Windows lists them; plain joysticks without a controller mapping are skipped).
+The following mappings apply to either when it is enabled. Xbox names are used; PlayStation and Switch pads are read through
 the same layout (Cross/Circle/Square/Triangle for A/B/X/Y, L2/R2 for the
 triggers).
 
@@ -294,6 +300,13 @@ coordinates and validation limits.
 
 - Only the USA 1.0 and Kiosk demo builds listed above are supported by the
   game-specific patches. PAL and Japanese releases are not.
+- The experimental widescreen HUD correction and HUD alignment are limited to
+  the USA retail build; the Kiosk demo keeps its original HUD.
+- In 60 FPS mode the water wake can vanish after it first appears; see the
+  investigation notes in the hacking reference.
+- Floyd's lateral thrust takes its heading from a field of the player object
+  (`+0x1040`) that is not a stable reference to Floyd across object
+  allocations, so the strafe direction can occasionally be wrong.
 
 ## Planned improvements
 
@@ -301,7 +314,8 @@ These items are planned work, not promises for a particular release:
 
 - Support the PAL and Japanese releases of Jet Force Gemini.
 - Continue improving 60 FPS performance and timing accuracy.
-- Add Floyd lateral movement and direct aiming.
+- Add direct Floyd mouse aiming and consolidate the experimental lateral
+  movement.
 - Validate the experimental widescreen HUD correction across resolutions and
   gameplay situations.
 
@@ -310,10 +324,12 @@ These items are planned work, not promises for a particular release:
 For development, install Git and Visual Studio 2022 with the **Desktop
 development with C++** workload. The Parallel plugins additionally require
 Python 3.12 or newer and MSYS2 in `C:\msys64`. In the MSYS2 UCRT64 shell,
-install the tools used by the x64 Parallel plugins:
+install the tools used by the Parallel plugin scripts (the first line covers
+x64, the second Win32; install both to build both platforms):
 
 ```
 pacman -S --needed mingw-w64-ucrt-x86_64-toolchain mingw-w64-ucrt-x86_64-cmake mingw-w64-ucrt-x86_64-ninja
+pacman -S --needed mingw-w64-ucrt-x86_64-cmake mingw-w64-i686-gcc mingw-w64-i686-make
 ```
 
 The Parallel-RDP and Parallel-RSP trees are vendored in this repository, so a

@@ -1,241 +1,247 @@
-# Marges et centrage du HUD de Jet Force Gemini
+# Jet Force Gemini HUD margins and centring
 
-Analyse du 8 septembre 2026, ROM USA commerciale, HUD solo normal. Les captures
-fournies sont recadrées : les marges ci-dessous proviennent des coordonnées du
-jeu, et non des distances aux bords des captures. Aucun placement n'a été modifié
-pendant l'analyse initiale. L'option ajoutée ensuite est décrite en fin de document.
+Analysis of 8 September 2026, USA retail ROM, normal single-player HUD. The
+screenshots provided were cropped: the margins below come from the game's
+coordinates, not from distances to the edges of the captures. No placement
+was modified during the initial analysis. The option added afterwards is
+described at the end of the document.
 
-## Repère et résultat d'origine
+## Frame of reference and original result
 
-Les valeurs sont des **unités logiques sur une image de 320 × 240**, avant
-rastérisation, filtrage, éventuel rognage du plugin et agrandissement à l'écran.
-L'origine écran est en haut à gauche. Le repère orthographique du HUD est centré,
-avec Y vers le haut : `x écran = 160 + x HUD`, `y écran = 120 - y HUD`.
+The values are **logical units on a 320 x 240 image**, before rasterisation,
+filtering, any cropping by the plugin and the enlargement to the screen. The
+screen origin is top left. The HUD's orthographic frame is centred, with Y
+upwards: `screen x = 160 + HUD x`, `screen y = 120 - HUD y`.
 
-| Mesure | Valeur d'origine |
+| Measurement | Original value |
 | --- | ---: |
-| Marge gauche du cadre principal d'arme | 19 |
-| Marge haute du cadre principal d'arme | 13 |
-| Marge gauche de l'enveloppe des sommets de l'arc de vie | 24 |
-| Marge basse de cette enveloppe | 13 |
-| Point de placement de l'icône de vie | (60, 188) |
-| Centre mathématique de l'arc de vie | (61, 190) |
-| Icône moins centre de l'arc | (-1, -2) |
+| Left margin of the main weapon frame | 19 |
+| Top margin of the main weapon frame | 13 |
+| Left margin of the health arc's vertex envelope | 24 |
+| Bottom margin of that envelope | 13 |
+| Placement point of the health icon | (60, 188) |
+| Mathematical centre of the health arc | (61, 190) |
+| Icon minus arc centre | (-1, -2) |
 
-Les marges haute et basse sont donc identiques dans cette géométrie. Les deux
-éléments ne partagent pas le même bord gauche : l'arc commence **5 unités plus
-à droite**. La marge gauche du cadre dépasse sa marge haute de **6 unités**.
+The top and bottom margins are therefore identical in this geometry. The two
+elements do not share the same left edge: the arc starts **5 units further
+right**. The frame's left margin exceeds its top margin by **6 units**.
 
-Le point de placement de l'icône est **1 unité à gauche et 2 au-dessus** du
-centre de l'arc. Ce décalage est inscrit dans le code original. Il ne faut pas
-confondre ce point de placement avec le centre apparent de l'orbe verte ou le
-centre de tous les pixels opaques du sprite, dont le dessin est asymétrique.
+The icon's placement point is **1 unit left of and 2 above** the arc's centre.
+This offset is written into the original code. It must not be confused with
+the apparent centre of the green orb or the centre of all the sprite's opaque
+pixels, whose drawing is asymmetric.
 
-Ces écarts entiers comparent les **coordonnées de placement avant projection**.
-Le rendu des sprites ajoute le W de leur matrice locale au W de leur ancre ;
-l'écart final à l'écran n'est donc pas exactement `(-1,-2)`. La correction
-décrite ci-dessous tient aussi compte de cette division homogène.
+These integer differences compare the **placement coordinates before
+projection**. Sprite rendering adds the W of their local matrix to the W of
+their anchor; the final on-screen difference is therefore not exactly
+`(-1,-2)`. The correction described below also accounts for that homogeneous
+division.
 
-## Preuves dans le jeu
+## Evidence in the game
 
-### Point de placement de l'icône
+### Icon placement point
 
-`setupFrontEndObject`, à `0x8005A048`, copie des enregistrements de 32 octets de
-la table `0x800A51DC` vers les objets temporaires à `0x800FF780`. L'objet 2,
-dessiné par `frontDrawObj(2)`, a sa définition d'origine à `0x800A521C`
-(offset `0xA5E1C` dans la ROM normalisée en ordre big-endian).
+`setupFrontEndObject`, at `0x8005A048`, copies 32-byte records from the table
+at `0x800A51DC` to the temporary objects at `0x800FF780`. Object 2, drawn by
+`frontDrawObj(2)`, has its original definition at `0x800A521C` (offset
+`0xA5E1C` in the ROM normalised to big-endian order).
 
-Les flottants à `+0x08`, `+0x0C`, `+0x10` et `+0x14` valent respectivement
-`1`, `-100`, `-68`, `0` : échelle, X, Y et Z. Le point écran vaut donc
+The floats at `+0x08`, `+0x0C`, `+0x10` and `+0x14` are `1`, `-100`, `-68`,
+`0` respectively: scale, X, Y and Z. The screen point is therefore
 `(160 - 100, 120 + 68) = (60, 188)`.
 
-### Centre et sommets de l'arc
+### Arc centre and vertices
 
-Dans `instDrawHealth`, overlay 6, les instructions `+0x3C8` à `+0x3F4` lisent
-les coordonnées de cet objet et appellent `matrixTranslate` avec
-`X + 1` et `Y - 2`. Le centre de l'arc est donc `(-99, -70)` dans le repère
-HUD, soit `(61, 190)` dans le repère écran.
+In `instDrawHealth`, overlay 6, the instructions at `+0x3C8` to `+0x3F4` read
+this object's coordinates and call `matrixTranslate` with `X + 1` and `Y - 2`.
+The arc's centre is therefore `(-99, -70)` in the HUD frame, i.e. `(61, 190)`
+in the screen frame.
 
-La construction des sommets, à partir de l'overlay 6 `+0xC74`, utilise les
-rayons théoriques **38 extérieur** et **20 intérieur** en solo. Elle avance par
-pas angulaires `0x1555` (environ 30 degrés) et tronque les coordonnées vers zéro.
-Les sommets extérieurs générés, contrôlés dans la mémoire d'une sauvegarde,
-ont pour extrema locaux `X = -37..37`, `Y = -37..38`.
+The vertex construction, from overlay 6 `+0xC74`, uses the theoretical radii
+**38 outer** and **20 inner** in single player. It steps by angular increments
+of `0x1555` (about 30 degrees) and truncates the coordinates towards zero. The
+generated outer vertices, checked in a state's memory, have local extrema
+`X = -37..37`, `Y = -37..38`.
 
-L'enveloppe de ces sommets est donc `x = 24..98`, `y = 152..227` à l'écran.
-Les secteurs effectivement visibles dépendent de l'état de la jauge ; les
-captures contiennent les secteurs qui atteignent les extrema gauche et bas.
-La marge basse géométrique vaut `240 - 227 = 13`.
+The envelope of these vertices is therefore `x = 24..98`, `y = 152..227` on
+screen. The sectors actually visible depend on the gauge's state; the
+captures contain the sectors that reach the left and bottom extrema. The
+geometric bottom margin is `240 - 227 = 13`.
 
-Un cercle idéal de rayon 38 donnerait des marges de 23 à gauche et 12 en bas.
-Ce sont les **sommets tronqués du jeu**, et non cette approximation circulaire,
-qui donnent les marges 24 et 13 ci-dessus. Le centre mathématique reste (61,190),
-même si le centre d'une boîte englobante diffère légèrement, ou si l'arc est
-incomplet.
+An ideal circle of radius 38 would give margins of 23 on the left and 12 at
+the bottom. It is the **game's truncated vertices**, not this circular
+approximation, that give the margins of 24 and 13 above. The mathematical
+centre stays (61,190), even if the centre of a bounding box differs slightly
+or the arc is incomplete.
 
-### Cadre principal d'arme
+### Main weapon frame
 
-L'overlay 14 charge la translation `(-141, +107)` aux offsets `+0x264C` à
-`+0x2664`. Son tableau de 20 sommets à `+0x3E80` possède les extrema locaux
-`X = 0..59`, `Y = -59..0`. La translation écran du coin supérieur gauche est
-donc `(160 - 141, 120 - 107) = (19, 13)` ; l'enveloppe est
-`x = 19..78`, `y = 13..72`.
+Overlay 14 loads the translation `(-141, +107)` at offsets `+0x264C` to
+`+0x2664`. Its 20-vertex array at `+0x3E80` has local extrema `X = 0..59`,
+`Y = -59..0`. The screen translation of the top-left corner is therefore
+`(160 - 141, 120 - 107) = (19, 13)`; the envelope is `x = 19..78`,
+`y = 13..72`.
 
-Cette mesure porte sur le cadre principal, pas sur chaque excroissance, sprite
-animé, lueur filtrée ou élément du sélecteur d'armes.
+This measurement covers the main frame, not every protrusion, animated
+sprite, filtered glow or weapon selector element.
 
-## Comparaison des formats d'affichage
+## Comparison of display formats
 
-En basse résolution, les modes 4/3 et widescreen utilisent tous deux un tampon
-de 320 × 240 pour ces coordonnées HUD. La table vidéo du jeu distingue le
-traitement widescreen de la scène. Présenter le HUD d'origine sur une surface
-16/9 étire ses distances horizontales par rapport aux verticales.
+In low resolution, the 4:3 and widescreen modes both use a 320 x 240 buffer
+for these HUD coordinates. The game's video table distinguishes the
+widescreen treatment of the scene. Presenting the original HUD on a 16:9
+surface stretches its horizontal distances relative to the vertical ones.
 
-Pour ces éléments ancrés à gauche, le patch actuel applique
-`x corrigé = 0,75 × x original + 4`, en coordonnées du tampon ; Y est conservé.
-Il donne ainsi une marge gauche de **18,25** pour le cadre et **22** pour l'arc.
-Ces nombres ne doivent pas être comparés directement aux marges verticales :
-les pixels du tampon sont ensuite présentés sur une image 16/9.
+For these left-anchored elements, the current patch applies
+`corrected x = 0.75 x original x + 4`, in buffer coordinates; Y is preserved.
+It thus gives a left margin of **18.25** for the frame and **22** for the arc.
+These numbers must not be compared directly with the vertical margins: the
+buffer's pixels are then presented on a 16:9 image.
 
-À **hauteur d'image égale de 1080 pixels**, sans rognage, on obtient :
+At an **equal image height of 1080 pixels**, without cropping, this gives:
 
-| Mesure en pixels d'affichage, avant filtrage | 4/3 d'origine, 1440 × 1080 | 16/9 d'origine, 1920 × 1080 | 16/9 avec correction, 1920 × 1080 |
+| Measurement in display pixels, before filtering | Original 4:3, 1440 x 1080 | Original 16:9, 1920 x 1080 | 16:9 with correction, 1920 x 1080 |
 | --- | ---: | ---: | ---: |
-| Marge haute du cadre | 58,5 | 58,5 | 58,5 |
-| Marge gauche du cadre | 85,5 | 114 | 109,5 |
-| Marge gauche de l'arc | 108 | 144 | 132 |
-| Marge basse de l'arc | 58,5 | 58,5 | 58,5 |
-| Décalage horizontal icône / centre de l'arc | -4,5 | -6 | -4,5 |
-| Décalage vertical icône / centre de l'arc | -9 | -9 | -9 |
+| Frame top margin | 58.5 | 58.5 | 58.5 |
+| Frame left margin | 85.5 | 114 | 109.5 |
+| Arc left margin | 108 | 144 | 132 |
+| Arc bottom margin | 58.5 | 58.5 | 58.5 |
+| Horizontal offset icon / arc centre | -4.5 | -6 | -4.5 |
+| Vertical offset icon / arc centre | -9 | -9 | -9 |
 
-Le décalage relatif de l'icône existe donc déjà à l'origine. La correction
-actuelle en conserve les proportions après présentation en 16/9. Son choix
-d'ancrage ajoute toutefois **24 pixels de marge gauche à hauteur 1080**, par
-rapport au 4/3 à la même hauteur, pour ces deux éléments. Ce déplacement global
-est distinct des différences de placement internes du HUD d'origine.
+The icon's relative offset therefore already exists in the original. The
+current correction keeps its proportions after the 16:9 presentation. Its
+anchoring choice does however add **24 pixels of left margin at 1080 height**,
+compared with 4:3 at the same height, for these two elements. That global
+shift is distinct from the internal placement differences of the original
+HUD.
 
-## Limites
+## Limits
 
-Ces valeurs décrivent le HUD solo et sa géométrie de base, pas les marges d'une
-fenêtre recadrée ni le multijoueur. Une mesure des pixels visibles peut varier
-avec le filtrage, la transparence, l'animation et les arrondis de rendu. La
-haute résolution n'a pas fait l'objet d'une comparaison complète ici.
+These values describe the single-player HUD and its base geometry, not the
+margins of a cropped window or multiplayer. A measurement of visible pixels
+can vary with filtering, transparency, animation and rendering rounding. The
+high resolution was not compared completely here.
 
-La vérification visuelle du centre des segments des captures concorde avec un
-léger placement de l'ensemble de l'icône au-dessus de l'arc. Elle ne remplace
-pas les coordonnées ROM : en particulier, l'orbe verte seule est plus haute
-que le centre de l'ensemble du dessin.
+The visual check of the segment centres in the captures agrees with a slight
+placement of the whole icon above the arc. It does not replace the ROM
+coordinates: in particular, the green orb alone is higher than the centre of
+the whole drawing.
 
-## Option « Align HUD elements »
+## The "Align HUD elements" option
 
-L'option indépendante du dialogue *Game-specific hacks* cible le HUD solo de
-la ROM USA commerciale, en modes 0/1/2/3. Elle fonctionne avec ou sans
-*Correct widescreen HUD* ; seule cette seconde option corrige les proportions.
-Le choix retenu est **la même marge gauche de 13** pour le cadre et l'arc,
-plutôt qu'un alignement de leurs centres horizontaux. Leurs dimensions restent
-différentes. La marge est exprimée dans le repère logique 320×240, à hauteur
-d'affichage égale et avec la présentation 4/3 ou 16/9 correspondant au jeu.
+The independent option of the *Game-specific hacks* dialog targets the
+single-player HUD of the USA retail ROM, in modes 0/1/2/3. It works with or
+without *Correct widescreen HUD*; only that second option corrects the
+proportions. The choice made is **the same left margin of 13** for the frame
+and the arc, rather than an alignment of their horizontal centres. Their
+dimensions stay different. The margin is expressed in the 320 x 240 logical
+frame, at equal display height and with the 4:3 or 16:9 presentation matching
+the game.
 
-| Cible dans le framebuffer | Mode 0 (320×240, 4/3) | Mode 1 (320×240, WS) | Mode 2 (448×336, 4/3) | Mode 3 (448×336, WS) |
+| Target in the framebuffer | Mode 0 (320 x 240, 4:3) | Mode 1 (320 x 240, WS) | Mode 2 (448 x 336, 4:3) | Mode 3 (448 x 336, WS) |
 | --- | ---: | ---: | ---: | ---: |
-| Gauche du cadre, bordure VI compensée en widescreen | 13 | 13,75 | 18,25 | 19,25 |
-| Gauche géométrique de l'arc, compensations incluses | 13 | 12,25 | 18,25 | 17,25 |
-| Haut du cadre / bas de l'arc | 13 | 13 | 18,25 | 18,25 |
+| Frame left, VI border compensated in widescreen | 13 | 13.75 | 18.25 | 19.25 |
+| Geometric left of the arc, compensations included | 13 | 12.25 | 18.25 | 17.25 |
+| Frame top / arc bottom | 13 | 13 | 18.25 | 18.25 |
 
-Les cibles haute résolution sont arrondies au quart de pixel du framebuffer,
-pour utiliser la grille 10.2 des rectangles RDP. Pour la cible de base de 13,
-l'erreur est inférieure à 0,1 unité logique. Le VI comprime le tampon entier
-en widescreen : il ne faut
-pas soustraire arbitrairement 30 ou 42 lignes aux coordonnées du HUD.
+The high-resolution targets are rounded to the framebuffer's quarter pixel,
+to use the 10.2 grid of the RDP rectangles. For the base target of 13 the
+error is below 0.1 logical unit. The VI compresses the whole buffer in
+widescreen: 30 or 42 lines must not be subtracted arbitrarily from the HUD
+coordinates.
 
-En mode 0, le cadre et ses éléments reçoivent une translation écran de **−6**
-en X, l'arc de **−11**, sans déplacement vertical de ces deux éléments. En
-mode 1 avec correction de proportions, les déplacements valent **−4,5** et
-**−9,75** pixels du framebuffer, compensations visuelle et VI incluses.
-Les autres modes sont calculés depuis les
-mêmes coordonnées ROM, le tampon et les biais widescreen 48/68.
+In mode 0, the frame and its elements receive a screen translation of **-6**
+in X, the arc **-11**, with no vertical movement of these two elements. In
+mode 1 with the proportion correction, the moves are **-4.5** and **-9.75**
+framebuffer pixels, visual and VI compensations included. The other modes are
+computed from the same ROM coordinates, the buffer and the 48/68 widescreen
+biases.
 
-Les captures de validation montrent que le bord visible de l'arc reste un peu
-en retrait malgré l'égalité des marges géométriques. À la demande de l'utilisateur,
-une compensation visuelle de **−2 unités logiques** est ajoutée à l'ensemble
-arc + icône, uniquement dans les modes widescreen 1/3. Convertie dans le tampon
-et arrondie au quart de pixel, elle vaut **−1,5** en basse résolution et **−2**
-en haute résolution. La marge géométrique de l'arc, mesurée après la bordure
-masquée du VI, est donc d'environ 11 unités, pour rapprocher son bord apparent
-de celui du cadre. Ce réglage empirique
-conserve le centrage, la hauteur et le placement en 4/3 ; il appartient à
-*Align HUD elements* et ne dépend pas de la case de correction des proportions.
+The validation captures show that the arc's visible edge still sits slightly
+back despite the equal geometric margins. At the user's request, a visual
+compensation of **-2 logical units** is added to the arc + icon group, only in
+the widescreen modes 1/3. Converted to the buffer and rounded to the quarter
+pixel, it is **-1.5** in low resolution and **-2** in high resolution. The
+arc's geometric margin, measured after the VI's masked border, is therefore
+about 11 units, bringing its apparent edge closer to the frame's. This
+empirical adjustment keeps the centring, the height and the 4:3 placement; it
+belongs to *Align HUD elements* and does not depend on the proportion
+correction checkbox.
 
-### Bordure VI et marges visibles — 9 septembre 2026
+### VI border and visible margins - 9 September 2026
 
-La capture après la compensation de l'arc montre des bords gauches désormais
-alignés, mais une marge gauche d'environ **23 pixels visibles**, contre
-**38 pixels en haut et en bas**. Le calcul précédent partait du bord du tampon,
-sans tenir compte de la bordure noire produite par le circuit vidéo.
+The capture after the arc compensation shows left edges that are now aligned,
+but a left margin of about **23 visible pixels**, against **38 pixels at the
+top and bottom**. The previous computation started from the buffer's edge,
+without accounting for the black border produced by the video circuit.
 
-Dans `external/parallel-rdp/parallel-rdp/video_interface.cpp`, `analyze_line`
-fixe `h_start_clamp = h_start + 8` et `h_end_clamp = h_end - 7` pour le mode
-normal ; `vi_scale.frag` masque les pixels hors de cette plage. Cette bordure
-existe même lorsque `OverscanCrop=0`. Le viewport du HUD, vérifié dans la ROM
-et une sauvegarde, reste exactement centré : aucun décalage de −4 n'y est ajouté.
+In `external/parallel-rdp/parallel-rdp/video_interface.cpp`, `analyze_line`
+sets `h_start_clamp = h_start + 8` and `h_end_clamp = h_end - 7` for the
+normal mode; `vi_scale.frag` masks the pixels outside that range. This border
+exists even when `OverscanCrop=0`. The HUD viewport, checked in the ROM and in
+a state, stays exactly centred: no -4 offset is added there.
 
-En basse résolution, les huit échantillons VI masqués correspondent à **4 pixels
-du tampon**. Sur cette capture à un facteur horizontal de 4, la marge prévue
-de `9,75` devient donc `(9,75 − 4) × 4 = 23` pixels visibles. La correction
-ajoute **+4 pixels framebuffer** à tout le groupe d'armes et à toute la vie,
-uniquement en widescreen : la marge visible attendue devient **39 pixels**.
-Le bandeau, ses textes, les compteurs et la sélection suivent le cadre ;
-le centrage de la vie et la compensation relative de son arc sont conservés.
+In low resolution, the eight masked VI samples correspond to **4 buffer
+pixels**. On this capture at a horizontal factor of 4, the planned margin of
+`9.75` therefore becomes `(9.75 - 4) x 4 = 23` visible pixels. The correction
+adds **+4 framebuffer pixels** to the whole weapon group and the whole health
+display, only in widescreen: the expected visible margin becomes **39
+pixels**. The banner, its texts, the counters and the selection follow the
+frame; the health centring and the relative compensation of its arc are
+preserved.
 
-En haute résolution, le registre XScale du jeu vaut `(448 << 9) / 320 = 716`.
-La bordure équivaut donc à `8 × 716 / 1024 = 5,59375` pixels framebuffer,
-arrondis à **5,5** pour rester sur la grille commune. Cette correction ne
-modifie ni le plugin vidéo ni le placement 4/3 déjà approuvé. Elle vise le
-mode VI standard de JFG avec ParaLLEl-RDP ; un recadrage supplémentaire choisi
-dans le plugin peut encore modifier les marges visibles.
+In high resolution, the game's XScale register is `(448 << 9) / 320 = 716`.
+The border is therefore `8 x 716 / 1024 = 5.59375` framebuffer pixels,
+rounded to **5.5** to stay on the common grid. This correction modifies
+neither the video plugin nor the already approved 4:3 placement. It targets
+JFG's standard VI mode with ParaLLEl-RDP; an additional crop chosen in the
+plugin can still change the visible margins.
 
-Le pivot de l'icône est placé au centre mathématique de l'arc **après projection**.
-Si `C = largeur/2`, `S = 0,75` avec correction widescreen (sinon 1), et `B` vaut
-48/68 avec correction (sinon 0), le décalage complémentaire par rapport à la
-translation de l'arc est :
+The icon's pivot is placed at the arc's mathematical centre **after
+projection**. With `C = width/2`, `S = 0.75` with the widescreen correction
+(otherwise 1), and `B` = 48/68 with the correction (otherwise 0), the
+complementary offset relative to the arc's translation is:
 
-- `dx = S × (C − 99 − B) / (C + 1)` ;
-- `dy = 70 − 68 × C / (C + 1)` dans le repère écran Y vers le bas.
+- `dx = S x (C - 99 - B) / (C + 1)`;
+- `dy = 70 - 68 x C / (C + 1)` in the screen frame with Y downwards.
 
-Cela compense le W du billboard : `C+1` pour l'icône, `C` pour l'arc. Le
-centrage concerne le **pivot du sprite**, pas le barycentre des pixels opaques
-ou de l'orbe verte. La texture garde son dessin, sa rotation et ses animations.
+This compensates the billboard's W: `C+1` for the icon, `C` for the arc. The
+centring concerns the **sprite's pivot**, not the barycentre of the opaque
+pixels or of the green orb. The texture keeps its drawing, rotation and
+animations.
 
-### Mise en œuvre et restauration
+### Implementation and restoration
 
-Les appels locaux de dessin choisissent la translation du groupe d'armes ou
-de la vie. Au dernier `mathMtxF2L`, les positions des matrices sont translatées
-temporairement, puis leurs sources sont restaurées à l'identique. Le W ajouté
-par le billboard est pris en compte pour les sprites. Les coordonnées des
-objets, sommets et animations ne sont jamais réécrites.
+The local drawing calls choose the translation of the weapon group or of the
+health display. At the last `mathMtxF2L`, the matrix positions are translated
+temporarily, then their sources are restored identically. The W added by the
+billboard is taken into account for the sprites. The coordinates of objects,
+vertices and animations are never rewritten.
 
-Le wrapper autour de l'appel `overlay14+0xC9C → +0x292C` translate les
-rectangles de texte, les deux compteurs de munitions, les jauges et les zones
-de découpage émis par le groupe d'armes. Le bandeau de ramassage, sa fermeture
-et le sélecteur suivent le même déplacement que le cadre. Les rétablissements
-du découpage plein écran sont conservés. Les statistiques de région et les
-formes 3D sont hors de ce périmètre.
+The wrapper around the `overlay14+0xC9C -> +0x292C` call translates the text
+rectangles, the two ammunition counters, the gauges and the clipping areas
+emitted by the weapon group. The pickup banner, its closing and the selector
+follow the same move as the frame. The full-screen clipping restores are
+preserved. The region statistics and the 3D shapes are outside this
+perimeter.
 
-Les stubs occupent `[0x800679A0,0x800680A0)`, séparés des caves widescreen,
-avec un octet de portée distinct à `0x80102552`. Cette plage appartient au
-dessin des registres de l'écran de panne du jeu : son entrée `0x80067994`
-retourne immédiatement pendant l'activation. **L'affichage de ces registres
-sur l'écran de panne est donc indisponible lorsque l'option est active** ;
-le journal d'exception et l'initialisation du jeu sont conservés. Les 448 mots
-originaux et l'entrée sont intégralement restaurés après retrait de tous les
-appels, y compris lors de l'adoption d'une sauvegarde déjà patchée.
+The stubs occupy `[0x800679A0,0x800680A0)`, separate from the widescreen
+caves, with a distinct scope byte at `0x80102552`. This range belongs to the
+register drawing of the game's crash screen: its entry `0x80067994` returns
+immediately while the option is active. **The display of those registers on
+the crash screen is therefore unavailable while the option is active**; the
+exception log and the game's initialisation are preserved. The 448 original
+words and the entry are fully restored after every call has been removed,
+including when adopting an already patched state.
 
-Les tests exécutent les stubs MIPS et le véritable installateur C++ : géométrie,
-transfert des arguments, portée imbriquée, restauration des matrices,
-rectangles/découpage, cases indépendantes, résolutions, sauvegardes, overlays
-relocalisés et refus des signatures étrangères. L'utilisateur a validé le
-rendu de base en 4/3 et 16/9, puis un bandeau de ramassage en 16/9 (texte et
-fermeture raccordés au cadre). La compensation relative de l'arc a ensuite
-rapproché les bords gauches ; la nouvelle compensation commune de la bordure VI,
-le sélecteur en mouvement et la haute résolution restent à comparer dans le
-jeu ; ces tests ne prouvent pas la lisibilité de chaque pixel filtré.
+The tests run the MIPS stubs and the real C++ installer: geometry, argument
+forwarding, nested scope, matrix restoration, rectangles/clipping,
+independent checkboxes, resolutions, states, relocated overlays and refusal
+of foreign signatures. The user validated the base rendering in 4:3 and 16:9,
+then a pickup banner in 16:9 (text and closing joined to the frame). The
+relative compensation of the arc then brought the left edges closer; the new
+common compensation of the VI border, the selector in motion and the high
+resolution are still to be compared in game; these tests do not prove the
+legibility of every filtered pixel.

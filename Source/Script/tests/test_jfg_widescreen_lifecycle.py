@@ -21,6 +21,11 @@ WORKSPACE = ROOT.parent
 def function(source, signature):
     start = source.index(signature)
     opening = source.index("{", start)
+    # A forward declaration ends in a semicolon before any brace: skip it and
+    # keep looking for the definition.
+    while ";" in source[start:opening]:
+        start = source.index(signature, start + len(signature))
+        opening = source.index("{", start)
     depth = 1
     end = opening + 1
     while depth:

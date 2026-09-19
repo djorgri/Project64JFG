@@ -54,13 +54,13 @@ void initialize_tooltips(HWND dialog)
     add_tooltip(tooltip, dialog, IDC_GSH_STICK_CAMERA_SPEED,
         L"How fast the right stick turns the camera and the aim, from 1 (slowest) to 10 (fastest).");
     add_tooltip(tooltip, dialog, IDC_GSH_LATERAL_MOVEMENT,
-        L"During Floyd missions, Q/D move sideways and Jump/Crouch move up/down, with gradual acceleration and braking. Keyboard: Space to rise, Ctrl to descend. Gamepad: A to rise, B to descend.");
+        L"During Floyd missions, the strafe keys A/D (Q/D on AZERTY) move sideways and Jump/Crouch move up/down, with gradual acceleration and braking. Keyboard: Space to rise, Ctrl to descend. Gamepad: A to rise, B to descend.");
     add_tooltip(tooltip, dialog, IDC_GSH_PRESERVE_CAMERA,
         L"Keeps the game's normal camera pitch and yaw limits while using mouse look.");
     add_tooltip(tooltip, dialog, IDC_GSH_FREE_CAMERA_JUMP,
         L"Allows mouse camera control while jumping. This is experimental.");
     add_tooltip(tooltip, dialog, IDC_GSH_PRONE_CBUTTONS,
-        L"While prone, maps Q/D to N64 C-Left/C-Right instead of the joystick.");
+        L"While prone, maps the strafe keys A/D (Q/D on AZERTY) to N64 C-Left/C-Right instead of the joystick, as crouching always does.");
     add_tooltip(tooltip, dialog, IDC_GSH_DRONE_INVERT_Y,
         L"Reverses vertical mouse input while controlling Floyd.");
     add_tooltip(tooltip, dialog, IDC_GSH_DRONE_DIRECT,
@@ -72,10 +72,10 @@ void initialize_tooltips(HWND dialog)
         L"Keeps original 30 fps pacing during demanding scenes. Available only in 30 fps mode.");
     add_tooltip(tooltip, dialog, IDC_GSH_SCHEDULER_RELEASE,
         L"Releases each graphics task at the next retrace in 60 fps mode to improve task pacing.");
-	add_tooltip(tooltip, dialog, IDC_GSH_CPU_BUDGET,
-		L"Doubles the CPU time available for each frame. Helps prevent slowdowns in busy scenes; in 30 fps mode, enable audio synchronization if sound stutters.");
-	add_tooltip(tooltip, dialog, IDC_GSH_SYNC_AUDIO,
-		L"Paces 30 fps emulation from the audio buffer to prevent sound stutter caused by the CPU-budget overclock. Restart the ROM after changing it.");
+    add_tooltip(tooltip, dialog, IDC_GSH_CPU_BUDGET,
+        L"Doubles the CPU time available for each frame. Helps prevent slowdowns in busy scenes; in 30 fps mode, enable audio synchronization if sound stutters.");
+    add_tooltip(tooltip, dialog, IDC_GSH_SYNC_AUDIO,
+        L"Paces 30 fps emulation from the audio buffer to prevent sound stutter caused by the CPU-budget overclock. Applied immediately; 60 fps mode always runs without it.");
     add_tooltip(tooltip, dialog, IDC_GSH_HALVE_ENEMY_SPEED,
         L"Halves patched enemy movement updates in 60 fps mode to compensate for doubled game speed.");
 

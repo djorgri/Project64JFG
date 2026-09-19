@@ -83,26 +83,26 @@ def export(state, output):
                 mask.putpixel((px, py), 255)
 
     output.mkdir(parents=True, exist_ok=True)
-    mask.save(output / "viseur-lance-roquettes.bmp")
-    mask.save(output / "viseur-lance-roquettes.png")
-    mask.resize((520, 520), Image.Resampling.NEAREST).save(output / "apercu-x8.png")
+    mask.save(output / "rocket-reticle.bmp")
+    mask.save(output / "rocket-reticle.png")
+    mask.resize((520, 520), Image.Resampling.NEAREST).save(output / "preview-x8.png")
     metadata = {"weapon_index": 5, "name": "Tri-Rocket Launcher", "state": "no target lock",
                 "source_state": state.name, "size": [65, 65], "aim_center": [32, 32],
                 "foreground": "white", "background": "black", "scale": "1:1 original framebuffer pixels",
                 "dynamic_text_included": False, "source_records": records, "expanded_segments": segments}
-    (output / "coordonnees.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
-    (output / "LIRE-MOI.txt").write_text(
-        "Viseur du lance-roquettes (Tri-Rocket Launcher), rendu d'origine sans correction 16/9.\n"
-        "\nFichier a modifier : viseur-lance-roquettes.bmp (65 x 65 pixels, monochrome).\n"
-        "Blanc = trait ; noir = fond vide. Centre de visee : x=32, y=32 (origine en haut a gauche).\n"
-        "Un pixel du fichier correspond a un pixel du framebuffer d'origine.\n"
-        "Conserver les dimensions et le centre ; dessiner au crayon sans lissage.\n"
-        "Le PNG contient le meme masque. apercu-x8.png est uniquement un agrandissement de lecture.\n"
-        "Les chiffres de distance/angle et les changements de couleur ne sont pas inclus.\n"
-        "Les intensites vertes du jeu sont volontairement reunies en blanc pour obtenir un masque editable.\n"
-        "Cet export n'est pas encore charge par l'emulateur : modifier le BMP ne change pas le jeu.\n",
+    (output / "coordinates.json").write_text(json.dumps(metadata, indent=2) + "\n", encoding="utf-8")
+    (output / "README.txt").write_text(
+        "Tri-Rocket Launcher reticle, original rendering without the 16:9 correction.\n"
+        "\nFile to edit: rocket-reticle.bmp (65 x 65 pixels, monochrome).\n"
+        "White = stroke; black = empty background. Aim centre: x=32, y=32 (origin top left).\n"
+        "One pixel of the file is one pixel of the original framebuffer.\n"
+        "Keep the dimensions and the centre; draw with a pencil tool, no anti-aliasing.\n"
+        "The PNG holds the same mask. preview-x8.png is only an enlargement for reading.\n"
+        "The distance/angle digits and the colour changes are not included.\n"
+        "The game's green intensities are deliberately merged into white to get an editable mask.\n"
+        "This export is not loaded by the emulator yet: editing the BMP does not change the game.\n",
         encoding="utf-8")
-    print(output / "viseur-lance-roquettes.bmp")
+    print(output / "rocket-reticle.bmp")
 
 
 if __name__ == "__main__":

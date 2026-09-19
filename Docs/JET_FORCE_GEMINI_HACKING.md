@@ -4,33 +4,47 @@ Developer notes for the game-specific runtime in Project64JFG. This is a
 reference for extending or reviewing the emulator-side hacks; it is not a ROM
 patch set and contains no game data.
 
-## Scope and target ROM
+## Scope and target ROMs
 
-The runtime is deliberately restricted to the **USA 1.0** release:
+The runtime accepts two builds, each with its own address table:
 
-| Field | Value |
-| --- | --- |
-| Internal identifier used by the runtime | `8A6009B6-94ACE150-C:45` |
-| Internal name | `JET FORCE GEMINI` |
-| Cartridge ID | `NJFE` |
-| Version byte | `0x00` |
-| CRC1 / CRC2 | `8A6009B6` / `94ACE150` |
-| ROM size | 32 MiB |
+| Field | USA retail 1.0 | Kiosk demo |
+| --- | --- | --- |
+| Internal identifier used by the runtime | `8A6009B6-94ACE150-C:45` | `DFD8AB47-3CDBEB89-C:45` |
+| Internal name | `JET FORCE GEMINI` | `J F G DISPLAY` |
+| Cartridge ID | `NJFE` | - |
+| Version byte | `0x00` | demo |
+| CRC1 / CRC2 | `8A6009B6` / `94ACE150` | `DFD8AB47` / `3CDBEB89` |
+| ROM size | 32 MiB | 32 MiB |
 
-The target check is implemented by `CJetForceGeminiRuntime::IsSupportedRom()`.
-Do not reuse any address in this document for a different revision without
-reversing and validating that revision independently. PAL, Japanese, Kiosk and
-later revisions are not supported yet.
+The target check is `CJetForceGeminiRuntime::IsSupportedRom()`, which selects
+the table (`JfgAddresses()` in `JetForceGeminiAddresses.cpp`) and applies it
+to the runtime's address globals. **Every address quoted in this document is
+the USA value**; the Kiosk counterpart is the same field of `JfgKioskAddresses`,
+and [JFG_KIOSK_PORT.md](JFG_KIOSK_PORT.md) records how each one was established.
+The widescreen HUD correction and the HUD alignment are the exception: they
+are gated on the USA table alone until their overlay signatures have been
+confirmed on the Kiosk.
+
+Do not reuse any address here for another revision without reversing and
+validating that revision independently. PAL and Japanese releases are not
+supported.
 
 ## Where the implementation lives
 
 | Purpose | Source |
 | --- | --- |
-| Runtime, patches, address map and MIPS stubs | [`Source/Project64-core/N64System/GameHacks/JetForceGemini.cpp`](../Source/Project64-core/N64System/GameHacks/JetForceGemini.cpp) |
+| Runtime, patches, MIPS stubs and patch tables | [`Source/Project64-core/N64System/GameHacks/JetForceGemini.cpp`](../Source/Project64-core/N64System/GameHacks/JetForceGemini.cpp) |
 | Runtime interface and lifecycle | [`Source/Project64-core/N64System/GameHacks/JetForceGemini.h`](../Source/Project64-core/N64System/GameHacks/JetForceGemini.h) |
+| Per-build address tables (USA, Kiosk) and their selection | [`JetForceGeminiAddresses.h`](../Source/Project64-core/N64System/GameHacks/JetForceGeminiAddresses.h) / [`.cpp`](../Source/Project64-core/N64System/GameHacks/JetForceGeminiAddresses.cpp) |
+| Widescreen HUD, HUD alignment, HUD raster, Floyd and multiplayer HUD tables | `JetForceGeminiHud*.h`, `JetForceGeminiFloydHud.h`, `JetForceGeminiMultiplayerHud.h`, `JetForceGeminiRocketOverlay.h` in the same directory |
 | Checked RDRAM access and code patcher | [`Source/Project64-core/N64System/GameHacks/GameHackMemory.h`](../Source/Project64-core/N64System/GameHacks/GameHackMemory.h) |
-| Setting identifiers | [`Source/Project64-core/Settings/SettingsID.h`](../Source/Project64-core/Settings/SettingsID.h) |
+| Source routing to N64 ports, exclusive input, port presence | [`Source/Project64-core/Plugins/ControllerPlugin.cpp`](../Source/Project64-core/Plugins/ControllerPlugin.cpp) |
+| Keyboard/mouse and gamepad plugin extension | [`Source/Project64-plugin-spec/Input.h`](../Source/Project64-plugin-spec/Input.h), [`Source/Project64-input/SdlInputBackend.cpp`](../Source/Project64-input/SdlInputBackend.cpp) |
+| Plugin-side HUD layer, reticle overlay and high-resolution HUD raster | [`Source/Project64-parallel-rdp/JfgHudLayer.h`](../Source/Project64-parallel-rdp/JfgHudLayer.h), [`JfgReticleOverlay.h`](../Source/Project64-parallel-rdp/JfgReticleOverlay.h), [`JfgHudRaster.h`](../Source/Project64-parallel-rdp/JfgHudRaster.h) |
+| Setting identifiers and defaults | [`Source/Project64-core/Settings/SettingsID.h`](../Source/Project64-core/Settings/SettingsID.h), [`Source/Project64-core/Settings.cpp`](../Source/Project64-core/Settings.cpp) |
 | Jet Force Gemini settings dialog | [`Source/Project64/UserInterface/GameSpecificHacks.cpp`](../Source/Project64/UserInterface/GameSpecificHacks.cpp) and [`.rc`](../Source/Project64/UserInterface/GameSpecificHacks.rc) |
+| Source-extracting unit tests (`python -m unittest discover -s tests` from `Source/Script`) | [`Source/Script/tests/`](../Source/Script/tests) |
 
 The primary reverse-engineering reference is the
 [Jet Force Gemini decompilation](https://github.com/Ryan-Myers/Jet-Force-Gemini).
@@ -40,7 +54,7 @@ the implementation still validates the live instructions before modifying them.
 ## Address conventions
 
 - Addresses below are **runtime RDRAM virtual addresses** in the USA 1.0 game,
-  not offsets in a ROM file.
+  not offsets in a ROM file. The Kiosk values live in `JfgKioskAddresses`.
 - The main executable is loaded at `0x80000450`. For code in that main image,
   the corresponding big-endian ROM offset is:
 
@@ -79,7 +93,13 @@ the implementation still validates the live instructions before modifying them.
 The design rules are important when adding a new hack:
 
 - Gate it with `IsSupportedRom()` and, where appropriate, wait for a valid
-  in-level object before touching game memory.
+  in-level object before touching game memory. This includes the take-down
+  paths: `Deactivate()`, `StateSaving()` and `StateLoaded()` run for every
+  ROM the emulator loads, so a scratch-word reset that is not behind the gate
+  writes into whatever game is running.
+- Take a new address from the `JFG_ADDRESSES` table rather than a literal, and
+  derive any instruction word that encodes it (`JumpTo`, `CallTo`, `WithHi`,
+  `WithLo`) so the Kiosk build gets the right target.
 - Use `CGameHackMemory` for range-checked reads and writes. Validate pointer
   alignment and `IsRdramAddress()` before dereferencing game pointers.
 - Express code changes as `GAME_HACK_CODE_PATCH` records. `CGameHackCodePatcher`
@@ -322,19 +342,39 @@ game's acceleration, collision and slope response. It advances the selected
 looped animation frame by the same fraction so the run animation and footstep
 events follow the speed increase.
 
-### Cutscenes
+### Cutscene skip (*Skip cinematics*, `Setting_JfgFastCutscenes`)
 
-The code for faster cutscenes is present but the user-facing option is disabled.
-It changes the `animseqUpdate` step while an animation sequence/path is live,
-rather than skipping data outright. Treat it as experimental and validate every
-sequence before enabling or redesigning it.
+The option is on by default and is a skip, not a speed-up: two guest hooks
+return to the front end or the next scene when the skip button is pressed.
+
+- `PatchLandingCinematicSkip()` splices the shared button-combine point at
+  `LandingCinematicSkipEntry` (`0x80045FF0`) and walks
+  `LandingCinematicSkipTable` (scene, setup -> destination). Its stub clobbers
+  `$t8`, the register the displaced `andi $t8, $s1, 0x1000` uses for START, so
+  it is armed only while `CurrentSceneIsCinematicSkippable()` is true
+  (`LandingCinematicSkipInputAddress` at `0x8009FCBC`); left armed during play
+  a held E or Return read as a phantom START.
+- `PatchIntroCinematicSkip()` hooks overlay `0x39` at `+0xD0` for the logo and
+  intro sequence, with its stub at `IntroCinematicSkipStub` (`0x80067200`).
+
+Both are removed before a state is written and re-installed from the
+controller poll. The skip keys are E / Enter and gamepad A / Start
+(`JFG_CONTROLS::SkipCinematic`), read on port one only. The Kiosk demo has no
+landing cinematic, so its `LandingCinematicSkip*` table entries are zero and
+that hook is unavailable there. The older `animseqUpdate` step experiment is
+gone; only the `RemoveLegacy*CinematicSkip()` cleanups remain, to take an old
+state's hooks down.
 
 ## Water wake / ripple investigation - not an active patch
 
 The 60 FPS water wake still has an unresolved rendering issue: it may vanish
-after first appearing. The runtime currently calls all water-wake patch methods
-with `false`; none of the following exploratory hooks is active in a normal
-build:
+after first appearing. One patch is live: `PatchWaterWakeRingRate()` at
+`WaterWakeRingRateEntry` (`0x8006AAC8`) is applied whenever the 60 FPS target
+is on: it makes `wakeUpdate` append a trail sample on alternate calls only,
+so the ring keeps its stock 30 Hz sampling and occupancy while the walk itself
+still runs every frame. Every other water-wake method below is called with `false`
+and exists to take an old state's hook down; none of these exploratory hooks
+is active in a normal build:
 
 | Area | Address |
 | --- | --- |
@@ -361,8 +401,9 @@ Useful findings so far:
 
 ## Recommended workflow for another ROM hack
 
-1. Identify the exact ROM with header, CRCs, version and hashes. Add a separate
-   target gate; do not broaden the USA 1.0 gate.
+1. Identify the exact ROM with header, CRCs, version and hashes. Add a new
+   `JFG_ADDRESSES` table for it rather than widening an existing one; every
+   field has to be established for that build.
 2. Locate the behaviour in the decompilation, then confirm it in a normalized
    ROM disassembly and in live RDRAM.
 3. Determine whether the code is in the main image or an overlay. Resolve

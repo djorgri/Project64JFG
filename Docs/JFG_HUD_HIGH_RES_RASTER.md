@@ -275,7 +275,7 @@ signature-checked trampoline image occupies the dormant diagnostic glyph writer
 `[800680B0,800681D0)`, whose sole retail caller is the diagnostic string writer
 already retired by the font hook. It has its own module-ownership footer.
 
-For 2–4 players in native wide modes 1/3, selected overlay 61 and health matrices
+For 2â€“4 players in native wide modes 1/3, selected overlay 61 and health matrices
 are converted by the stock `mathMtxF2L` and then have only their three X
 coefficients multiplied by 3/4. Translation and Y/Z/W remain unchanged. Original
 float matrices remain untouched, so successive radar rotations cannot accumulate
