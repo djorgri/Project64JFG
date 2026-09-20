@@ -430,7 +430,7 @@ changes carried on top are recorded in
 [Docs/PARALLEL_VENDOR_PROVENANCE.md](./Docs/PARALLEL_VENDOR_PROVENANCE.md).
 Every public binary release must identify its immutable release tag as the
 corresponding source; that tag contains the adapters, vendored sources, and
-build scripts. Binary version metadata is fixed at `0.9.2`; it never incorporates
+build scripts. Binary version metadata is fixed at `0.9.4`; it never incorporates
 a Git commit, build number, or worktree state. The notices and the documented
 rebuild path for the GNU
 Lightning-linked RSP plugin are in [Licenses/](./Licenses).
