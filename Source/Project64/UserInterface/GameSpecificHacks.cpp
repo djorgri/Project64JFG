@@ -80,11 +80,11 @@ void initialize_tooltips(HWND dialog)
         L"Halves patched enemy movement updates in 60 fps mode to compensate for doubled game speed.");
 
     add_tooltip(tooltip, dialog, IDC_GSH_FAST_CUTSCENES,
-        L"Skips known JFG cinematics in the US ROM. Press E or Enter, or A or Start on a gamepad, while a cinematic/logo screen plays. Requires a JFG input source on player 1.");
+        L"Skips known JFG cinematics in the US and PAL ROMs. Press E or Enter, or A or Start on a gamepad, while a cinematic/logo screen plays. Requires a JFG input source on player 1.");
     add_tooltip(tooltip, dialog, IDC_GSH_ENABLE_SPRINT,
         L"Holding Left Shift, or clicking the left stick, increases standing movement speed in normal gameplay. It is disabled while aiming, crouching, prone, or in boss modes.");
     add_tooltip(tooltip, dialog, IDC_GSH_WIDESCREEN_HUD,
-        L"Experimental correction for gameplay HUD proportions, including ammunition digits. Requires the game's native widescreen mode and the US retail ROM.");
+        L"Experimental correction for gameplay HUD proportions, including ammunition digits. Requires the game's native widescreen mode and the US or PAL retail ROM.");
     add_tooltip(tooltip, dialog, IDC_GSH_ALIGN_HUD,
         L"Aligns the weapon panel and health arc using a 13-unit left margin, with a slight visual adjustment for the arc in widescreen. Centres the health icon inside its arc. Works in 4:3 and widescreen.");
     add_tooltip(tooltip, dialog, IDC_GSH_SHOW_INPUT_RATE,

@@ -132,7 +132,7 @@ class JfgHudAlignmentRdpTests(unittest.TestCase):
         assert directory.is_relative_to(build.resolve())
         header = compiler.HACKS / "JetForceGeminiHudAlignmentRdp.h"
         source = directory / "image.cpp"
-        source.write_text('#include "' + header.as_posix() + r'''"
+        source.write_text('#include "' + header.as_posix() + '"\n' + compiler.US_BUILD + r'''
 #include <iostream>
 #include <string>
 int main(int argc, char **argv) {

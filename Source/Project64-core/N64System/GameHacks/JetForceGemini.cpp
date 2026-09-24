@@ -2,16 +2,15 @@
 
 #include "JetForceGemini.h"
 #include "JetForceGeminiAddresses.h"
+#include "JetForceGeminiHudBuild.h"
+#include "JetForceGeminiHudPalOriginals.h"
 #include "JetForceGeminiHudAlignment.h"
 #include "JetForceGeminiFloydHud.h"
 #include "JetForceGeminiRocketOverlay.h"
 #include "JetForceGeminiHudRaster.h"
 #include "JetForceGeminiMultiplayerHud.h"
-#include <Common/DateTime.h>
-#include <Common/path.h>
 #include <math.h>
 #include <algorithm>
-#include <cstdio>
 #include <cstdlib>
 
 namespace
@@ -28,20 +27,11 @@ const uint64_t SprintRampMicroseconds = 500000;
 const uint64_t SprintMaximumElapsedMicroseconds = 100000;
 const uint32_t MouseButtonLeft = 0;
 const uint32_t MouseButtonRight = 2;
-const KeyboardMouseKey CinematicProbeKey = (KeyboardMouseKey)19; // USB HID P
-const bool CinematicProbeEnabled = false; // Kept for internal diagnostics, disabled in public builds.
-// Diagnostic only: hold the instrument scope open so every scope-gated HUD hook
-// behaves like the font hook, which is resolution-gated and therefore global.
-// The ammunition counter ignores all of them while the weapon frame beside it
-// compresses, which is what a draw outside the +0xC00/+0x10D0 window would look
-// like. This tells those two cases apart without hooking another renderer.
-const KeyboardMouseKey WidescreenHudScopeForceKey = (KeyboardMouseKey)18; // USB HID O
 // Live 30/60 FPS switch for testing: numpad + selects 60, numpad - selects 30.
 // Both flip Setting_JfgTarget60Fps, which ProcessRuntimeFrame re-reads and
 // re-applies every frame, so the mode changes on the spot.
 const KeyboardMouseKey Fps60ToggleKey = (KeyboardMouseKey)87; // USB HID Keypad +
 const KeyboardMouseKey Fps30ToggleKey = (KeyboardMouseKey)86; // USB HID Keypad -
-const char * CinematicProbeLogFileName = "JfgCinematicProbe.log";
 
 const int32_t MouseAimYawSensitivity = 32;
 const int32_t MouseAimPitchSensitivity = 32;
@@ -117,10 +107,20 @@ uint32_t ManualAimCursorXStore = 0x8003B014;
 uint32_t ManualAimCursorYStore = 0x8003B058;
 uint32_t ManualAimXVelocityStore = 0x8003AF14;
 uint32_t ManualAimYVelocityStore = 0x8003AF2C;
-const uint32_t TargetOverlayCursorX = 0x8034853C;
-const uint32_t TargetOverlayCursorY = 0x80348564;
-const uint32_t TargetOverlayDraw = 0x803485C8;
-const uint32_t BoyAimHelper = 0x8035C3A0;
+// Two overlays the manual aim reaches into. The US build first spelled them as
+// the fixed addresses those modules occupy there in normal play (module 13 at
+// 0x80348120, module 16 at 0x803585F0); they are now resolved from the live
+// overlay table, which is what lets another build's layout apply at all.
+// Module 13 holds frontPlayerTarget and frontDrawTarget, module 16 Juno's arm
+// aim, whose two copies of the same four loads the mouse aim rewrites.
+const uint32_t TargetOverlayModule = 13;
+uint32_t TargetOverlayCursorXOffset = 0x41C;
+uint32_t TargetOverlayCursorYOffset = 0x444;
+uint32_t TargetOverlayDrawOffset = 0x4A8;
+const uint32_t BoyAimOverlayModule = 16;
+uint32_t BoyAimHelperOffset = 0x3DB0;
+uint32_t BoyAimFirstGroupOffset = 0x4198;
+uint32_t BoyAimSecondGroupOffset = 0x4738;
 // Addresses from the US symbol map of the Ryan-Myers/Jet-Force-Gemini
 // decompilation. gVideoDeltaTime at 0x800FECAC is the minimum number of VI
 // periods per rendered frame: 1 = 60fps, 2 = 30fps, 3 = 20fps.
@@ -157,58 +157,11 @@ uint32_t CurrentScreenAddress = 0x800FECB0;
 uint32_t SchedulerFrameGateAdd = 0x800506D8;
 uint32_t SchedulerSignatureBase = 0x800506D0;
 
-// JFG only requests a third framebuffer for widescreen modes. At 60fps the
-// scheduler releases each graphics task on the next retrace, so the normal two
-// buffers can be reused while dynamic effects are still being consumed. Force
-// the engine's existing triple-buffer request before it allocates the level
-// framebuffers.
-uint32_t TripleBufferRequest = 0x800551E8;
-uint32_t TripleBufferActive = 0x800FECA6;
-
-// The wake’s element lifetimes already use the game's delta time. Its two
-// opacity envelopes, however, advance by fixed ±32/±64 steps per update. They
-// therefore complete twice as fast at 60fps and leave the wake invisible.
-// Halving just those fixed steps retains every game update and its timing.
-// objObjectsTick calls wakeUpdateRipple once per logical game frame. At 30fps
-// that means thirty calls with a delta of two; at 60fps it becomes sixty calls
-// with a delta of one. The wake mixes delta-scaled motion with per-call state,
-// so neither rate produces the same result. Its small local gate reproduces
-// the original thirty calls with a delta of two while the rest of the game
-// stays at 60fps.
-uint32_t WaterWakeUpdate = 0x8006B090;
-uint32_t WaterWakeUpdateCall = 0x0C000000 | ((WaterWakeUpdate >> 2) & 0x03FFFFFF);
-uint32_t WaterWakeGateStub = 0x8009FD00;
-uint32_t WaterWakeGateJump = 0x0C000000 | ((WaterWakeGateStub >> 2) & 0x03FFFFFF);
-uint32_t WaterWakeGateCounter = 0x8009FCEC;
-uint32_t WaterWakeLegacyCallSite = 0x80009278;
+// The generic object list objObjectsTick walks (the water wake lives on it, hence
+// the name), and its count. HalveNamedEnemyMovement scans it by model name.
 uint32_t WaterWakeObjectListAddress = 0x800F2CA4;
 uint32_t WaterWakeObjectCountAddress = 0x800F2CA8;
 const uint32_t WaterWakeObjectLimit = 1024;
-uint32_t GeneralRenderListAddress = 0x800F2FB0;
-const uint32_t GeneralRenderListLimit = 134;
-uint32_t WaterWakeGlobalFadeAddress = 0x800A6950;
-
-// At 60fps, a live wake object no longer passes the general-render-list cull
-// (and therefore wakeDraw never sees it). Keep the stock cull for every other
-// object, but include objects whose +0x58 payload is a wake block (marker 0x40).
-uint32_t WaterWakeCullingEntry = 0x800146E4;
-uint32_t WaterWakeCullingStub = WaterWakeGateStub;
-uint32_t WaterWakeCullingJump = 0x08027F40; // j WaterWakeCullingStub
-
-// The fallback hooks the point immediately after the stock wake pass. It draws
-// the one active wake selected by the host, then resumes the stock renderer.
-uint32_t WaterWakeDrawTargetAddress = WaterWakeGateCounter;
-uint32_t WaterWakeDrawFallbackEntry = 0x80014CA0;
-uint32_t WaterWakeDrawFallbackStub = 0x8009FD00;
-uint32_t WaterWakeDrawFallbackJump = 0x0C027F40; // jal WaterWakeDrawFallbackStub
-uint32_t WaterWakeDrawFallbackCalledAddress = 0x8009FCF0;
-
-// wakeUpdateRipple advances this ring-buffer index once per call, not once per
-// delta. At 60fps that reuses the vertex frame twice as quickly as the 30fps
-// renderer. Preserve its original decrement on alternate frames only.
-uint32_t WaterWakeFrameRateEntry = 0x8006B1A0;
-uint32_t WaterWakeFrameRateStub = WaterWakeGateStub;
-uint32_t WaterWakeFrameRateJump = 0x08027F40; // j WaterWakeFrameRateStub
 
 // The actual 60fps defect, found by disassembling wakeAllocate. It stores the
 // sample lifetime in wake+0x03 as "seconds * 60" ticks but sizes the sample
@@ -235,17 +188,9 @@ uint32_t WaterWakeFrameRateJump = 0x08027F40; // j WaterWakeFrameRateStub
 // alternating and needs no state of its own.
 uint32_t WaterWakeRingRateEntry = 0x8006AAC8;
 
-uint32_t WaterWakeStockDrawEntry = 0x80014C44;
-uint32_t WaterWakeStockDrawStub = WaterWakeGateStub;
-uint32_t WaterWakeStockDrawJump = 0x0C027F40; // jal WaterWakeStockDrawStub
-uint32_t WaterWakeStockDrawTargetAddress = 0x8009FCF4;
-uint32_t WaterWakeStockDrawCalledAddress = 0x8009FCF8;
-
-// Enemy movement has two common paths. objMoveXYZ below catches movers that add
-// a step directly to their transform. Most regular enemies instead run through
-// SquaddieControl in module 3, whose shared heading helper writes X/Z velocity.
-// Module 3 is a relocatable overlay, so its hook addresses are resolved from the
-// live overlay table rather than treated as fixed RAM addresses.
+// Enemy movement: objMoveXYZ below catches movers that add a step directly to
+// their transform; HalveNamedEnemyMovement handles the named fliers whose own
+// movers bypass it.
 
 // objMoveXYZ(obj, dx, dy, dz) adds the three deltas straight onto the object
 // transform, so its callers pre-scale them. Many Overlay Control functions pass
@@ -266,19 +211,11 @@ uint32_t ObjectMoveStub = 0x80066E00;
 uint32_t ObjectMoveJump = 0x08019B80; // j ObjectMoveStub
 const uint32_t ObjectMoveLegacyJump = 0x08027F40;
 const uint32_t ObjectMovePreviousJump = 0x08027F80;
-// Hook the function epilogue: the original routine has already calculated the
-// player's velocity vector when this code runs.
-uint32_t PlayerVelocityEntry = 0x800341A4;
 // 0x8009FDxx is reused by RSP microcode. Keep the hook next to the proven
 // objMoveXYZ code cave instead, after its 0x64-byte dispatcher.
-uint32_t PlayerVelocityStub = 0x80066C00;
-uint32_t PlayerVelocityJump = 0x08019B00; // j PlayerVelocityStub
 uint32_t DroneLateralFlagsAddress = 0x8009FCE4;
 uint32_t DroneLateralHookHitsAddress = 0x8009FCE8;
-uint32_t DroneLateralHookFlagsAddress = 0x8009FCEC;
 uint32_t EnemyHalveFlagAddress = 0x8009FCE0;
-uint32_t DroneLateralPreviousXAddress = 0x8009FCD0;
-uint32_t DroneLateralPreviousZAddress = 0x8009FCD4;
 uint32_t DroneLateralPreviousObjectAddress = 0x8009FCD8;
 const uint32_t DroneLateralActive = 1;
 const uint32_t DroneLateralRight = 2;
@@ -290,8 +227,7 @@ uint32_t DroneLateralMaxSpeedAddress = 0x8009FCA4;
 // Our lateral velocity. The engine has none to borrow, since it stores movement
 // as heading times speed, so this is the one piece of state the stub owns.
 uint32_t DroneLateralVelocityAddress = 0x8009FCAC;
-// Reuse the position-delta words of the retired movement hooks. The active
-// flight hook owns these as vertical thrust and persistent vertical velocity.
+// The flight hook's vertical thrust and its persistent vertical velocity.
 uint32_t DroneVerticalThrustAddress = 0x8009FCD0;
 uint32_t DroneVerticalVelocityAddress = 0x8009FCD4;
 // The axis the thrust pushes along, from the camera rather than from
@@ -327,73 +263,28 @@ const float DroneLateralDrag = 0.975f;
 // Also the cap on forward, lateral and vertical speeds combined, matching the value
 // the engine sets for its own forward axis at 0x8003045C.
 const float DroneLateralMaxSpeed = 8.0f;
+// The PAL build updates at 50 Hz with the same frame step, and keeps the NTSC
+// pace by scaling its own speed constants by 60/50: Floyd's forward cap at
+// 0x8003045C becomes 9.6, loaded from rodata. The thrusters follow suit so they
+// feel the same in real time: the drag compounds over 1.2 NTSC frames
+// (0.975^1.2), the cap scales like the engine's, and the thrust is the one that
+// keeps the NTSC terminal speed, 360 units a second, under that drag.
+const float PalDroneLateralSideThrust = 0.2154564f;
+const float PalDroneLateralDrag = 0.9700755f;
+const float PalDroneLateralMaxSpeed = 9.6f;
+// Samples taken once per video interrupt run 50 times a second on PAL.
+const float PalVideoRateScale = 60.0f / 50.0f;
 
 // The first word of each 0x20-byte overlay table entry is its relocated RAM
-// base. SquaddieControl is module 3; the shared heading helper starts at AD38
-// and writes its horizontal velocity at AE38/AE3C and AE68/AE6C.
+// base.
 uint32_t OverlayTableAddress = 0x800FEAA0;
-const uint32_t FrontModeAddress = 0x800A51B0;
-const uint32_t CurrentSceneAddress = 0x800A323C;
-const uint32_t CurrentSetupAddress = 0x800A3248;
-const uint32_t NextLevelAddress = 0x800A3250;
-const uint32_t NextSetupAddress = 0x800A3258;
-const uint32_t NextCharacterAddress = 0x800A3260;
-const uint32_t NextFrontModeAddress = 0x800A3264;
-const uint32_t LoadingAddress = 0x800A3294;
+uint32_t CurrentSceneAddress = 0x800A323C;
+uint32_t CurrentSetupAddress = 0x800A3248;
+uint32_t NextCharacterAddress = 0x800A3260;
+uint32_t LoadingAddress = 0x800A3294;
 const uint32_t OverlayHeaderSize = 0x20;
-const uint32_t SquaddieOverlayModule = 3;
 const uint32_t FloydOverlayModule = 22;
-const uint32_t FloydMovePlayerOffset = 0x2F38;
-const uint32_t FloydMovePlayerSize = 0x218;
-const uint32_t FloydPadControlOffset = 0x2A4;
-uint32_t FloydMoveHookStub = 0x80066C00;
-uint32_t FloydMoveHookJump = 0x08019B00;
-const uint32_t FloydMoveObjMoveCallOffset = 0x200;
-uint32_t FloydMoveObjMoveCallOriginal = 0x0C002681; // jal objMoveXYZ
-const uint32_t FloydMoveObjMoveDelayOriginal = 0x02002025; // or a0, s0, zero
-// The trampoline calls objMoveXYZ at word 24, keeps its native delay slot at
-// word 25, then jumps back to the instruction after the displaced call.
-const uint32_t FloydMoveCallHookResumeIndex = 26;
-const uint32_t FloydCameraLateralCallOffset = 0x2E80;
-const uint32_t FloydCameraLateralCallOriginal = 0x0C012721;
-const uint32_t FloydCameraLateralCallDelayOriginal = 0xE6040014;
-uint32_t FloydCameraLateralStub = 0x80066F00;
-uint32_t FloydCameraLateralJump = 0x0C019BC0; // jal FloydCameraLateralStub
-uint32_t FloydCameraPreviousXAddress = 0x8009FCB0;
-uint32_t FloydCameraPreviousZAddress = 0x8009FCB4;
-uint32_t FloydCameraPreviousObjectAddress = 0x8009FCB8;
-const uint32_t FloydCameraLateralTail = 0x08012721; // j 0x80049C84
-uint32_t SidekickControlEntry = 0x8002F728;
-uint32_t SidekickControlEnd = 0x8003109C;
-uint32_t SidekickLateralMoveEntry = 0x80031088;
-uint32_t SidekickLateralMoveStub = 0x80066F00;
-uint32_t SidekickLateralMoveJump = 0x08019BC0; // j SidekickLateralMoveStub
-uint32_t SidekickLateralMovePreviousJump = 0x08019B40; // j old 0x80066D00 stub
-const uint32_t SidekickLateralMoveEntryOriginal = 0x03E00008; // jr ra
-const uint32_t SidekickLateralMoveDelayOriginal = 0x27BD0120; // addiu sp, sp, 0x120
-// Previous tests hooked the input vector and the shared sidekickControl
-// prologue. Remove either entry when a save state restores it before using the
-// final transform hook.
-uint32_t SidekickLateralMoveInputLegacyEntry = 0x8002F8F4;
-const uint32_t SidekickLateralMoveInputLegacyOriginal = 0x86020090; // lh v0, 0x90(s0)
-uint32_t SidekickLateralMoveOldTailEntry = 0x80031080;
-const uint32_t SidekickLateralMoveOldTailOriginal = 0x8FBF003C; // lw ra, 0x3c(sp)
-const uint32_t SidekickLateralMoveOldTailDelayOriginal = 0x8FB00038; // lw s0, 0x38(sp)
-uint32_t SidekickControlProbeEntry = 0x8002F8AC;
-uint32_t SidekickControlProbeStub = 0x80066D00;
-uint32_t SidekickControlProbeJump = 0x08019B40; // j SidekickControlProbeStub
-const uint32_t SidekickControlProbeEntryOriginal = 0xE6080014; // swc1 f8, 0x14(s0)
-const uint32_t SidekickControlProbeDelayOriginal = 0x8FAD00E8; // lw t5, 0xE8(sp)
-uint32_t SidekickControlProbeResumeJump = 0x0800BE2D; // j 0x8002F8B4
-uint32_t SidekickControlObjectAddress = 0x8009FCA0;
-uint32_t SidekickVelocityLateralEntry = 0x8002F8AC;
-uint32_t SidekickVelocityLateralDelay = 0x8002F8B0;
-uint32_t SidekickVelocityLateralResume = 0x8002F8B4;
-uint32_t SidekickVelocityLateralStub = 0x80066F00;
-uint32_t SidekickVelocityLateralJump = 0x08019BC0; // j SidekickVelocityLateralStub
-const uint32_t SidekickVelocityLateralEntryOriginal = 0xE6080014; // swc1 f8, 0x14(s0)
-const uint32_t SidekickVelocityLateralDelayOriginal = 0x8FAD00E8; // lw t5, 0xE8(sp)
-uint32_t SidekickVelocityLateralResumeJump = 0x0800BE2D; // j 0x8002F8B4
+uint32_t FloydPadControlOffset = 0x2A4;
 // sidekickControl integrates Floyd's own flight inline; it never calls
 // objMoveXYZ. sk = obj->0x68 holds the unit heading at 0x28/0x2C/0x30 and the
 // speed scalar at 0x34, and 0x8003001C..0x800300A8 turns those into
@@ -440,83 +331,42 @@ uint32_t SidekickPadProbeStateAddress = 0x8009FCCC;
 uint32_t SidekickPadProbeActorAddress = 0x8009FCFC;
 const uint32_t SidekickPadProbeEntryOriginal = 0x27BDFF98; // addiu sp, sp, -0x68
 const uint32_t SidekickPadProbeSecondOriginal = 0xAFBF0034; // sw ra, 0x34(sp)
-// The squads module publishes one time step, computed by both of its
-// controllers from the per-frame tick count they are handed. That tick count is
-// the game's own frame delta - measured live it is 2 at 30fps and 1 at 60fps,
-// giving a step of 2.0 vs 1.0 - so the module already scales everything it
-// drives by it and is frame-rate-correct on its own. Halving the step was a
-// mistake, born of reading it as a constant 1.0: it does not slow movement
-// alone, it halves the delta itself, so all seven readers - the Squaddies'
-// action timers, their interpolation, and their animation advance - run at half
-// wall-clock speed at 60fps. That half-speed animation is the enemy slow-motion
-// this reverts. Enemy *movement* that genuinely needed slowing is handled off
-// the delta (PatchObjectMove for objMoveXYZ movers, HalveNamedEnemyMovement for
-// named fliers, PatchSquaddieMove's direct velocity halve), so the step is left
-// at its native value: PatchSquadsTimeStep stays disabled. Restoring the delta
-// makes the module match 30fps exactly and, because 30fps already runs a step
-// of 2.0, can never make anything move faster than 30fps does.
-const uint32_t SquadsTimeStepOffset = 0x1A1C8;
-// The int copy SquadronControl writes beside the step. Its high half is what
-// that jump's delay slot leaves in $at, so the stub restores it from here.
-const uint32_t SquadsTickCountAddress = 0x800FE9F8;
-// A second module global the SquaddieControl delay slot addresses. Its own high
-// half is what that slot leaves in $at, so the stub restores it from here.
-const uint32_t SquaddieStepDelayTargetOffset = 0x1A140;
-const uint32_t SquadronStepCvtOffset = 0x14D74;
-const uint32_t SquadronStepEntryOffset = 0x14D7C;
-const uint32_t SquaddieStepCvtOffset = 0x1064C;
-const uint32_t SquaddieStepEntryOffset = 0x10658;
-const uint32_t SquadronStepCvtOriginal = 0x468021A0;   // cvt.s.w $f6, $f4
-const uint32_t SquaddieStepCvtOriginal = 0x468042A0;   // cvt.s.w $f10, $f8
-// The step-store entry words (swc1 $f6/$f10, %lo(Step)($at)) are relocation
-// dependent, so PatchSquadsTimeStep reconstructs them from the live Step rather
-// than from a fixed constant here.
-// Past every other scratch stub. Eight words each, which is what the halve,
-// store and $at restore need.
-uint32_t SquadronStepStub = 0x8009FDA0;
-uint32_t SquaddieStepStub = 0x8009FDC0;
 
-const uint32_t SquaddieXEntryOffset = 0xAE38;
-const uint32_t SquaddieXDelayOffset = 0xAE3C;
-const uint32_t SquaddieXResumeOffset = 0xAE40;
-const uint32_t SquaddieZEntryOffset = 0xAE68;
-const uint32_t SquaddieZDelayOffset = 0xAE6C;
-const uint32_t SquaddieZResumeOffset = 0xAE70;
-uint32_t SquaddieXStub = 0x8009FD60;
-uint32_t SquaddieZStub = 0x8009FD80;
 
-uint32_t JalInstruction(uint32_t Address)
+// Defined with the address table below; forward declared so the stub listings
+// in between can spell their addresses from the table rather than as US words.
+uint32_t JumpTo(uint32_t Target);
+uint32_t CallTo(uint32_t Target);
+uint32_t WithHi(uint32_t Instruction, uint32_t Address);
+uint32_t WithLo(uint32_t Instruction, uint32_t Address);
+
+// The runtime's scratch cave, 308 bytes of padding, is laid out word for word
+// the same in every build; only its base moves (0x8009FCA0 on US). Stubs are
+// listed in US terms, reaching the cave through a `lui $rX, 0x800A` and a
+// negative low half, so a word of such a stub is relocated by keeping its offset
+// in the cave. Use this only on stubs whose every 0x800A upper half is the
+// cave's: the landing skip's playState globals share that upper half on US.
+const uint32_t UsScratchCaveBase = 0x8009FCA0;
+const uint32_t ScratchCaveSize = 0x160;
+uint32_t SidekickControlObjectAddress = 0x8009FCA0;
+
+uint32_t ScratchCaveWord(uint32_t Word)
 {
-    return 0x0C000000 | ((Address >> 2) & 0x03FFFFFF);
-}
-
-void AppendCinematicProbeLog(const stdstr & Message)
-{
-    CPath ProbePath(CPath::MODULE_DIRECTORY, CinematicProbeLogFileName);
-    FILE * ProbeFile = fopen(ProbePath, "a");
-    if (ProbeFile != nullptr)
+    const uint32_t Opcode = Word >> 26;
+    if (Opcode == 0x0F && (Word & 0xFFFF) == 0x800A)
     {
-        fprintf(ProbeFile, "%s\n", Message.c_str());
-        fclose(ProbeFile);
+        // Every address of the cave shares one upper half in every build.
+        return WithHi(Word, SidekickControlObjectAddress);
     }
-}
-
-// Cataloguing every cinematic in the game takes more than one sitting, so the
-// probe log is never truncated: each emulator run appends to what the previous
-// runs collected. A dated banner opens each run because the P counter in the
-// probe lines restarts from one every time the process does.
-void OpenCinematicProbeLogSession(void)
-{
-    static bool SessionOpened = false;
-    if (SessionOpened)
+    const bool LoadStore = Opcode == 0x20 || Opcode == 0x21 || Opcode == 0x23 || Opcode == 0x24 ||
+                           Opcode == 0x25 || Opcode == 0x28 || Opcode == 0x29 || Opcode == 0x2B ||
+                           Opcode == 0x31 || Opcode == 0x39;
+    const uint32_t UsAddress = 0x800A0000 + (uint32_t)(int32_t)(int16_t)(Word & 0xFFFF);
+    if (LoadStore && UsAddress >= UsScratchCaveBase && UsAddress < UsScratchCaveBase + ScratchCaveSize)
     {
-        return;
+        return WithLo(Word, SidekickControlObjectAddress + (UsAddress - UsScratchCaveBase));
     }
-    SessionOpened = true;
-
-    AppendCinematicProbeLog(stdstr_f(
-        "---- session %s ----",
-        CDateTime().SetToNow().Format("%Y-%m-%d %H:%M:%S").c_str()));
+    return Word;
 }
 
 // The US controller loop calls joyGetButtons at 0x80045FD4, combines all held
@@ -530,6 +380,11 @@ const uint32_t LandingCinematicSkipEntryOriginal = 0x02228825; // addu $s1, $s1,
 const uint32_t LandingCinematicSkipEntryDelayOriginal = 0x32381000; // andi $t8, $s1, 0x1000
 uint32_t LandingCinematicSkipStub = 0x80067000;
 uint32_t LandingCinematicSkipStubTable = LandingCinematicSkipStub + 0x160;
+// The routines the landing stub calls, see LandingCinematicSkipStubCode.
+uint32_t MainFrontInitFunction = 0x80047608;
+uint32_t FrontCharSelectSetQuitModeFunction = 0x8005AAE8;
+uint32_t FrontGetModeFunction = 0x80058A5C;
+uint32_t MainChangeLevelFunction = 0x8004665C;
 uint32_t LandingCinematicSkipJump = 0x0C019C00; // jal LandingCinematicSkipStub
 // This free word sits with the existing JFG runtime scratch values. It carries
 // the physical E/Return state from the keyboard/mouse path directly to MIPS,
@@ -548,17 +403,17 @@ uint32_t LandingCinematicSkipInputAddress = 0x8009FCBC;
 // is held, then run the original switch and let the native code perform the
 // handoff to the 3D main menu.
 const uint32_t IntroCinematicSkipOverlayModule = 0x39;
-const uint32_t IntroCinematicSkipEntryOffset = 0xD0;
-const uint32_t IntroCinematicSkipResumeOffset = 0xD8;
+uint32_t IntroCinematicSkipEntryOffset = 0xD0;
+uint32_t IntroCinematicSkipResumeOffset = 0xD8;
 const uint32_t IntroCinematicSkipEntryOriginal = 0x8E0E0000; // lw $t6, 0($s0)
 const uint32_t IntroCinematicSkipEntryDelayOriginal = 0xAFBF0024; // sw $ra, 0x24($sp)
-const uint32_t IntroCinematicSkipStub = 0x80067200;
+uint32_t IntroCinematicSkipStub = 0x80067200;
 uint32_t IntroCinematicSkipJump = 0x08019C80; // j IntroCinematicSkipStub
 const size_t IntroCinematicSkipResumeJumpIndex = 25;
-const uint32_t LegacyIntroCinematicSkipEntryOffset = 0xC0;
+uint32_t LegacyIntroCinematicSkipEntryOffset = 0xC0;
 const uint32_t LegacyIntroCinematicSkipEntryOriginal = 0x27BDFF90; // addiu $sp, $sp, -0x70
 const uint32_t LegacyIntroCinematicSkipEntryDelayOriginal = 0xAFB00020; // sw $s0, 0x20($sp)
-const uint32_t LegacyIntroCinematicSkipFmvUpdateOffset = 0x37C;
+uint32_t LegacyIntroCinematicSkipFmvUpdateOffset = 0x37C;
 uint32_t LegacyIntroCinematicSkipCall = 0x0C019C80; // jal IntroCinematicSkipStub
 const uint32_t LegacyIntroCinematicSkipFmvUpdateAddress = 0x8009FC90;
 
@@ -599,10 +454,14 @@ const uint32_t IntroCinematicSkipHookCode[] =
 
 // The stock widescreen mode renders at 320x180 and is then stretched back to
 // 4:3 by the VI. Its 3D projection is correct, but the HUD is built with the
-// same uncorrected horizontal scale. Keep this US-only prototype scoped to the
-// body of overlay 14's frontSingleInstruments: its call at +0xC00 establishes
+// same uncorrected horizontal scale. Keep this prototype scoped to the body of
+// overlay 14's frontSingleInstruments: its call at +0xC00 establishes
 // the first HUD orthographic matrix after the reticle, and every return path
 // converges on the epilogue at +0x10D0.
+//
+// Every address and listing below is spelled in US terms and translated for
+// the PAL build where it is used, see JetForceGeminiHudBuild.h; .Us is the US
+// spelling, for the compile-time layout checks.
 //
 // Reuse the same retired diagnostic region as the other US JFG trampolines,
 // but only after gameplay and overlay 14 are live. Writing this while the boot
@@ -612,20 +471,20 @@ const uint32_t IntroCinematicSkipHookCode[] =
 // The scope counter deliberately lives on a different page: storing it twice
 // per HUD pass on the code page would continually invalidate every stub under
 // the recompiler's self-modifying-code tracking.
-const uint32_t WidescreenHudCaveStart = 0x80067280;
-const uint32_t WidescreenHudCaveEnd = 0x80067690;
+constexpr JfgHudBuild::UsAddress WidescreenHudCaveStart = { 0x80067280 };
+constexpr JfgHudBuild::UsAddress WidescreenHudCaveEnd = { 0x80067690 };
 const size_t WidescreenHudMainCaveWordCount =
-    (WidescreenHudCaveEnd - WidescreenHudCaveStart) / sizeof(uint32_t);
+    (WidescreenHudCaveEnd.Us - WidescreenHudCaveStart.Us) / sizeof(uint32_t);
 // A second, disjoint segment reuses the retired diagnostic ring-buffer display.
 // Its sole caller at 0x800674BC is already replaced by SpriteScaleAltCode.
 // Floyd also uses the adjacent malloc-fault report after retiring its entry.
 // The original report is restored in full, including after loading a saved hook.
 // Keep the intervening diCpuLogMessage code entirely outside our memory image.
-const uint32_t WidescreenHudReticleStub = 0x80067790;
-const uint32_t WidescreenHudReticleWeaponStub = 0x8006738C;
-const uint32_t WidescreenHudReticleCaveEnd = 0x80067950;
+constexpr JfgHudBuild::UsAddress WidescreenHudReticleStub = { 0x80067790 };
+constexpr JfgHudBuild::UsAddress WidescreenHudReticleWeaponStub = { 0x8006738C };
+constexpr JfgHudBuild::UsAddress WidescreenHudReticleCaveEnd = { 0x80067950 };
 const size_t WidescreenHudOldCaveWordCount = WidescreenHudMainCaveWordCount +
-    (WidescreenHudReticleCaveEnd - WidescreenHudReticleStub) / sizeof(uint32_t);
+    (WidescreenHudReticleCaveEnd.Us - WidescreenHudReticleStub.Us) / sizeof(uint32_t);
 const size_t WidescreenHudCaveWordCount = WidescreenHudOldCaveWordCount +
     sizeof(JfgRocketOverlay::Code) / sizeof(uint32_t);
 
@@ -637,55 +496,55 @@ uint32_t WidescreenHudCaveWordAddress(size_t Index)
         WidescreenHudCaveStart + (uint32_t)(Index * sizeof(uint32_t)) :
         WidescreenHudReticleStub + (uint32_t)((Index - WidescreenHudMainCaveWordCount) * sizeof(uint32_t));
 }
-const uint32_t WidescreenHudScopeEnterStub = 0x80067280;
-const uint32_t WidescreenHudScopeExitStub = 0x800672A0;
-const uint32_t WidescreenHudCamCopyStub = 0x800672C0;
-const uint32_t WidescreenHudFontYStub = 0x80067300;
-const uint32_t WidescreenHudDigitalAdvanceStub = 0x80067340;
-const uint32_t WidescreenHudFontDtdyStub = 0x80067360;
-const uint32_t WidescreenHudSpriteScaleStub = 0x800673A0;
-const uint32_t WidescreenHudLineStub = 0x800673E0;
-const uint32_t WidescreenHudRectangleStub = 0x80067440;
-const uint32_t WidescreenHudShotGaugeWrapperStub = 0x800677F4;
-const uint32_t WidescreenHudShotGaugeAnchorStub = 0x80067810;
-const uint32_t WidescreenHudFloydLineStub = 0x80067844;
-const uint32_t WidescreenHudShotGaugeCallOffset = 0x2B28;
-const uint32_t WidescreenHudShotGaugeCallOriginal = 0x0C01657D;
+constexpr JfgHudBuild::UsAddress WidescreenHudScopeEnterStub = { 0x80067280 };
+constexpr JfgHudBuild::UsAddress WidescreenHudScopeExitStub = { 0x800672A0 };
+constexpr JfgHudBuild::UsAddress WidescreenHudCamCopyStub = { 0x800672C0 };
+constexpr JfgHudBuild::UsAddress WidescreenHudFontYStub = { 0x80067300 };
+constexpr JfgHudBuild::UsAddress WidescreenHudDigitalAdvanceStub = { 0x80067340 };
+constexpr JfgHudBuild::UsAddress WidescreenHudFontDtdyStub = { 0x80067360 };
+constexpr JfgHudBuild::UsAddress WidescreenHudSpriteScaleStub = { 0x800673A0 };
+constexpr JfgHudBuild::UsAddress WidescreenHudLineStub = { 0x800673E0 };
+constexpr JfgHudBuild::UsAddress WidescreenHudRectangleStub = { 0x80067440 };
+constexpr JfgHudBuild::UsAddress WidescreenHudShotGaugeWrapperStub = { 0x800677F4 };
+constexpr JfgHudBuild::UsAddress WidescreenHudShotGaugeAnchorStub = { 0x80067810 };
+constexpr JfgHudBuild::UsAddress WidescreenHudFloydLineStub = { 0x80067844 };
+constexpr JfgHudBuild::UsOffset WidescreenHudShotGaugeCallOffset = { 14, 0x2B28 };
+constexpr JfgHudBuild::UsWord WidescreenHudShotGaugeCallOriginal = { 0x0C01657D };
 const uint32_t WidescreenHudShotGaugeCallDelay = 0x00003825;
-const uint32_t WidescreenHudSpriteScaleAltStub = 0x800674A0;
-const uint32_t WidescreenHudSpritePositionStub = 0x800674E0;
-const uint32_t WidescreenHudMatrixTranslateStub = 0x80067560;
+constexpr JfgHudBuild::UsAddress WidescreenHudSpriteScaleAltStub = { 0x800674A0 };
+constexpr JfgHudBuild::UsAddress WidescreenHudSpritePositionStub = { 0x800674E0 };
+constexpr JfgHudBuild::UsAddress WidescreenHudMatrixTranslateStub = { 0x80067560 };
 // Extend into the first 0x80 bytes of the unused diCpuReportWatchpoint.
 // The next original function starts at 0x800676B4; no other stub occupies it.
-const uint32_t WidescreenHudAmmoStub = 0x80067610;
-const uint32_t WidescreenHudAmmoEntry = 0x8005900C;
+constexpr JfgHudBuild::UsAddress WidescreenHudAmmoStub = { 0x80067610 };
+constexpr JfgHudBuild::UsAddress WidescreenHudAmmoEntry = { 0x8005900C };
 const uint32_t WidescreenHudAmmoOriginal = 0x00135080;
 const uint32_t WidescreenHudAmmoDelayOriginal = 0x030A4021;
 // cpuTraceTrackBufStatus is the byte at 0x80102550; the following three bytes
 // are alignment padding before the pointer at 0x80102554. Claim only the last
 // padding byte so a non-zero diagnostic status can never make the HUD hooks
 // appear active outside their scope.
-const uint32_t WidescreenHudScopeDepthAddress = 0x80102553;
-const uint32_t WidescreenHudResolutionIndexAddress = 0x800FECA8;
+constexpr JfgHudBuild::UsAddress WidescreenHudScopeDepthAddress = { 0x80102553 };
+constexpr JfgHudBuild::UsAddress WidescreenHudResolutionIndexAddress = { 0x800FECA8 };
 
 bool IsWidescreenHudResolution(uint8_t Resolution)
 {
-    // Active US gameplay modes: 0/2 are 4:3, 1/3 are widescreen.
-    // Do not treat an odd boot/reset mode or the graphics plugin's aspect
-    // ratio as the game's widescreen setting.
-    return Resolution == 1 || Resolution == 3;
+    // Active gameplay modes: 0/2 are 4:3, 1/3 are widescreen (8..11 on PAL,
+    // see JfgHudBuild::VideoMode). Do not treat an odd boot/reset mode or the
+    // graphics plugin's aspect ratio as the game's widescreen setting.
+    return JfgHudBuild::IsWideVideoMode(Resolution);
 }
 
 const uint32_t WidescreenHudOverlayModule = 14;
-const uint32_t WidescreenHudOverlayEnterOffset = 0xC00;
-const uint32_t WidescreenHudOverlayExitOffset = 0x10D0;
-const uint32_t WidescreenHudOverlayEnterOriginal = 0x0C010359; // jal camStandardOrtho
+constexpr JfgHudBuild::UsOffset WidescreenHudOverlayEnterOffset = { 14, 0xC00 };
+constexpr JfgHudBuild::UsOffset WidescreenHudOverlayExitOffset = { 14, 0x10D0 };
+constexpr JfgHudBuild::UsWord WidescreenHudOverlayEnterOriginal = { 0x0C010359 }; // jal camStandardOrtho
 const uint32_t WidescreenHudOverlayEnterDelayOriginal = 0x02002025; // or a0, s0, zero
 const uint32_t WidescreenHudOverlayExitOriginal = 0x03E00008; // jr ra
 const uint32_t WidescreenHudOverlayExitDelayOriginal = 0x27BD00B0; // addiu sp, sp, 0xB0
 const uint32_t WidescreenHudReticleOverlayModule = 13;
-const uint32_t WidescreenHudReticleDrawOffset = 0x4A8;
-const uint32_t WidescreenHudReticleLineCallOriginal = 0x0C01B563; // jal fxDrawLineInWindow
+constexpr JfgHudBuild::UsOffset WidescreenHudReticleDrawOffset = { 13, 0x4A8 };
+constexpr JfgHudBuild::UsWord WidescreenHudReticleLineCallOriginal = { 0x0C01B563 }; // jal fxDrawLineInWindow
 struct WIDESCREEN_HUD_RETICLE_CALL
 {
     uint32_t Offset;
@@ -803,11 +662,11 @@ const uint32_t WidescreenHudReticleWeaponCode[] =
     0x08019DED, // j     0x800677B4 ; continue first endpoint's 3*dx
     0x00084840, // sll   t1,t0,1
 };
-static_assert(WidescreenHudReticleWeaponStub + sizeof(WidescreenHudReticleWeaponCode) == WidescreenHudSpriteScaleStub,
+static_assert(WidescreenHudReticleWeaponStub.Us + sizeof(WidescreenHudReticleWeaponCode) == WidescreenHudSpriteScaleStub.Us,
               "Reticle weapon filter must fit the unused font slot tail");
-static_assert(WidescreenHudReticleStub + sizeof(WidescreenHudReticleCode) == WidescreenHudShotGaugeWrapperStub,
+static_assert(WidescreenHudReticleStub.Us + sizeof(WidescreenHudReticleCode) == WidescreenHudShotGaugeWrapperStub.Us,
               "Reticle and shot-gauge stubs must not overlap");
-static_assert(WidescreenHudReticleStub >= 0x80067790 && WidescreenHudReticleCaveEnd <= 0x80067950,
+static_assert(WidescreenHudReticleStub.Us >= 0x80067790 && WidescreenHudReticleCaveEnd.Us <= 0x80067950,
               "Reticle cave must not overwrite neighbouring diagnostic functions");
 struct WIDESCREEN_HUD_OVERLAY_WORD_PATCH
 {
@@ -885,30 +744,42 @@ const WIDESCREEN_HUD_BANNER_WORD_PATCH WidescreenHudFuelPatches[] =
     { 0x1030, 0x24840080, 0x24840060, 0x24840060 }, // counter: label X + .75 * 128
 };
 
-const uint32_t WidescreenHudCamCopyEntry = 0x80042158;
-const uint32_t WidescreenHudCamCopyOriginal = 0xC4243128; // lwc1 f4, 0x3128(at)
-const uint32_t WidescreenHudFontYEntry = 0x80070500;
+// The same four edits on PAL, whose compile keeps the gauge's right edge and
+// the label's X in $t6 rather than $t5. Offsets stay in US terms.
+const WIDESCREEN_HUD_BANNER_WORD_PATCH WidescreenHudFuelPatchesPal[] =
+{
+    { 0x0F58, 0x240E0042, 0x240E0012, 0x240EFFFE }, // addiu t6, zero, 66 - bias
+    { 0x0F6C, 0x2406FFD3, 0x2406FFA3, 0x2406FF8F },
+    { 0x0FE0, 0x25C50005, 0x25C5FFEC, 0x25C5FFDD }, // addiu a1, t6, ...
+    { 0x1030, 0x24840080, 0x24840060, 0x24840060 },
+};
+static_assert(sizeof(WidescreenHudFuelPatchesPal) == sizeof(WidescreenHudFuelPatches),
+              "PAL fuel table must pair with the US one");
+
+constexpr JfgHudBuild::UsAddress WidescreenHudCamCopyEntry = { 0x80042158 };
+constexpr JfgHudBuild::BuildWord WidescreenHudCamCopyOriginal = { 0xC4243128, 0xC4243398 }; // lwc1 f4, 0x3128(at)
+constexpr JfgHudBuild::UsAddress WidescreenHudFontYEntry = { 0x80070500 };
 const uint32_t WidescreenHudFontYOriginal = 0x31AE0FFF; // andi t6, t5, 0x0FFF
-const uint32_t WidescreenHudFontDtdyEntry = 0x80070550;
+constexpr JfgHudBuild::UsAddress WidescreenHudFontDtdyEntry = { 0x80070550 };
 const uint32_t WidescreenHudFontDtdyOriginal = 0x3C0E0400; // lui t6, 0x0400
-const uint32_t WidescreenHudSpriteScaleEntry = 0x80041850;
+constexpr JfgHudBuild::UsAddress WidescreenHudSpriteScaleEntry = { 0x80041850 };
 const uint32_t WidescreenHudSpriteScaleOriginal = 0x44050000; // mfc1 a1, f0
-const uint32_t WidescreenHudSpriteScaleAltEntry = 0x8004189C;
-const uint32_t WidescreenHudSpritePositionEntry = 0x8004171C;
+constexpr JfgHudBuild::UsAddress WidescreenHudSpriteScaleAltEntry = { 0x8004189C };
+constexpr JfgHudBuild::UsAddress WidescreenHudSpritePositionEntry = { 0x8004171C };
 const uint32_t WidescreenHudSpritePositionOriginal = 0x44183000; // mfc1 t8, f6
-const uint32_t WidescreenHudMatrixTranslateEntry = 0x800498E8;
+constexpr JfgHudBuild::UsAddress WidescreenHudMatrixTranslateEntry = { 0x800498E8 };
 const uint32_t WidescreenHudMatrixTranslateOriginal = 0xC4E00000; // lwc1 f0, 0(a3)
-const uint32_t WidescreenHudLineEntry = 0x8006D390;
+constexpr JfgHudBuild::UsAddress WidescreenHudLineEntry = { 0x8006D390 };
 const uint32_t WidescreenHudLineOriginal = 0x3C0E8010; // lui t6, 0x8010
-const uint32_t WidescreenHudLineDelayOriginal = 0x8DCE3B90; // lw t6, 0x3B90(t6)
-const uint32_t WidescreenHudRectangleEntry = 0x80059790;
+constexpr JfgHudBuild::BuildWord WidescreenHudLineDelayOriginal = { 0x8DCE3B90, 0x8DCE35E8 }; // lw t6, 0x3B90(t6)
+constexpr JfgHudBuild::UsAddress WidescreenHudRectangleEntry = { 0x80059790 };
 const uint32_t WidescreenHudRectangleOriginal = 0x8E020000; // lw v0, 0(s0)
 const uint32_t WidescreenHudRectangleDelayOriginal = 0x0018CB80; // sll t9, t8, 14
-const uint32_t WidescreenHudDigitalColumnAEntry = 0x8006DE64;
-const uint32_t WidescreenHudDigitalColumnBEntry = 0x8006DF14;
+constexpr JfgHudBuild::UsAddress WidescreenHudDigitalColumnAEntry = { 0x8006DE64 };
+constexpr JfgHudBuild::UsAddress WidescreenHudDigitalColumnBEntry = { 0x8006DF14 };
 const uint32_t WidescreenHudDigitalColumnOriginal = 0x24E70002; // addiu a3, a3, 2
 const uint32_t WidescreenHudDigitalColumnCompressed = 0x24E70000; // merge one source column
-const uint32_t WidescreenHudDigitalRowAdvanceEntry = 0x8006DF70;
+constexpr JfgHudBuild::UsAddress WidescreenHudDigitalRowAdvanceEntry = { 0x8006DF70 };
 const uint32_t WidescreenHudDigitalRowAdvanceOriginal = 0x2442FFF7; // addiu v0, v0, -9
 const uint32_t WidescreenHudDigitalRowAdvanceCompressed = 0x2442FFF9; // compensate two merged columns
 // func_8006DF90 walks the formatted digit string and advances this cursor by
@@ -923,7 +794,7 @@ const uint32_t WidescreenHudDigitalRowAdvanceCompressed = 0x2442FFF9; // compens
 // The exact 0.75 HUD scale wants a 7.5 stride. Over the three digits this
 // counter ever shows, a flat 8 differs from an alternating 7/8 by one pixel in
 // total, so the alternation is not worth a cave stub.
-const uint32_t WidescreenHudDigitalAdvanceEntry = 0x8006E088;
+constexpr JfgHudBuild::UsAddress WidescreenHudDigitalAdvanceEntry = { 0x8006E088 };
 const uint32_t WidescreenHudDigitalAdvanceOriginal = 0x2673000A; // addiu s3, s3, 10
 const uint32_t WidescreenHudDigitalAdvanceCompressed = 0x26730008; // addiu s3, s3, 8
 
@@ -934,16 +805,17 @@ const uint32_t WidescreenHudDigitalAdvanceCompressed = 0x26730008; // addiu s3, 
 // They are still recognised here so a save state that
 // carries them can be returned to stock.
 const uint32_t WidescreenHudDigitalRetiredCount = 4;
+// US addresses: RetireDeadDigitalPatches translates them where it uses them.
 const GAME_HACK_CODE_PATCH WidescreenHudDigitalRetired[] =
 {
-    { WidescreenHudDigitalColumnAEntry, WidescreenHudDigitalColumnOriginal,
+    { WidescreenHudDigitalColumnAEntry.Us, WidescreenHudDigitalColumnOriginal,
       WidescreenHudDigitalColumnCompressed },
-    { WidescreenHudDigitalColumnBEntry, WidescreenHudDigitalColumnOriginal,
+    { WidescreenHudDigitalColumnBEntry.Us, WidescreenHudDigitalColumnOriginal,
       WidescreenHudDigitalColumnCompressed },
-    { WidescreenHudDigitalRowAdvanceEntry,
+    { WidescreenHudDigitalRowAdvanceEntry.Us,
       WidescreenHudDigitalRowAdvanceOriginal,
       WidescreenHudDigitalRowAdvanceCompressed },
-    { WidescreenHudDigitalAdvanceEntry, WidescreenHudDigitalAdvanceOriginal,
+    { WidescreenHudDigitalAdvanceEntry.Us, WidescreenHudDigitalAdvanceOriginal,
       WidescreenHudDigitalAdvanceCompressed },
 };
 
@@ -992,9 +864,9 @@ const uint32_t WidescreenHudAmmoCode[] =
     0x08016405, // j     0x80059014
     0x030A4021, // addu  t0, t8, t2 ; replay entry delay after X/width are ready
 };
-static_assert(WidescreenHudAmmoStub + sizeof(WidescreenHudAmmoCode) <= WidescreenHudCaveEnd,
+static_assert(WidescreenHudAmmoStub.Us + sizeof(WidescreenHudAmmoCode) <= WidescreenHudCaveEnd.Us,
               "Ammo stub exceeds its reserved cave slot");
-static_assert(WidescreenHudCaveEnd <= 0x800676B4,
+static_assert(WidescreenHudCaveEnd.Us <= 0x800676B4,
               "HUD cave must not overwrite diCpuLogMessage");
 
 // Increment the scope then tail-call the displaced camStandardOrtho. The JAL
@@ -1381,9 +1253,9 @@ const uint32_t WidescreenHudShotGaugeAnchorCode[] =
     0x08019D1C, // j     WidescreenHudRectangleStub + 0x30
     0x25EF00A0, // addiu t7, t7, 160 ; normal: 160 / 224
 };
-static_assert(WidescreenHudShotGaugeWrapperStub + sizeof(WidescreenHudShotGaugeWrapperCode) == WidescreenHudShotGaugeAnchorStub,
+static_assert(WidescreenHudShotGaugeWrapperStub.Us + sizeof(WidescreenHudShotGaugeWrapperCode) == WidescreenHudShotGaugeAnchorStub.Us,
               "Shot-gauge wrapper must end before its rectangle anchor helper");
-static_assert(WidescreenHudShotGaugeAnchorStub + sizeof(WidescreenHudShotGaugeAnchorCode) == WidescreenHudFloydLineStub,
+static_assert(WidescreenHudShotGaugeAnchorStub.Us + sizeof(WidescreenHudShotGaugeAnchorCode) == WidescreenHudFloydLineStub.Us,
               "Shot-gauge helper must fit within the retired ring-display function");
 
 // Only overlay 14's Floyd outline calls this wrapper. The caller has converted
@@ -1425,8 +1297,61 @@ const uint32_t WidescreenHudFloydLineCode[] =
     0x0801B4E4, // stock: j fxDrawLine (current shared HUD guard/transform)
     0x00000000, // nop
 };
-static_assert(WidescreenHudFloydLineStub + sizeof(WidescreenHudFloydLineCode) <= 0x800678C4,
+static_assert(WidescreenHudFloydLineStub.Us + sizeof(WidescreenHudFloydLineCode) <= 0x800678C4,
               "Floyd queue wrapper must end before the next diagnostic entry");
+
+// Words of the HUD listings no relocation can produce, per build. The US word
+// is checked before it is replaced, so an edit that moves one fails loudly
+// (the listing comes back empty) instead of patching the wrong instruction.
+struct HUD_CODE_OVERRIDE
+{
+    const uint32_t * Listing;
+    size_t Index;
+    JfgHudBuild::BuildWord Word;
+};
+const HUD_CODE_OVERRIDE HudCodeOverrides[] =
+{
+    // The displaced camCopyOrthoMatrix load: its upper half is the game's own
+    // lui, so the low half is spelled out (0x800A3128 on US, 0x800A3398 on PAL).
+    { WidescreenHudCamCopyCode, 0, { 0xC4243128, 0xC4243398 } },
+    // "sltiu t7, t9, 4": gameplay video modes are 0..3 on NTSC, 8..11 on PAL.
+    { WidescreenHudFloydLineCode, 4, { 0x2F2F0004, 0x2F2F000C } },
+    // fxOutputLines' displaced low half of the line queue index (0x80103B90 on
+    // US, 0x801035E8 on PAL), replayed after the game's lui moved into the
+    // entry's delay slot.
+    { JfgRocketOverlay::Code, 31, { 0x24A53B90, 0x24A535E8 } },
+};
+
+// A HUD listing for the ROM in hand: relocated, with the overrides above put
+// in. Empty when the build has no HUD support or a word has no translation;
+// every caller treats an empty listing as "do not install".
+std::vector<uint32_t> HudCode(const uint32_t * Listing, size_t Count)
+{
+    std::vector<uint32_t> Code;
+    if (!JfgHudBuild::Relocate(Listing, Count, Code))
+    {
+        return {};
+    }
+    for (const HUD_CODE_OVERRIDE & Override : HudCodeOverrides)
+    {
+        if (Override.Listing != Listing)
+        {
+            continue;
+        }
+        if (Override.Index >= Count || Listing[Override.Index] != Override.Word.Us)
+        {
+            return {};
+        }
+        Code[Override.Index] = Override.Word;
+    }
+    return Code;
+}
+
+template <size_t N>
+std::vector<uint32_t> HudCode(const uint32_t (&Listing)[N])
+{
+    return HudCode(Listing, N);
+}
 
 // These two words were used by the first experimental landing-skip build. They
 // are only restored when exactly that old hook is found in a loaded state; its
@@ -1456,107 +1381,115 @@ uint32_t LegacyLandingCinematicSkipCall = 0x0C019BC0; // jal 0x80066F00
 // 0x80067000 is dormant diCpuTrace diagnostic code. Existing JFG stubs use the
 // same completed diagnostics block, but this reserved range does not overlap
 // any of them. The original words are captured rather than assumed to be zero.
-const uint32_t LandingCinematicSkipStubCode[] =
+//
+// The listing is built for the ROM in hand: its playState globals, the four
+// routines it calls, its table and its return address all move between builds.
+// The comments keep the US spelling of each word.
+const size_t LandingCinematicSkipStubCodeWords = 87;
+std::vector<uint32_t> LandingCinematicSkipStubCode(void)
 {
-    0x3C01800A, // lui   $at, 0x800A
-    0x8C28FCBC, // lw    $t0, 0xFCBC($at)  ; direct E / Return request
-    0x11000003, // beq   $t0, $zero, resume
-    0x00000000, // nop
-    0x10000005, // b     trySkip
-    0x00000000, // nop
-    0x3C1F8004, // resume: lui $ra, 0x8004
-    0x37FF5FF4, // ori   $ra, $ra, 0x5FF4
-    0x03E00008, // jr    $ra
-    0x00000000, // nop
+    const uint32_t Return = LandingCinematicSkipEntry + 0x04;
+    return {
+        WithHi(0x3C010000, LandingCinematicSkipInputAddress), // lui   $at, 0x800A
+        WithLo(0x8C280000, LandingCinematicSkipInputAddress), // lw    $t0, 0xFCBC($at)  ; direct E / Return request
+        0x11000003, // beq   $t0, $zero, resume
+        0x00000000, // nop
+        0x10000005, // b     trySkip
+        0x00000000, // nop
+        0x3C1F0000 | (Return >> 16), // resume: lui $ra, 0x8004
+        0x37FF0000 | (Return & 0xFFFF), // ori   $ra, $ra, 0x5FF4
+        0x03E00008, // jr    $ra
+        0x00000000, // nop
 
-    0x3C0E800A, // trySkip: lui $t6, 0x800A
-    0x81CE3294, // lb    $t6, 0x3294($t6)  ; loading
-    0x27BDFFD8, // addiu $sp, $sp, -0x28
-    0x15C00044, // bne   $t6, $zero, return
-    0x00000000, // nop
+        WithHi(0x3C0E0000, LoadingAddress), // trySkip: lui $t6, 0x800A
+        WithLo(0x81CE0000, LoadingAddress), // lb    $t6, 0x3294($t6)  ; loading
+        0x27BDFFD8, // addiu $sp, $sp, -0x28
+        0x15C00044, // bne   $t6, $zero, return
+        0x00000000, // nop
 
-    0x3C04800A, // lui   $a0, 0x800A
-    0x8484323C, // lh    $a0, 0x323C($a0)  ; currentScene
-    0x3C06800A, // lui   $a2, 0x800A
-    0x24C63248, // addiu $a2, $a2, 0x3248  ; currentSetup
-    0x84D90000, // lh    $t9, 0($a2)
-    0x24180143, // addiu $t8, $zero, 0x0143
-    0x1098000B, // beq   $a0, $t8, story_scene_143
-    0x00000000, // nop
-    0x17200016, // bne   $t9, $zero, landing_check
-    0x00000000, // nop
-    0x28810142, // slti  $at, $a0, 0x0142
-    0x14200013, // bne   $at, $zero, landing_check
-    0x00000000, // nop
-    0x28810148, // slti  $at, $a0, 0x0148
-    0x10200010, // beq   $at, $zero, landing_check
-    0x00000000, // nop
-    0x10000006, // b     story_skip
-    0x00000000, // nop
-    0x2F210004, // story_scene_143: sltiu $at, $t9, 4
-    0x14200003, // bne   $at, $zero, story_skip
-    0x00000000, // nop
-    0x10000009, // b     landing_check
-    0x00000000, // nop
+        WithHi(0x3C040000, CurrentSceneAddress), // lui   $a0, 0x800A
+        WithLo(0x84840000, CurrentSceneAddress), // lh    $a0, 0x323C($a0)  ; currentScene
+        WithHi(0x3C060000, CurrentSetupAddress), // lui   $a2, 0x800A
+        WithLo(0x24C60000, CurrentSetupAddress), // addiu $a2, $a2, 0x3248  ; currentSetup
+        0x84D90000, // lh    $t9, 0($a2)
+        0x24180143, // addiu $t8, $zero, 0x0143
+        0x1098000B, // beq   $a0, $t8, story_scene_143
+        0x00000000, // nop
+        0x17200016, // bne   $t9, $zero, landing_check
+        0x00000000, // nop
+        0x28810142, // slti  $at, $a0, 0x0142
+        0x14200013, // bne   $at, $zero, landing_check
+        0x00000000, // nop
+        0x28810148, // slti  $at, $a0, 0x0148
+        0x10200010, // beq   $at, $zero, landing_check
+        0x00000000, // nop
+        0x10000006, // b     story_skip
+        0x00000000, // nop
+        0x2F210004, // story_scene_143: sltiu $at, $t9, 4
+        0x14200003, // bne   $at, $zero, story_skip
+        0x00000000, // nop
+        0x10000009, // b     landing_check
+        0x00000000, // nop
 
-    0x24040005, // story_skip: addiu $a0, $zero, 5
-    0x2405007F, // addiu $a1, $zero, 0x7F
-    0x0C011D82, // jal   mainFrontInit(5, 0x7F, 0)
-    0x00003025, // or    $a2, $zero, $zero
-    0x0C016ABA, // jal   frontCharSelectSetQuitMode(0)
-    0x00002025, // or    $a0, $zero, $zero
-    0x10000025, // b     return
-    0x00000000, // nop
+        0x24040005, // story_skip: addiu $a0, $zero, 5
+        0x2405007F, // addiu $a1, $zero, 0x7F
+        CallTo(MainFrontInitFunction), // jal   mainFrontInit(5, 0x7F, 0)
+        0x00003025, // or    $a2, $zero, $zero
+        CallTo(FrontCharSelectSetQuitModeFunction), // jal   frontCharSelectSetQuitMode(0)
+        0x00002025, // or    $a0, $zero, $zero
+        0x10000025, // b     return
+        0x00000000, // nop
 
-    0x3C028006, // landing_check: lui $v0, 0x8006
-    0x24437160, // addiu $v1, $v0, 0x7160  ; LandingCinematicSkipStubTable
-    0x846F0002, // loop: lh $t7, 2($v1)    ; destination
-    0x2405FFFF, // addiu $a1, $zero, -1
-    0x10AF001F, // beq   $a1, $t7, return
-    0x3C04800A, // lui   $a0, 0x800A
-    0x3C06800A, // lui   $a2, 0x800A
-    0x8484323C, // lh    $a0, 0x323C($a0)  ; currentScene
-    0x24C63248, // addiu $a2, $a2, 0x3248  ; currentSetup
-    0x94620000, // lhu   $v0, 0($v1)       ; scene << 4 | setup
-    0x00000000, // nop
-    0x0002C102, // srl   $t8, $v0, 4
-    0x14980013, // bne   $a0, $t8, next
-    0x00000000, // nop
-    0x84D90000, // lh    $t9, 0($a2)
-    0x3048000F, // andi  $t0, $v0, 0x000F
-    0x1728000F, // bne   $t9, $t0, next
-    0x00000000, // nop
-    0x0C016297, // jal   frontGetMode
-    0xAFA30024, // sw    $v1, 0x24($sp)
-    0x8FA30024, // lw    $v1, 0x24($sp)
-    0x3C05800A, // lui   $a1, 0x800A
-    0x84640002, // lh    $a0, 2($v1)       ; destination scene
-    0x84A53260, // lh    $a1, 0x3260($a1)  ; nextCharacter
-    0x240A0001, // addiu $t2, $zero, 1
-    0xAFAA0010, // sw    $t2, 0x10($sp)
-    0xAFA00014, // sw    $zero, 0x14($sp)
-    0x00003025, // or    $a2, $zero, $zero
-    0x0C011997, // jal   mainChangeLevel
-    0x00403825, // or    $a3, $v0, $zero   ; frontGetMode result
-    0x10000005, // b     return
-    0x00000000, // nop
-    0x846B0006, // next: lh $t3, 6($v1)
-    0x24630004, // addiu $v1, $v1, 4
-    0x14ABFFDF, // bne   $a1, $t3, loop
-    0x00000000, // nop
-    0x3C1F8004, // return: lui $ra, 0x8004
-    0x37FF5FF4, // ori   $ra, $ra, 0x5FF4
-    0x27BD0028, // addiu $sp, $sp, 0x28
-    0x03E00008, // jr    $ra
-    0x00000000, // nop
-};
+        WithHi(0x3C020000, LandingCinematicSkipStubTable), // landing_check: lui $v0, 0x8006
+        WithLo(0x24430000, LandingCinematicSkipStubTable), // addiu $v1, $v0, 0x7160  ; LandingCinematicSkipStubTable
+        0x846F0002, // loop: lh $t7, 2($v1)    ; destination
+        0x2405FFFF, // addiu $a1, $zero, -1
+        0x10AF001F, // beq   $a1, $t7, return
+        WithHi(0x3C040000, CurrentSceneAddress), // lui   $a0, 0x800A
+        WithHi(0x3C060000, CurrentSetupAddress), // lui   $a2, 0x800A
+        WithLo(0x84840000, CurrentSceneAddress), // lh    $a0, 0x323C($a0)  ; currentScene
+        WithLo(0x24C60000, CurrentSetupAddress), // addiu $a2, $a2, 0x3248  ; currentSetup
+        0x94620000, // lhu   $v0, 0($v1)       ; scene << 4 | setup
+        0x00000000, // nop
+        0x0002C102, // srl   $t8, $v0, 4
+        0x14980013, // bne   $a0, $t8, next
+        0x00000000, // nop
+        0x84D90000, // lh    $t9, 0($a2)
+        0x3048000F, // andi  $t0, $v0, 0x000F
+        0x1728000F, // bne   $t9, $t0, next
+        0x00000000, // nop
+        CallTo(FrontGetModeFunction), // jal   frontGetMode
+        0xAFA30024, // sw    $v1, 0x24($sp)
+        0x8FA30024, // lw    $v1, 0x24($sp)
+        WithHi(0x3C050000, NextCharacterAddress), // lui   $a1, 0x800A
+        0x84640002, // lh    $a0, 2($v1)       ; destination scene
+        WithLo(0x84A50000, NextCharacterAddress), // lh    $a1, 0x3260($a1)  ; nextCharacter
+        0x240A0001, // addiu $t2, $zero, 1
+        0xAFAA0010, // sw    $t2, 0x10($sp)
+        0xAFA00014, // sw    $zero, 0x14($sp)
+        0x00003025, // or    $a2, $zero, $zero
+        CallTo(MainChangeLevelFunction), // jal   mainChangeLevel
+        0x00403825, // or    $a3, $v0, $zero   ; frontGetMode result
+        0x10000005, // b     return
+        0x00000000, // nop
+        0x846B0006, // next: lh $t3, 6($v1)
+        0x24630004, // addiu $v1, $v1, 4
+        0x14ABFFDF, // bne   $a1, $t3, loop
+        0x00000000, // nop
+        0x3C1F0000 | (Return >> 16), // return: lui $ra, 0x8004
+        0x37FF0000 | (Return & 0xFFFF), // ori   $ra, $ra, 0x5FF4
+        0x27BD0028, // addiu $sp, $sp, 0x28
+        0x03E00008, // jr    $ra
+        0x00000000, // nop
+    };
+}
 
 // The stub above walks a scene-to-destination table that begins 0x160 bytes
 // into the cave (LandingCinematicSkipStub + 0x160, just past the 87 code words).
 // A held E/Return plus a match on (currentScene, currentSetup) warps past the
 // cinematic through mainChangeLevel. Keeping the table as data - rather than
-// hand-encoded words - lets the catalogue recovered from JfgCinematicProbe.log
-// grow by editing a list. BuildLandingCinematicSkipImage stitches the code, the
+// hand-encoded words - lets the catalogue (first recovered with a cinematic
+// probe that has since been removed) grow by editing a list. BuildLandingCinematicSkipImage stitches the code, the
 // padding, the encoded entries and the terminating sentinel back into the exact
 // image the stub expects.
 struct JFG_CINEMATIC_SKIP_ENTRY
@@ -1574,8 +1507,7 @@ const uint32_t LandingCinematicSkipTableWordOffset = 0x160 / sizeof(uint32_t);
 const uint32_t LandingCinematicSkipImageWordLimit = 0x200 / sizeof(uint32_t);
 
 static_assert(
-    sizeof(LandingCinematicSkipStubCode) / sizeof(uint32_t) <=
-        LandingCinematicSkipTableWordOffset,
+    LandingCinematicSkipStubCodeWords <= LandingCinematicSkipTableWordOffset,
     "landing cinematic skip stub code overruns its table offset");
 
 // Live table. First the seventeen validated in-game, then the highest-confidence
@@ -1706,10 +1638,12 @@ static_assert(sizeof(LandingCinematicSkipStaged) > 0,
 // to the table offset, the encoded live entries, then the -1 sentinel.
 std::vector<uint32_t> BuildLandingCinematicSkipImage(void)
 {
-    std::vector<uint32_t> Image(
-        LandingCinematicSkipStubCode,
-        LandingCinematicSkipStubCode +
-            sizeof(LandingCinematicSkipStubCode) / sizeof(uint32_t));
+    std::vector<uint32_t> Image = LandingCinematicSkipStubCode();
+    if (Image.size() != LandingCinematicSkipStubCodeWords)
+    {
+        // The listing and its word count disagree: install nothing.
+        return {};
+    }
     Image.resize(LandingCinematicSkipTableWordOffset, 0);
     for (const JFG_CINEMATIC_SKIP_ENTRY & Entry : LandingCinematicSkipTable)
     {
@@ -1869,7 +1803,6 @@ const uint32_t TransformXOffset = 0x0C;
 const uint32_t TransformYOffset = 0x10;
 const uint32_t TransformZOffset = 0x14;
 
-
 // Instruction words the two builds spell differently, see JFG_ADDRESSES.
 // Kept beside the addresses so a use site reads the same either way.
 uint32_t CameraHelperCallWord = 0x0C00CFE9;
@@ -1881,6 +1814,8 @@ uint32_t SchedulerSignatureWord0 = 0x8E480300;
 uint32_t SchedulerSignatureWord2 = 0x2D210002;
 uint32_t FramePacing60SignatureWord0 = 0x8DCEECCC;
 uint32_t FramePacingSignatureWord1 = 0x2442ECAB;
+// sb $t7, 0($s1): the gVideoDeltaTime = 1 store the 60fps branch skips ($s2 on PAL).
+uint32_t FramePacing60StoreWord = 0xA22F0000;
 uint32_t CameraHelperCallReplacement = 0x0C025A33;
 // The same store with its source register forced to $zero, so it follows
 // whichever base register the build happened to pick.
@@ -1974,29 +1909,30 @@ CAMERA_CODE_PATCH CameraCodePatches[] =
     { CameraHelperBase + 0x3C, 0x00000000, 0x03E00008, false },
 };
 
-// Left as US addresses on purpose. These live in an overlay resident in
-// expansion RAM, not in the base segment the address table covers, so they
-// cannot be mapped the same way. The feature is disabled, and its table is
-// verified before any write, so on another build it simply declines.
-GAME_HACK_CODE_PATCH BoyAimPatches[] =
+// Juno's arm aim in overlay 16. The module holds two copies of the same eight
+// words, one per group anchor (BoyAimFirstGroupOffset / SecondGroupOffset);
+// the offsets here are from that anchor and match in every build. Resolved
+// against the live module in PatchManualAimCode; the US build used to spell
+// them as the fixed addresses 0x8035C788.. and 0x8035CD28...
+struct BOY_AIM_PATCH
 {
-    { 0x8035C7B8, 0x87A50056, 0x24050000 },
-    { 0x8035C7BC, 0x860401CE, 0x00002025 },
-    { 0x8035C7D0, 0x87A50054, 0x860501E2 },
-    { 0x8035C7D4, 0x860401D0, 0x00A02025 },
-    { 0x8035CD58, 0x87A50056, 0x24050000 },
-    { 0x8035CD5C, 0x860401CE, 0x00002025 },
-    { 0x8035CD70, 0x87A50054, 0x860501E2 },
-    { 0x8035CD74, 0x860401D0, 0x00A02025 },
-    { 0x8035C788, 0x860401DC, 0x00002025 },
-    { 0x8035C78C, 0x87A50056, 0x24050000 },
-    { 0x8035C7A0, 0x87A50054, 0x860501E2 },
-    { 0x8035C7A4, 0x860401DE, 0x00A02025 },
-    { 0x8035CD28, 0x860401DC, 0x00002025 },
-    { 0x8035CD2C, 0x87A50056, 0x24050000 },
-    { 0x8035CD40, 0x87A50054, 0x860501E2 },
-    { 0x8035CD44, 0x860401DE, 0x00A02025 },
+    uint32_t Offset;
+    uint32_t Original;
+    uint32_t Replacement;
 };
+const BOY_AIM_PATCH BoyAimGroupPatches[] =
+{
+    { 0x00, 0x860401DC, 0x00002025 }, // lh $a0, 0x1DC($s0) -> or $a0, $zero, $zero
+    { 0x04, 0x87A50056, 0x24050000 }, // lh $a1, 0x56($sp)  -> addiu $a1, $zero, 0
+    { 0x18, 0x87A50054, 0x860501E2 }, // lh $a1, 0x54($sp)  -> lh $a1, 0x1E2($s0)
+    { 0x1C, 0x860401DE, 0x00A02025 }, // lh $a0, 0x1DE($s0) -> or $a0, $a1, $zero
+    { 0x30, 0x87A50056, 0x24050000 },
+    { 0x34, 0x860401CE, 0x00002025 },
+    { 0x48, 0x87A50054, 0x860501E2 },
+    { 0x4C, 0x860401D0, 0x00A02025 },
+};
+const size_t BoyAimGroupPatchCount = sizeof(BoyAimGroupPatches) / sizeof(BoyAimGroupPatches[0]);
+const uint32_t BoyAimGroupSize = 0x50;
 
 // controlGetManualAim places the reticle from the stick with one halfword
 // store per axis (ManualAimCursorXStore / YStore), each preceded by the
@@ -2076,11 +2012,6 @@ GAME_HACK_CODE_PATCH SchedulerReleasePatches[] =
     { SchedulerFrameGateAdd, 0x25090001, 0x25090002 },
 };
 
-GAME_HACK_CODE_PATCH TripleBufferPatches[] =
-{
-    { TripleBufferRequest, 0x308E0001, 0x240E0001 }, // addiu $t6, $zero, 1
-};
-
 // Appends a wake sample on alternate calls only, see WaterWakeRingRateEntry.
 // The two nops around the "wake+0x08 is zero" test and the nop in the branch
 // delay slot below it are enough room, so no stub is needed. $t5 is dead here
@@ -2092,139 +2023,6 @@ GAME_HACK_CODE_PATCH WaterWakeRingRatePatches[] =
     { WaterWakeRingRateEntry + 0x08, 0x00000000, 0x01A36825 }, // or   $t5, $t5, $v1
     { WaterWakeRingRateEntry + 0x1C, 0x1020002E, 0x002D0824 }, // and  $at, $at, $t5
     { WaterWakeRingRateEntry + 0x20, 0x00000000, 0x1020002D }, // beq  $at, $zero, 0x8006ABA0
-};
-
-// An old save state may still contain the first wake gate. Restore its call and
-// release its former stub before installing the new, delta-correct version.
-GAME_HACK_CODE_PATCH WaterWakeLegacyGatePatches[] =
-{
-    { WaterWakeGateStub + 0x00, 0x00000000, 0x3C01800A }, // lui  $at, 0x800A
-    { WaterWakeGateStub + 0x04, 0x00000000, 0x8C28FCE4 }, // lw   $t0, -0x31C($at)
-    { WaterWakeGateStub + 0x08, 0x00000000, 0x31080004 }, // andi $t0, $t0, 4
-    { WaterWakeGateStub + 0x0C, 0x00000000, 0x15000003 }, // bne  $t0, $zero, update
-    { WaterWakeGateStub + 0x10, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeGateStub + 0x14, 0x00000000, 0x03E00008 }, // jr   $ra
-    { WaterWakeGateStub + 0x18, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeGateStub + 0x1C, 0x00000000, 0x0801AC24 }, // j    wakeUpdateRipple
-    { WaterWakeGateStub + 0x20, 0x00000000, 0x00000000 }, // nop
-};
-
-// Restores the direct opacity experiment if it is present in an old save state.
-GAME_HACK_CODE_PATCH WaterWakeLegacyRatePatches[] =
-{
-    { WaterWakeRingRateEntry - 0x8C, 0x24580040, 0x24580020 }, // +64 to +32
-    { WaterWakeRingRateEntry - 0x3C, 0x25CFFFC0, 0x25CFFFE0 }, // -64 to -32
-    { WaterWakeUpdate + 0x38, 0x25F80020, 0x25F80010 }, // +32 to +16
-    { WaterWakeUpdate + 0x64, 0x254BFFE0, 0x254BFFF0 }, // -32 to -16
-};
-
-// On alternate calls, return immediately. The retained call keeps its native
-// delta of one: this deliberately slows both fixed-step and delta-scaled wake
-// lifetimes to the original 30Hz cadence. The final call patch is intentionally
-// last.
-GAME_HACK_CODE_PATCH WaterWakeGatePatches[] =
-{
-    { WaterWakeGateStub + 0x00, 0x00000000, 0x3C018010 }, // lui   $at, 0x8010
-    { WaterWakeGateStub + 0x04, 0x00000000, 0x8C28D7C0 }, // lw    $t0, -0x2840($at)
-    { WaterWakeGateStub + 0x08, 0x00000000, 0x31080001 }, // andi  $t0, $t0, 1
-    { WaterWakeGateStub + 0x0C, 0x00000000, 0x15000004 }, // bne   $t0, $zero, return
-    { WaterWakeGateStub + 0x10, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeGateStub + 0x14, 0x00000000, 0x00000000 }, // preserve caller's $a1
-    { WaterWakeGateStub + 0x18, 0x00000000, 0x0801AC24 }, // j     wakeUpdateRipple
-    { WaterWakeGateStub + 0x1C, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeGateStub + 0x20, 0x00000000, 0x03E00008 }, // jr    $ra
-    { WaterWakeGateStub + 0x24, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeLegacyCallSite, WaterWakeUpdateCall, WaterWakeGateJump },
-};
-
-// fxDrawLevelEffects runs immediately after the wake pass. This temporary
-// probe removes it to determine whether it overwrites the wake at 60fps.
-GAME_HACK_CODE_PATCH WaterWakeDrawProbePatches[] =
-{
-    { WaterWakeDrawFallbackEntry, 0x0C01A2D5, 0x00000000 }, // jal fxDrawLevelEffects -> nop
-};
-
-// The original path culls the wake before the wake-draw pass builds its input
-// list. The hook preserves that path byte-for-byte for normal objects, while
-// the small marker check sends only water wakes to the existing list append.
-// The stub ends before the Squaddie hooks at 0x8009FD60.
-GAME_HACK_CODE_PATCH WaterWakeCullingPatches[] =
-{
-    { WaterWakeCullingStub + 0x00, 0x00000000, 0x8C480058 }, // lw    $t0, 0x58($v0)
-    { WaterWakeCullingStub + 0x04, 0x00000000, 0x11000008 }, // beq   $t0, $zero, normal
-    { WaterWakeCullingStub + 0x08, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeCullingStub + 0x0C, 0x00000000, 0x91090000 }, // lbu   $t1, 0($t0)
-    { WaterWakeCullingStub + 0x10, 0x00000000, 0x24010040 }, // addiu $at, $zero, 0x40
-    { WaterWakeCullingStub + 0x14, 0x00000000, 0x15210004 }, // bne   $t1, $at, normal
-    { WaterWakeCullingStub + 0x18, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeCullingStub + 0x1C, 0x00000000, 0x8FAE0064 }, // lw    $t6, 0x64($sp)
-    { WaterWakeCullingStub + 0x20, 0x00000000, 0x080051C6 }, // j     0x80014718
-    { WaterWakeCullingStub + 0x24, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeCullingStub + 0x28, 0x00000000, 0x11A00008 }, // beq   $t5, $zero, skip
-    { WaterWakeCullingStub + 0x2C, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeCullingStub + 0x30, 0x00000000, 0x0C0057B6 }, // jal   0x80015ED8
-    { WaterWakeCullingStub + 0x34, 0x00000000, 0x00402021 }, // addu  $a0, $v0, $zero
-    { WaterWakeCullingStub + 0x38, 0x00000000, 0x10400004 }, // beq   $v0, $zero, skip
-    { WaterWakeCullingStub + 0x3C, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeCullingStub + 0x40, 0x00000000, 0x8FAE0064 }, // lw    $t6, 0x64($sp)
-    { WaterWakeCullingStub + 0x44, 0x00000000, 0x080051C6 }, // j     0x80014718
-    { WaterWakeCullingStub + 0x48, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeCullingStub + 0x4C, 0x00000000, 0x080051BF }, // j     0x800146FC
-    { WaterWakeCullingStub + 0x50, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeCullingEntry, 0x11A00005, WaterWakeCullingJump },
-};
-
-// Save the original return address, reset the texture-display-list cache, then
-// draw the selected wake. The reset is local to this effect and avoids carrying
-// a stale texture state from the preceding 60fps graphics task.
-// This stays before the optional Squaddie hooks at 0x8009FD60.
-GAME_HACK_CODE_PATCH WaterWakeDrawFallbackPatches[] =
-{
-    { WaterWakeDrawFallbackStub + 0x00, 0x00000000, 0xAFBF0040 }, // sw    $ra, 0x40($sp)
-    { WaterWakeDrawFallbackStub + 0x04, 0x00000000, 0x02C02021 }, // addu  $a0, $s6, $zero
-    { WaterWakeDrawFallbackStub + 0x08, 0x00000000, 0x0C0156E0 }, // jal   texDPInit
-    { WaterWakeDrawFallbackStub + 0x0C, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeDrawFallbackStub + 0x10, 0x00000000, 0x3C08800A }, // lui   $t0, 0x800A
-    { WaterWakeDrawFallbackStub + 0x14, 0x00000000, 0x8D04FCEC }, // lw    $a0, -0x314($t0)
-    { WaterWakeDrawFallbackStub + 0x18, 0x00000000, 0x24090001 }, // addiu $t1, $zero, 1
-    { WaterWakeDrawFallbackStub + 0x1C, 0x00000000, 0xAD09FCF0 }, // sw    $t1, -0x310($t0)
-    { WaterWakeDrawFallbackStub + 0x20, 0x00000000, 0x10800004 }, // beq   $a0, $zero, resume
-    { WaterWakeDrawFallbackStub + 0x24, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeDrawFallbackStub + 0x28, 0x00000000, 0x02C02821 }, // addu  $a1, $s6, $zero
-    { WaterWakeDrawFallbackStub + 0x2C, 0x00000000, 0x0C01ADA7 }, // jal   wakeDrawRipple
-    { WaterWakeDrawFallbackStub + 0x30, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeDrawFallbackStub + 0x34, 0x00000000, 0x8FBF0040 }, // lw    $ra, 0x40($sp)
-    { WaterWakeDrawFallbackStub + 0x38, 0x00000000, 0x0800532A }, // j     0x80014CA8
-    { WaterWakeDrawFallbackStub + 0x3C, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeDrawFallbackStub + 0x44, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeDrawFallbackEntry, 0x0C01A2D5, WaterWakeDrawFallbackJump },
-};
-
-GAME_HACK_CODE_PATCH WaterWakeFrameRatePatches[] =
-{
-    { WaterWakeFrameRateStub + 0x00, 0x00000000, 0x314C0001 }, // andi  $t4, $t2, 1
-    { WaterWakeFrameRateStub + 0x04, 0x00000000, 0x11800004 }, // beq   $t4, $zero, decrement
-    { WaterWakeFrameRateStub + 0x08, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeFrameRateStub + 0x0C, 0x00000000, 0x01406021 }, // addu  $t4, $t2, $zero
-    { WaterWakeFrameRateStub + 0x10, 0x00000000, 0x0801AC69 }, // j     0x8006B1A4
-    { WaterWakeFrameRateStub + 0x14, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeFrameRateStub + 0x18, 0x00000000, 0x016A6023 }, // subu  $t4, $t3, $t2
-    { WaterWakeFrameRateStub + 0x1C, 0x00000000, 0x0801AC69 }, // j     0x8006B1A4
-    { WaterWakeFrameRateStub + 0x20, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeFrameRateEntry, 0x016A6023, WaterWakeFrameRateJump },
-};
-
-// The stock call already has a1=s6 in its delay slot. Record its exact wake
-// pointer and tail-call the original routine, preserving its original return.
-GAME_HACK_CODE_PATCH WaterWakeStockDrawProbePatches[] =
-{
-    { WaterWakeStockDrawStub + 0x00, 0x00000000, 0x3C08800A }, // lui   $t0, 0x800A
-    { WaterWakeStockDrawStub + 0x04, 0x00000000, 0xAD04FCF4 }, // sw    $a0, -0x30C($t0)
-    { WaterWakeStockDrawStub + 0x08, 0x00000000, 0x24090001 }, // addiu $t1, $zero, 1
-    { WaterWakeStockDrawStub + 0x0C, 0x00000000, 0xAD09FCF8 }, // sw    $t1, -0x308($t0)
-    { WaterWakeStockDrawStub + 0x10, 0x00000000, 0x0801ADA7 }, // j     wakeDrawRipple
-    { WaterWakeStockDrawStub + 0x14, 0x00000000, 0x00000000 }, // nop
-    { WaterWakeStockDrawEntry, 0x0C01ADA7, WaterWakeStockDrawJump },
 };
 
 // The stub is written before the jump that reaches it.
@@ -2286,78 +2084,6 @@ GAME_HACK_CODE_PATCH ObjectMovePatches[] =
     { ObjectMoveStub + 0xC8, 0x00000000, 0x0800268A }, // resume: j 0x80009A28
     { ObjectMoveStub + 0xCC, 0x00000000, 0x00000000 }, // nop
     { ObjectMoveEntry, 0x8FA70040, ObjectMoveJump },
-};
-
-// controlFSUvels produces a controlled character's world-space X/Y/Z velocity
-// at +0x18. Floyd is a separate character object from the on-foot player, so
-// the hook deliberately applies to the helper's current object whenever the
-// robot-only lateral flag is set.
-// The hook leaves the native calculation intact, then turns its horizontal
-// vector by 90 degrees when Floyd's C-button strafe flag is active. The game's
-// own thrust curve therefore supplies both acceleration and top speed.
-GAME_HACK_CODE_PATCH PlayerVelocityPatches[] =
-{
-    { PlayerVelocityStub + 0x00, 0x00000000, 0x3C01800A },  // lui   $at, 0x800A
-    { PlayerVelocityStub + 0x04, 0x00000000, 0x8C29FCE4 },  // lw    $t1, 0xFCE4($at)
-    { PlayerVelocityStub + 0x08, 0x00000000, 0x312A0001 },  // andi  $t2, $t1, 1
-    { PlayerVelocityStub + 0x0C, 0x00000000, 0x11400010 },  // beq   $t2, $zero, return
-    { PlayerVelocityStub + 0x10, 0x00000000, 0x8FA80024 },  // lw    $t0, 0x24($sp)
-    { PlayerVelocityStub + 0x14, 0x00000000, 0x8C2BFCE8 },  // lw    $t3, 0xFCE8($at)
-    { PlayerVelocityStub + 0x18, 0x00000000, 0x256B0001 },  // addiu $t3, $t3, 1
-    { PlayerVelocityStub + 0x1C, 0x00000000, 0xAC2BFCE8 },  // sw    $t3, 0xFCE8($at)
-    { PlayerVelocityStub + 0x20, 0x00000000, 0xC5000018 },  // lwc1  $f0, 0x18($t0)
-    { PlayerVelocityStub + 0x24, 0x00000000, 0x312A0002 },  // andi  $t2, $t1, 2
-    { PlayerVelocityStub + 0x28, 0x00000000, 0x11400006 },  // beq   $t2, $zero, left
-    { PlayerVelocityStub + 0x2C, 0x00000000, 0xC5020020 },  // lwc1  $f2, 0x20($t0)
-    { PlayerVelocityStub + 0x30, 0x00000000, 0x46001107 },  // neg.s $f4, $f2
-    { PlayerVelocityStub + 0x34, 0x00000000, 0xE5040018 },  // swc1  $f4, 0x18($t0)
-    { PlayerVelocityStub + 0x38, 0x00000000, 0xE5000020 },  // swc1  $f0, 0x20($t0)
-    { PlayerVelocityStub + 0x3C, 0x00000000, 0x10000004 },  // b     return
-    { PlayerVelocityStub + 0x40, 0x00000000, 0x00000000 },  // nop
-    { PlayerVelocityStub + 0x44, 0x00000000, 0xE5020018 },  // left: swc1 $f2, 0x18($t0)
-    { PlayerVelocityStub + 0x48, 0x00000000, 0x46000107 },  // neg.s $f4, $f0
-    { PlayerVelocityStub + 0x4C, 0x00000000, 0xE5040020 },  // swc1  $f4, 0x20($t0)
-    { PlayerVelocityStub + 0x50, 0x00000000, 0x8FBF0014 },  // return: lw $ra, 0x14($sp)
-    { PlayerVelocityStub + 0x54, 0x00000000, 0x27BD0020 },  // addiu $sp, $sp, 0x20
-    { PlayerVelocityStub + 0x58, 0x00000000, 0x03E00008 },  // jr    $ra
-    { PlayerVelocityStub + 0x5C, 0x00000000, 0x00000000 },  // nop
-    { PlayerVelocityEntry + 0x00, 0x8FBF0014, PlayerVelocityJump },
-    { PlayerVelocityEntry + 0x04, 0x27BD0020, 0x00000000 },
-};
-
-// sidekickpadMovePlayer prepares objMoveXYZ(Floyd, dx, dy, dz). Redirecting
-// only this call leaves its collision and all surrounding mission logic intact
-// while rotating the final horizontal delta for Q/D.
-const uint32_t FloydMoveCallHookCode[] =
-{
-    0x3C01800A, // lui   $at, 0x800A
-    0x8C2BFCE8, // lw    $t3, 0xFCE8($at)
-    0x256B0001, // addiu $t3, $t3, 1
-    0xAC2BFCE8, // sw    $t3, 0xFCE8($at)
-    0x8C29FCE4, // lw    $t1, 0xFCE4($at)
-    0xAC29FCEC, // sw    $t1, 0xFCEC($at)
-    0x312A0001, // andi  $t2, $t1, 1
-    0x11400011, // beq   $t2, $zero, call objMoveXYZ
-    0x00000000, // nop
-    0x312A0002, // andi  $t2, $t1, 2
-    0x11400009, // beq   $t2, $zero, move left
-    0x00000000, // nop
-    0x00A04025, // move right: or $t0, $a1, $zero
-    0x44870000, // mtc1  $a3, $f0
-    0x46000087, // neg.s $f2, $f0
-    0x44051000, // mfc1  $a1, $f2
-    0x01003825, // or    $a3, $t0, $zero
-    0x10000006, // b     call objMoveXYZ
-    0x00000000, // nop
-    0x00A04025, // move left: or $t0, $a1, $zero
-    0x44850000, // mtc1  $a1, $f0
-    0x46000087, // neg.s $f2, $f0
-    0x00E02825, // or    $a1, $a3, $zero
-    0x44071000, // mfc1  $a3, $f2
-    FloydMoveObjMoveCallOriginal, // call objMoveXYZ
-    FloydMoveObjMoveDelayOriginal,
-    0x00000000, // j sidekickpadMovePlayer + 0x208 (filled at install time)
-    0x00000000, // nop
 };
 
 // Integrates our own lateral velocity and adds it to the object velocity along
@@ -2462,166 +2188,6 @@ const uint32_t SidekickVerticalHookCode[] =
 static_assert(sizeof(SidekickStrafeHookCode) <= 0xC0, "Floyd lateral cave overflow");
 static_assert(sizeof(SidekickVerticalHookCode) <= 0xC4, "Floyd vertical cave overflow");
 
-// sidekickpadCamera writes the mission camera position in the delay slot of
-// this call. The trampoline therefore runs after its native X/Z calculation,
-// turns just the frame displacement while Q/D is held, then tail-calls the
-// original routine so the caller resumes exactly as before.
-const uint32_t FloydCameraLateralHookCode[] =
-{
-    0x3C01800A, // lui   $at, 0x800A
-    0xC600000C, // lwc1  $f0, 0x0C($s0)
-    0xC6020014, // lwc1  $f2, 0x14($s0)
-    0x8C2BFCB8, // lw    $t3, 0xFCB8($at)
-    0x160B0026, // bne   $s0, $t3, initialise
-    0x00000000, // nop
-    0xC424FCB0, // lwc1  $f4, 0xFCB0($at)
-    0xC426FCB4, // lwc1  $f6, 0xFCB4($at)
-    0x46040201, // sub.s $f8, $f0, $f4
-    0x46061281, // sub.s $f10, $f2, $f6
-    0x8C29FCE4, // lw    $t1, 0xFCE4($at)
-    0x312A0001, // andi  $t2, $t1, 1
-    0x11400019, // beq   $t2, $zero, keep native movement
-    0x00000000, // nop
-    0x8C2BFCE8, // lw    $t3, 0xFCE8($at)
-    0x256B0001, // addiu $t3, $t3, 1
-    0xAC2BFCE8, // sw    $t3, 0xFCE8($at)
-    0x312A0002, // andi  $t2, $t1, 2
-    0x11400008, // beq   $t2, $zero, move left
-    0x00000000, // nop
-    0x46005307, // neg.s $f12, $f10
-    0x460C2100, // add.s $f4, $f4, $f12
-    0xE604000C, // swc1  $f4, 0x0C($s0)
-    0x46083180, // add.s $f6, $f6, $f8
-    0xE6060014, // swc1  $f6, 0x14($s0)
-    0x10000007, // b     store rotated movement
-    0x00000000, // nop
-    0x460A2100, // move left: add.s $f4, $f4, $f10
-    0xE604000C, // swc1  $f4, 0x0C($s0)
-    0x46083181, // sub.s $f6, $f6, $f8
-    0xE6060014, // swc1  $f6, 0x14($s0)
-    0x10000001, // b     store rotated movement
-    0x00000000, // nop
-    0xE424FCB0, // store rotated: swc1 $f4, 0xFCB0($at)
-    0xE426FCB4, // swc1  $f6, 0xFCB4($at)
-    0xAC30FCB8, // sw    $s0, 0xFCB8($at)
-    FloydCameraLateralTail,
-    0x00000000, // nop
-    0xE420FCB0, // keep native: swc1 $f0, 0xFCB0($at)
-    0xE422FCB4, // swc1  $f2, 0xFCB4($at)
-    0xAC30FCB8, // sw    $s0, 0xFCB8($at)
-    FloydCameraLateralTail,
-    0x00000000, // nop
-    0xE420FCB0, // initialise: swc1 $f0, 0xFCB0($at)
-    0xE422FCB4, // swc1  $f2, 0xFCB4($at)
-    0xAC30FCB8, // sw    $s0, 0xFCB8($at)
-    FloydCameraLateralTail,
-    0x00000000, // nop
-};
-
-// The state-7 branch advances Floyd's object before sidekickControl returns.
-// Turn that final transform delta here, where no later game update in the
-// frame can overwrite it. The delay slot preserves the original ra restore;
-// the stub performs the remaining epilogue itself.
-const uint32_t SidekickLateralMoveHookCode[] =
-{
-    0x3C01800A, // lui   $at, 0x800A
-    0x8C28FCA0, // lw    $t0, 0xFCA0($at)
-    0x11000027, // beq   $t0, $zero, return
-    0x00000000, // nop
-    0x8C29FCE4, // lw    $t1, 0xFCE4($at)
-    0x312A0001, // andi  $t2, $t1, 1
-    0x11400025, // beq   $t2, $zero, track native position
-    0xC500000C, // lwc1  $f0, 0x0C($t0)
-    0xC5020014, // lwc1  $f2, 0x14($t0)
-    0x8C2BFCD8, // lw    $t3, 0xFCD8($at)
-    0x150B0021, // bne   $t0, $t3, initialise
-    0x00000000, // nop
-    0xC424FCD0, // lwc1  $f4, 0xFCD0($at)
-    0xC426FCD4, // lwc1  $f6, 0xFCD4($at)
-    0x46040201, // sub.s $f8, $f0, $f4
-    0x46061281, // sub.s $f10, $f2, $f6
-    0x312A0002, // andi  $t2, $t1, 2
-    0x1140000A, // beq   $t2, $zero, move left
-    0x00000000, // nop
-    0x46005307, // move right: neg.s $f12, $f10
-    0x460C2100, // add.s $f4, $f4, $f12
-    0xE504000C, // swc1  $f4, 0x0C($t0)
-    0x46083180, // add.s $f6, $f6, $f8
-    0xE5060014, // swc1  $f6, 0x14($t0)
-    0xE424FCD0, // swc1  $f4, 0xFCD0($at)
-    0xE426FCD4, // swc1  $f6, 0xFCD4($at)
-    0x10000009, // b     finish
-    0x00000000, // nop
-    0x460A2100, // move left: add.s $f4, $f4, $f10
-    0xE504000C, // swc1  $f4, 0x0C($t0)
-    0x46083181, // sub.s $f6, $f6, $f8
-    0xE5060014, // swc1  $f6, 0x14($t0)
-    0xE424FCD0, // swc1  $f4, 0xFCD0($at)
-    0xE426FCD4, // swc1  $f6, 0xFCD4($at)
-    0x10000001, // b     finish
-    0x00000000, // nop
-    0x8C2BFCE8, // finish: lw $t3, 0xFCE8($at)
-    0x256B0001, // addiu $t3, $t3, 1
-    0xAC2BFCE8, // sw    $t3, 0xFCE8($at)
-    0xAC28FCD8, // sw    $t0, 0xFCD8($at)
-    0x03E00008, // jr    $ra
-    0x00000000, // nop
-    0x03E00008, // return: jr $ra
-    0x00000000, // nop
-    0xE420FCD0, // track native position: swc1 $f0, 0xFCD0($at)
-    0xE422FCD4, // swc1  $f2, 0xFCD4($at)
-    0xAC28FCD8, // sw    $t0, 0xFCD8($at)
-    0x03E00008, // jr    $ra
-    0x00000000, // nop
-};
-
-// Capture sidekickControl's Object argument before its state dispatch. The
-// tail hook uses this saved pointer after the original epilogue has restored
-// the stack, so this stub deliberately changes no game state.
-const uint32_t SidekickControlProbeCode[] =
-{
-    0x8FAD00E8, // lw    $t5, 0xE8($sp)
-    0x3C01800A, // lui   $at, 0x800A
-    0x8FA80120, // lw    $t0, 0x120($sp)
-    0xAC28FCA0, // sw    $t0, 0xFCA0($at)
-    SidekickControlProbeResumeJump,
-    0x00000000, // nop
-};
-
-// sidekickControl writes its world-space X/Y/Z movement vector at +0x0C.
-// Its final Z store is replaced by a trampoline whose delay slot preserves
-// that store; the trampoline then turns only X/Z and resumes the original
-// control routine before the game integrates the result.
-const uint32_t SidekickVelocityLateralHookCode[] =
-{
-    0x8FAD00E8, // lw    $t5, 0xE8($sp)
-    0x3C01800A, // lui   $at, 0x800A
-    0x8C29FCE4, // lw    $t1, 0xFCE4($at)
-    0x312A0001, // andi  $t2, $t1, 1
-    0x11400013, // beq   $t2, $zero, resume
-    0x00000000, // nop
-    0x8C2BFCE8, // lw    $t3, 0xFCE8($at)
-    0x256B0001, // addiu $t3, $t3, 1
-    0xAC2BFCE8, // sw    $t3, 0xFCE8($at)
-    0xC600000C, // lwc1  $f0, 0x0C($s0)
-    0xC6020014, // lwc1  $f2, 0x14($s0)
-    0x312A0002, // andi  $t2, $t1, 2
-    0x11400006, // beq   $t2, $zero, move left
-    0x00000000, // nop
-    0x46001107, // neg.s $f4, $f2
-    0xE604000C, // swc1  $f4, 0x0C($s0)
-    0xE6000014, // swc1  $f0, 0x14($s0)
-    SidekickVelocityLateralResumeJump,
-    0x00000000, // nop
-    0xE602000C, // move left: swc1 $f2, 0x0C($s0)
-    0x46000107, // neg.s $f4, $f0
-    0xE6040014, // swc1  $f4, 0x14($s0)
-    SidekickVelocityLateralResumeJump,
-    0x00000000, // nop
-    SidekickVelocityLateralResumeJump,
-    0x00000000, // nop
-};
-
 // sidekickpadControl tail-dispatches through a twelve-entry state table. This
 // probe preserves its complete prologue, then records the selected state in a
 // scratch word for the input-rate diagnostic. It deliberately changes neither
@@ -2643,7 +2209,6 @@ const uint32_t SidekickPadProbeCode[] =
     0x00000000, // nop
 };
 const uint32_t SidekickPadProbeResumeIndex = 11;
-
 
 bool IsManualAimCameraMode(uint8_t CameraMode)
 {
@@ -2881,12 +2446,8 @@ uint32_t WithLo(uint32_t Instruction, uint32_t Address)
 
 void ApplyAddressTable(const JFG_ADDRESSES & A)
 {
-    WaterWakeLegacyCallSite = A.WaterWakeLegacyCallSite;
     ObjectMoveEntry = A.ObjectMoveEntry;
     ObjectMoveResume = A.ObjectMoveResume;
-    WaterWakeCullingEntry = A.WaterWakeCullingEntry;
-    WaterWakeStockDrawEntry = A.WaterWakeStockDrawEntry;
-    WaterWakeDrawFallbackEntry = A.WaterWakeDrawFallbackEntry;
     CameraClampBranch = A.CameraClampBranch;
     CameraCenterBranch = A.CameraCenterBranch;
     CameraOrbitGateBranch = A.CameraOrbitGateBranch;
@@ -2899,18 +2460,8 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     CameraYawHelperCall = A.CameraYawHelperCall;
     CameraPitchHelperCall = A.CameraPitchHelperCall;
     CameraTopDownEntry = A.CameraTopDownEntry;
-    SidekickControlEntry = A.SidekickControlEntry;
-    SidekickControlProbeEntry = A.SidekickControlProbeEntry;
-    SidekickVelocityLateralEntry = A.SidekickVelocityLateralEntry;
-    SidekickVelocityLateralDelay = A.SidekickVelocityLateralDelay;
-    SidekickVelocityLateralResume = A.SidekickVelocityLateralResume;
-    SidekickLateralMoveInputLegacyEntry = A.SidekickLateralMoveInputLegacyEntry;
     SidekickStrafeEntry = A.SidekickStrafeEntry;
     SidekickStrafeDelay = A.SidekickStrafeDelay;
-    SidekickLateralMoveOldTailEntry = A.SidekickLateralMoveOldTailEntry;
-    SidekickLateralMoveEntry = A.SidekickLateralMoveEntry;
-    SidekickControlEnd = A.SidekickControlEnd;
-    PlayerVelocityEntry = A.PlayerVelocityEntry;
     ManualAimXVelocityStore = A.ManualAimXVelocityStore;
     ManualAimYVelocityStore = A.ManualAimYVelocityStore;
     ManualAimCursorXStore = A.ManualAimCursorXStore;
@@ -2923,21 +2474,12 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     FramePacingEscalateStore = A.FramePacingEscalateStore;
     FramePacing60SignatureBase = A.FramePacing60SignatureBase;
     FramePacing60Branch = A.FramePacing60Branch;
-    TripleBufferRequest = A.TripleBufferRequest;
-    PlayerVelocityStub = A.PlayerVelocityStub;
-    FloydMoveHookStub = A.FloydMoveHookStub;
     SidekickStrafeStub = A.SidekickStrafeStub;
     SidekickVerticalStub = A.SidekickVerticalStub;
-    SidekickControlProbeStub = A.SidekickControlProbeStub;
     SidekickPadProbeStub = A.SidekickPadProbeStub;
     ObjectMoveStub = A.ObjectMoveStub;
-    FloydCameraLateralStub = A.FloydCameraLateralStub;
-    SidekickLateralMoveStub = A.SidekickLateralMoveStub;
-    SidekickVelocityLateralStub = A.SidekickVelocityLateralStub;
     LandingCinematicSkipStub = A.LandingCinematicSkipStub;
     WaterWakeRingRateEntry = A.WaterWakeRingRateEntry;
-    WaterWakeUpdate = A.WaterWakeUpdate;
-    WaterWakeFrameRateEntry = A.WaterWakeFrameRateEntry;
     CameraAngleHelper = A.CameraAngleHelper;
     CameraHelperBase = A.CameraHelperBase;
     CameraTopDownHelperBase = A.CameraTopDownHelperBase;
@@ -2953,40 +2495,24 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     DroneVerticalThrustAddress = A.DroneVerticalThrustAddress;
     DroneVerticalVelocityAddress = A.DroneVerticalVelocityAddress;
     DroneLateralRightZAddress = A.DroneLateralRightZAddress;
-    FloydCameraPreviousXAddress = A.FloydCameraPreviousXAddress;
-    FloydCameraPreviousZAddress = A.FloydCameraPreviousZAddress;
-    FloydCameraPreviousObjectAddress = A.FloydCameraPreviousObjectAddress;
     LandingCinematicSkipInputAddress = A.LandingCinematicSkipInputAddress;
     DroneLateralDragAddress = A.DroneLateralDragAddress;
     DroneLateralForwardSpeedAddress = A.DroneLateralForwardSpeedAddress;
     DroneLateralRightXAddress = A.DroneLateralRightXAddress;
     SidekickPadProbeStateAddress = A.SidekickPadProbeStateAddress;
-    DroneLateralPreviousXAddress = A.DroneLateralPreviousXAddress;
-    DroneLateralPreviousZAddress = A.DroneLateralPreviousZAddress;
     DroneLateralPreviousObjectAddress = A.DroneLateralPreviousObjectAddress;
     SidekickPadProbeObjectAddress = A.SidekickPadProbeObjectAddress;
     EnemyHalveFlagAddress = A.EnemyHalveFlagAddress;
     DroneLateralFlagsAddress = A.DroneLateralFlagsAddress;
     DroneLateralHookHitsAddress = A.DroneLateralHookHitsAddress;
-    WaterWakeGateCounter = A.WaterWakeGateCounter;
-    DroneLateralHookFlagsAddress = A.DroneLateralHookFlagsAddress;
-    WaterWakeDrawFallbackCalledAddress = A.WaterWakeDrawFallbackCalledAddress;
-    WaterWakeStockDrawTargetAddress = A.WaterWakeStockDrawTargetAddress;
-    WaterWakeStockDrawCalledAddress = A.WaterWakeStockDrawCalledAddress;
     SidekickPadProbeActorAddress = A.SidekickPadProbeActorAddress;
-    WaterWakeGateStub = A.WaterWakeGateStub;
-    WaterWakeDrawFallbackStub = A.WaterWakeDrawFallbackStub;
-    SquaddieXStub = A.SquaddieXStub;
-    SquaddieZStub = A.SquaddieZStub;
     RobotMissionAddress = A.RobotMissionAddress;
     MultiplayerGameAddress = A.MultiplayerGameAddress;
     CooperativeGameAddress = A.CooperativeGameAddress;
-    WaterWakeGlobalFadeAddress = A.WaterWakeGlobalFadeAddress;
     WaterWakeObjectListAddress = A.WaterWakeObjectListAddress;
     WaterWakeObjectCountAddress = A.WaterWakeObjectCountAddress;
     PlayerListAddress = A.PlayerListAddress;
     PlayerCountAddress = A.PlayerCountAddress;
-    GeneralRenderListAddress = A.GeneralRenderListAddress;
     DisableJoyAddress = A.DisableJoyAddress;
     ControlCameraAddress = A.ControlCameraAddress;
     CameraActiveOverrideBase = A.CameraActiveOverrideBase;
@@ -2995,17 +2521,34 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     LobbyCameraInUseAddress = A.LobbyCameraInUseAddress;
     StaticCameraInUseAddress = A.StaticCameraInUseAddress;
     OverlayTableAddress = A.OverlayTableAddress;
-    TripleBufferActive = A.TripleBufferActive;
     CurrentScreenAddress = A.CurrentScreenAddress;
     AnimseqCameraAddress = A.AnimseqCameraAddress;
+    IntroCinematicSkipStub = A.IntroCinematicSkipStub;
+    CurrentSceneAddress = A.CurrentSceneAddress;
+    CurrentSetupAddress = A.CurrentSetupAddress;
+    NextCharacterAddress = A.NextCharacterAddress;
+    LoadingAddress = A.LoadingAddress;
+    MainFrontInitFunction = A.MainFrontInitFunction;
+    FrontCharSelectSetQuitModeFunction = A.FrontCharSelectSetQuitModeFunction;
+    FrontGetModeFunction = A.FrontGetModeFunction;
+    MainChangeLevelFunction = A.MainChangeLevelFunction;
+
+    // Overlay-relative offsets. Every group keeps its internal spacing in all
+    // builds, so only its anchor comes from the table.
+    FloydPadControlOffset = A.FloydPadControlOffset;
+    IntroCinematicSkipEntryOffset = A.IntroCinematicSkipEntryOffset;
+    IntroCinematicSkipResumeOffset = IntroCinematicSkipEntryOffset + 0x08;
+    LegacyIntroCinematicSkipEntryOffset = A.LegacyIntroCinematicSkipEntryOffset;
+    LegacyIntroCinematicSkipFmvUpdateOffset = A.LegacyIntroCinematicSkipFmvUpdateOffset;
+    TargetOverlayCursorXOffset = A.TargetOverlayCursorXOffset;
+    TargetOverlayCursorYOffset = A.TargetOverlayCursorYOffset;
+    TargetOverlayDrawOffset = A.TargetOverlayDrawOffset;
+    BoyAimHelperOffset = A.BoyAimHelperOffset;
+    BoyAimFirstGroupOffset = A.BoyAimFirstGroupOffset;
+    BoyAimSecondGroupOffset = A.BoyAimSecondGroupOffset;
+    FramePacing60StoreWord = A.FramePacing60StoreWord;
 
     // Recomputed rather than tabulated, so they cannot drift from the addresses.
-    WaterWakeUpdateCall = 0x0C000000 | ((WaterWakeUpdate >> 2) & 0x03FFFFFF);
-    WaterWakeGateJump = 0x0C000000 | ((WaterWakeGateStub >> 2) & 0x03FFFFFF);
-    WaterWakeCullingStub = WaterWakeGateStub;
-    WaterWakeDrawTargetAddress = WaterWakeGateCounter;
-    WaterWakeFrameRateStub = WaterWakeGateStub;
-    WaterWakeStockDrawStub = WaterWakeGateStub;
     LandingCinematicSkipStubTable = LandingCinematicSkipStub + 0x160;
     IntroCinematicSkipJump = JumpTo(IntroCinematicSkipStub);
 
@@ -3109,137 +2652,24 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     // routine a stub returns to. These were the last thing still spelled in
     // US terms: an instruction word starts 0x08 or 0x0C, so the migration
     // that looked for 0x8xxxxxxx addresses walked straight past them.
-    WaterWakeCullingJump = JumpTo(WaterWakeCullingStub);
-    WaterWakeDrawFallbackJump = CallTo(WaterWakeDrawFallbackStub);
-    WaterWakeFrameRateJump = JumpTo(WaterWakeFrameRateStub);
-    WaterWakeStockDrawJump = CallTo(WaterWakeStockDrawStub);
     ObjectMoveJump = JumpTo(ObjectMoveStub);
-    PlayerVelocityJump = JumpTo(PlayerVelocityStub);
-    FloydMoveHookJump = JumpTo(FloydMoveHookStub);
     SidekickStrafeJump = JumpTo(SidekickStrafeStub);
-    FloydCameraLateralJump = CallTo(FloydCameraLateralStub);
-    SidekickLateralMoveJump = JumpTo(SidekickLateralMoveStub);
-    SidekickVelocityLateralJump = JumpTo(SidekickVelocityLateralStub);
-    SidekickControlProbeJump = JumpTo(SidekickControlProbeStub);
     SidekickPadProbeJump = JumpTo(SidekickPadProbeStub);
-    SidekickLateralMovePreviousJump = JumpTo(SidekickControlProbeStub);
     LandingCinematicSkipJump = CallTo(LandingCinematicSkipStub);
-    LegacyLandingCinematicSkipJump = JumpTo(FloydCameraLateralStub);
-    LegacyLandingCinematicSkipCall = CallTo(FloydCameraLateralStub);
+    LegacyLandingCinematicSkipJump = JumpTo(SidekickVerticalStub); // the cave the old skip used
+    LegacyLandingCinematicSkipCall = CallTo(SidekickVerticalStub);
     LegacyIntroCinematicSkipCall = CallTo(IntroCinematicSkipStub);
-    FloydMoveObjMoveCallOriginal = CallTo(ObjectMoveEntry - 0x20);
-    SidekickControlProbeResumeJump = JumpTo(SidekickVelocityLateralResume);
-    SidekickVelocityLateralResumeJump = JumpTo(SidekickVelocityLateralResume);
     SidekickStrafeResumeJump = JumpTo(SidekickStrafeDelay + 0x04);
 
     // The patch tables embed addresses, so they are rebuilt from the same
     // initialisers rather than duplicated here by hand.
-    BoyAimPatches[0] = { 0x8035C7B8, 0x87A50056, 0x24050000 };
-    BoyAimPatches[1] = { 0x8035C7BC, 0x860401CE, 0x00002025 };
-    BoyAimPatches[2] = { 0x8035C7D0, 0x87A50054, 0x860501E2 };
-    BoyAimPatches[3] = { 0x8035C7D4, 0x860401D0, 0x00A02025 };
-    BoyAimPatches[4] = { 0x8035CD58, 0x87A50056, 0x24050000 };
-    BoyAimPatches[5] = { 0x8035CD5C, 0x860401CE, 0x00002025 };
-    BoyAimPatches[6] = { 0x8035CD70, 0x87A50054, 0x860501E2 };
-    BoyAimPatches[7] = { 0x8035CD74, 0x860401D0, 0x00A02025 };
-    BoyAimPatches[8] = { 0x8035C788, 0x860401DC, 0x00002025 };
-    BoyAimPatches[9] = { 0x8035C78C, 0x87A50056, 0x24050000 };
-    BoyAimPatches[10] = { 0x8035C7A0, 0x87A50054, 0x860501E2 };
-    BoyAimPatches[11] = { 0x8035C7A4, 0x860401DE, 0x00A02025 };
-    BoyAimPatches[12] = { 0x8035CD28, 0x860401DC, 0x00002025 };
-    BoyAimPatches[13] = { 0x8035CD2C, 0x87A50056, 0x24050000 };
-    BoyAimPatches[14] = { 0x8035CD40, 0x87A50054, 0x860501E2 };
-    BoyAimPatches[15] = { 0x8035CD44, 0x860401DE, 0x00A02025 };
-    FramePacingPatches[0] = { FramePacingEscalateStore, 0xA22D0000, 0x00000000 };
+    FramePacingPatches[0] = { FramePacingEscalateStore, A.FramePacingEscalateStoreWord, 0x00000000 };
     FramePacing60Patches[0] = { FramePacing60Branch, 0x11C00002, 0x00000000 };
     SchedulerReleasePatches[0] = { SchedulerFrameGateAdd, A.SchedulerFrameGateAddWord, (A.SchedulerFrameGateAddWord + 1) };
-    TripleBufferPatches[0] = { TripleBufferRequest, 0x308E0001, 0x240E0001 };
     WaterWakeRingRatePatches[0] = { WaterWakeRingRateEntry + 0x00, 0x00000000, 0x928D0002 };
     WaterWakeRingRatePatches[1] = { WaterWakeRingRateEntry + 0x08, 0x00000000, 0x01A36825 };
     WaterWakeRingRatePatches[2] = { WaterWakeRingRateEntry + 0x1C, 0x1020002E, 0x002D0824 };
     WaterWakeRingRatePatches[3] = { WaterWakeRingRateEntry + 0x20, 0x00000000, 0x1020002D };
-    WaterWakeLegacyGatePatches[0] = { WaterWakeGateStub + 0x00, 0x00000000, 0x3C01800A };
-    WaterWakeLegacyGatePatches[1] = { WaterWakeGateStub + 0x04, 0x00000000, WithLo(0x8C280000, DroneLateralFlagsAddress) };
-    WaterWakeLegacyGatePatches[2] = { WaterWakeGateStub + 0x08, 0x00000000, 0x31080004 };
-    WaterWakeLegacyGatePatches[3] = { WaterWakeGateStub + 0x0C, 0x00000000, 0x15000003 };
-    WaterWakeLegacyGatePatches[4] = { WaterWakeGateStub + 0x10, 0x00000000, 0x00000000 };
-    WaterWakeLegacyGatePatches[5] = { WaterWakeGateStub + 0x14, 0x00000000, 0x03E00008 };
-    WaterWakeLegacyGatePatches[6] = { WaterWakeGateStub + 0x18, 0x00000000, 0x00000000 };
-    WaterWakeLegacyGatePatches[7] = { WaterWakeGateStub + 0x1C, 0x00000000, 0x0801AC24 };
-    WaterWakeLegacyGatePatches[8] = { WaterWakeGateStub + 0x20, 0x00000000, 0x00000000 };
-    WaterWakeLegacyRatePatches[0] = { WaterWakeRingRateEntry - 0x8C, 0x24580040, 0x24580020 };
-    WaterWakeLegacyRatePatches[1] = { WaterWakeRingRateEntry - 0x3C, 0x25CFFFC0, 0x25CFFFE0 };
-    WaterWakeLegacyRatePatches[2] = { WaterWakeUpdate + 0x38, 0x25F80020, 0x25F80010 };
-    WaterWakeLegacyRatePatches[3] = { WaterWakeUpdate + 0x64, 0x254BFFE0, 0x254BFFF0 };
-    WaterWakeGatePatches[0] = { WaterWakeGateStub + 0x00, 0x00000000, 0x3C018010 };
-    WaterWakeGatePatches[1] = { WaterWakeGateStub + 0x04, 0x00000000, 0x8C28D7C0 };
-    WaterWakeGatePatches[2] = { WaterWakeGateStub + 0x08, 0x00000000, 0x31080001 };
-    WaterWakeGatePatches[3] = { WaterWakeGateStub + 0x0C, 0x00000000, 0x15000004 };
-    WaterWakeGatePatches[4] = { WaterWakeGateStub + 0x10, 0x00000000, 0x00000000 };
-    WaterWakeGatePatches[5] = { WaterWakeGateStub + 0x14, 0x00000000, 0x00000000 };
-    WaterWakeGatePatches[6] = { WaterWakeGateStub + 0x18, 0x00000000, 0x0801AC24 };
-    WaterWakeGatePatches[7] = { WaterWakeGateStub + 0x1C, 0x00000000, 0x00000000 };
-    WaterWakeGatePatches[8] = { WaterWakeGateStub + 0x20, 0x00000000, 0x03E00008 };
-    WaterWakeGatePatches[9] = { WaterWakeGateStub + 0x24, 0x00000000, 0x00000000 };
-    WaterWakeGatePatches[10] = { WaterWakeLegacyCallSite, WaterWakeUpdateCall, WaterWakeGateJump };
-    WaterWakeDrawProbePatches[0] = { WaterWakeDrawFallbackEntry, 0x0C01A2D5, 0x00000000 };
-    WaterWakeCullingPatches[0] = { WaterWakeCullingStub + 0x00, 0x00000000, 0x8C480058 };
-    WaterWakeCullingPatches[1] = { WaterWakeCullingStub + 0x04, 0x00000000, 0x11000008 };
-    WaterWakeCullingPatches[2] = { WaterWakeCullingStub + 0x08, 0x00000000, 0x00000000 };
-    WaterWakeCullingPatches[3] = { WaterWakeCullingStub + 0x0C, 0x00000000, 0x91090000 };
-    WaterWakeCullingPatches[4] = { WaterWakeCullingStub + 0x10, 0x00000000, 0x24010040 };
-    WaterWakeCullingPatches[5] = { WaterWakeCullingStub + 0x14, 0x00000000, 0x15210004 };
-    WaterWakeCullingPatches[6] = { WaterWakeCullingStub + 0x18, 0x00000000, 0x00000000 };
-    WaterWakeCullingPatches[7] = { WaterWakeCullingStub + 0x1C, 0x00000000, 0x8FAE0064 };
-    WaterWakeCullingPatches[8] = { WaterWakeCullingStub + 0x20, 0x00000000, 0x080051C6 };
-    WaterWakeCullingPatches[9] = { WaterWakeCullingStub + 0x24, 0x00000000, 0x00000000 };
-    WaterWakeCullingPatches[10] = { WaterWakeCullingStub + 0x28, 0x00000000, 0x11A00008 };
-    WaterWakeCullingPatches[11] = { WaterWakeCullingStub + 0x2C, 0x00000000, 0x00000000 };
-    WaterWakeCullingPatches[12] = { WaterWakeCullingStub + 0x30, 0x00000000, 0x0C0057B6 };
-    WaterWakeCullingPatches[13] = { WaterWakeCullingStub + 0x34, 0x00000000, 0x00402021 };
-    WaterWakeCullingPatches[14] = { WaterWakeCullingStub + 0x38, 0x00000000, 0x10400004 };
-    WaterWakeCullingPatches[15] = { WaterWakeCullingStub + 0x3C, 0x00000000, 0x00000000 };
-    WaterWakeCullingPatches[16] = { WaterWakeCullingStub + 0x40, 0x00000000, 0x8FAE0064 };
-    WaterWakeCullingPatches[17] = { WaterWakeCullingStub + 0x44, 0x00000000, 0x080051C6 };
-    WaterWakeCullingPatches[18] = { WaterWakeCullingStub + 0x48, 0x00000000, 0x00000000 };
-    WaterWakeCullingPatches[19] = { WaterWakeCullingStub + 0x4C, 0x00000000, 0x080051BF };
-    WaterWakeCullingPatches[20] = { WaterWakeCullingStub + 0x50, 0x00000000, 0x00000000 };
-    WaterWakeCullingPatches[21] = { WaterWakeCullingEntry, 0x11A00005, WaterWakeCullingJump };
-    WaterWakeDrawFallbackPatches[0] = { WaterWakeDrawFallbackStub + 0x00, 0x00000000, 0xAFBF0040 };
-    WaterWakeDrawFallbackPatches[1] = { WaterWakeDrawFallbackStub + 0x04, 0x00000000, 0x02C02021 };
-    WaterWakeDrawFallbackPatches[2] = { WaterWakeDrawFallbackStub + 0x08, 0x00000000, 0x0C0156E0 };
-    WaterWakeDrawFallbackPatches[3] = { WaterWakeDrawFallbackStub + 0x0C, 0x00000000, 0x00000000 };
-    WaterWakeDrawFallbackPatches[4] = { WaterWakeDrawFallbackStub + 0x10, 0x00000000, 0x3C08800A };
-    WaterWakeDrawFallbackPatches[5] = { WaterWakeDrawFallbackStub + 0x14, 0x00000000, WithLo(0x8D040000, DroneLateralHookFlagsAddress) };
-    WaterWakeDrawFallbackPatches[6] = { WaterWakeDrawFallbackStub + 0x18, 0x00000000, 0x24090001 };
-    WaterWakeDrawFallbackPatches[7] = { WaterWakeDrawFallbackStub + 0x1C, 0x00000000, WithLo(0xAD090000, WaterWakeDrawFallbackCalledAddress) };
-    WaterWakeDrawFallbackPatches[8] = { WaterWakeDrawFallbackStub + 0x20, 0x00000000, 0x10800004 };
-    WaterWakeDrawFallbackPatches[9] = { WaterWakeDrawFallbackStub + 0x24, 0x00000000, 0x00000000 };
-    WaterWakeDrawFallbackPatches[10] = { WaterWakeDrawFallbackStub + 0x28, 0x00000000, 0x02C02821 };
-    WaterWakeDrawFallbackPatches[11] = { WaterWakeDrawFallbackStub + 0x2C, 0x00000000, 0x0C01ADA7 };
-    WaterWakeDrawFallbackPatches[12] = { WaterWakeDrawFallbackStub + 0x30, 0x00000000, 0x00000000 };
-    WaterWakeDrawFallbackPatches[13] = { WaterWakeDrawFallbackStub + 0x34, 0x00000000, 0x8FBF0040 };
-    WaterWakeDrawFallbackPatches[14] = { WaterWakeDrawFallbackStub + 0x38, 0x00000000, 0x0800532A };
-    WaterWakeDrawFallbackPatches[15] = { WaterWakeDrawFallbackStub + 0x3C, 0x00000000, 0x00000000 };
-    WaterWakeDrawFallbackPatches[16] = { WaterWakeDrawFallbackStub + 0x44, 0x00000000, 0x00000000 };
-    WaterWakeDrawFallbackPatches[17] = { WaterWakeDrawFallbackEntry, 0x0C01A2D5, WaterWakeDrawFallbackJump };
-    WaterWakeFrameRatePatches[0] = { WaterWakeFrameRateStub + 0x00, 0x00000000, 0x314C0001 };
-    WaterWakeFrameRatePatches[1] = { WaterWakeFrameRateStub + 0x04, 0x00000000, 0x11800004 };
-    WaterWakeFrameRatePatches[2] = { WaterWakeFrameRateStub + 0x08, 0x00000000, 0x00000000 };
-    WaterWakeFrameRatePatches[3] = { WaterWakeFrameRateStub + 0x0C, 0x00000000, 0x01406021 };
-    WaterWakeFrameRatePatches[4] = { WaterWakeFrameRateStub + 0x10, 0x00000000, 0x0801AC69 };
-    WaterWakeFrameRatePatches[5] = { WaterWakeFrameRateStub + 0x14, 0x00000000, 0x00000000 };
-    WaterWakeFrameRatePatches[6] = { WaterWakeFrameRateStub + 0x18, 0x00000000, 0x016A6023 };
-    WaterWakeFrameRatePatches[7] = { WaterWakeFrameRateStub + 0x1C, 0x00000000, 0x0801AC69 };
-    WaterWakeFrameRatePatches[8] = { WaterWakeFrameRateStub + 0x20, 0x00000000, 0x00000000 };
-    WaterWakeFrameRatePatches[9] = { WaterWakeFrameRateEntry, 0x016A6023, WaterWakeFrameRateJump };
-    WaterWakeStockDrawProbePatches[0] = { WaterWakeStockDrawStub + 0x00, 0x00000000, 0x3C08800A };
-    WaterWakeStockDrawProbePatches[1] = { WaterWakeStockDrawStub + 0x04, 0x00000000, WithLo(0xAD040000, WaterWakeStockDrawTargetAddress) };
-    WaterWakeStockDrawProbePatches[2] = { WaterWakeStockDrawStub + 0x08, 0x00000000, 0x24090001 };
-    WaterWakeStockDrawProbePatches[3] = { WaterWakeStockDrawStub + 0x0C, 0x00000000, WithLo(0xAD090000, WaterWakeStockDrawCalledAddress) };
-    WaterWakeStockDrawProbePatches[4] = { WaterWakeStockDrawStub + 0x10, 0x00000000, 0x0801ADA7 };
-    WaterWakeStockDrawProbePatches[5] = { WaterWakeStockDrawStub + 0x14, 0x00000000, 0x00000000 };
-    WaterWakeStockDrawProbePatches[6] = { WaterWakeStockDrawEntry, 0x0C01ADA7, WaterWakeStockDrawJump };
     ObjectMovePatches[0] = { ObjectMoveStub + 0x00, 0x00000000, 0x8FA70040 };
     ObjectMovePatches[1] = { ObjectMoveStub + 0x04, 0x00000000, WithHi(0x3C010000, DroneLateralFlagsAddress) };
     ObjectMovePatches[2] = { ObjectMoveStub + 0x08, 0x00000000, WithLo(0x8C290000, DroneLateralFlagsAddress) };
@@ -3304,32 +2734,6 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     ObjectMovePatches[50] = { ObjectMoveStub + 0xC8, 0x00000000, JumpTo(ObjectMoveResume) };
     ObjectMovePatches[51] = { ObjectMoveStub + 0xCC, 0x00000000, 0x00000000 };
     ObjectMovePatches[52] = { ObjectMoveEntry, 0x8FA70040, ObjectMoveJump };
-    PlayerVelocityPatches[0] = { PlayerVelocityStub + 0x00, 0x00000000, WithHi(0x3C010000, DroneLateralFlagsAddress) };
-    PlayerVelocityPatches[1] = { PlayerVelocityStub + 0x04, 0x00000000, WithLo(0x8C290000, DroneLateralFlagsAddress) };
-    PlayerVelocityPatches[2] = { PlayerVelocityStub + 0x08, 0x00000000, 0x312A0001 };
-    PlayerVelocityPatches[3] = { PlayerVelocityStub + 0x0C, 0x00000000, 0x11400010 };
-    PlayerVelocityPatches[4] = { PlayerVelocityStub + 0x10, 0x00000000, 0x8FA80024 };
-    PlayerVelocityPatches[5] = { PlayerVelocityStub + 0x14, 0x00000000, WithLo(0x8C2B0000, DroneLateralHookHitsAddress) };
-    PlayerVelocityPatches[6] = { PlayerVelocityStub + 0x18, 0x00000000, 0x256B0001 };
-    PlayerVelocityPatches[7] = { PlayerVelocityStub + 0x1C, 0x00000000, WithLo(0xAC2B0000, DroneLateralHookHitsAddress) };
-    PlayerVelocityPatches[8] = { PlayerVelocityStub + 0x20, 0x00000000, 0xC5000018 };
-    PlayerVelocityPatches[9] = { PlayerVelocityStub + 0x24, 0x00000000, 0x312A0002 };
-    PlayerVelocityPatches[10] = { PlayerVelocityStub + 0x28, 0x00000000, 0x11400006 };
-    PlayerVelocityPatches[11] = { PlayerVelocityStub + 0x2C, 0x00000000, 0xC5020020 };
-    PlayerVelocityPatches[12] = { PlayerVelocityStub + 0x30, 0x00000000, 0x46001107 };
-    PlayerVelocityPatches[13] = { PlayerVelocityStub + 0x34, 0x00000000, 0xE5040018 };
-    PlayerVelocityPatches[14] = { PlayerVelocityStub + 0x38, 0x00000000, 0xE5000020 };
-    PlayerVelocityPatches[15] = { PlayerVelocityStub + 0x3C, 0x00000000, 0x10000004 };
-    PlayerVelocityPatches[16] = { PlayerVelocityStub + 0x40, 0x00000000, 0x00000000 };
-    PlayerVelocityPatches[17] = { PlayerVelocityStub + 0x44, 0x00000000, 0xE5020018 };
-    PlayerVelocityPatches[18] = { PlayerVelocityStub + 0x48, 0x00000000, 0x46000107 };
-    PlayerVelocityPatches[19] = { PlayerVelocityStub + 0x4C, 0x00000000, 0xE5040020 };
-    PlayerVelocityPatches[20] = { PlayerVelocityStub + 0x50, 0x00000000, 0x8FBF0014 };
-    PlayerVelocityPatches[21] = { PlayerVelocityStub + 0x54, 0x00000000, 0x27BD0020 };
-    PlayerVelocityPatches[22] = { PlayerVelocityStub + 0x58, 0x00000000, 0x03E00008 };
-    PlayerVelocityPatches[23] = { PlayerVelocityStub + 0x5C, 0x00000000, 0x00000000 };
-    PlayerVelocityPatches[24] = { PlayerVelocityEntry + 0x00, 0x8FBF0014, PlayerVelocityJump };
-    PlayerVelocityPatches[25] = { PlayerVelocityEntry + 0x04, 0x27BD0020, 0x00000000 };
 }
 
 // The table actually in force. Comparing pointers rather than identifiers keeps
@@ -3370,15 +2774,7 @@ CJetForceGeminiRuntime::CJetForceGeminiRuntime(CMipsMemoryVM & MMU, CRecompiler 
     m_FramePacingPatchApplied(false),
     m_FramePacing60PatchApplied(false),
     m_SchedulerReleasePatchApplied(false),
-    m_TripleBufferPatchApplied(false),
-    m_WaterWakeRatePatchApplied(false),
     m_WaterWakeRingRatePatchApplied(false),
-    m_WaterWakeDrawProbeApplied(false),
-    m_WaterWakeCullingPatchApplied(false),
-    m_WaterWakeDrawFallbackPatchApplied(false),
-    m_WaterWakeFrameRatePatchApplied(false),
-    m_WaterWakeStockDrawProbeApplied(false),
-    m_WaterWakeRatePatchStatus(0),
     m_GameplayReady(false),
     m_SprintActive(false),
     m_SprintTimeValid(false),
@@ -3393,35 +2789,14 @@ CJetForceGeminiRuntime::CJetForceGeminiRuntime(CMipsMemoryVM & MMU, CRecompiler 
     m_SprintAnimation(0),
     m_SprintPreviousAnimationFrame(0.0f),
     m_DroneLateralActive(false),
-    m_DroneLateralRight(false),
     m_DroneLateralApplied(false),
     m_DroneLateralState(0),
     m_DroneLateralHookHits(0),
-    m_DroneLateralControllerEntry(0),
-    m_DroneLateralControllerWord0(0),
-    m_DroneLateralControllerWord1(0),
-    m_DroneLateralControllerWord2(0),
-    m_DroneLateralControllerWord3(0),
-    m_DroneLateralControllerReturn(0),
-    m_DroneLateralControllerReturnWord0(0),
-    m_DroneLateralControllerReturnWord1(0),
-    m_DroneLateralControllerReturnWord2(0),
-    m_DroneLateralControllerReturnWord3(0),
-    m_DroneLateralControllerReturnWord4(0),
-    m_DroneLateralMoveHookApplied(false),
-    m_DroneLateralMoveHookEntry(0),
-    m_FloydCameraLateralHookApplied(false),
-    m_FloydCameraLateralHookEntry(0),
-    m_SidekickVelocityLateralHookApplied(false),
-    m_SidekickLateralMoveHookApplied(false),
     m_SidekickStrafeHookApplied(false),
     m_SidekickPadControlProbeApplied(false),
     m_SidekickPadControlProbeEntry(0),
     m_BaseViRefreshRate(0),
     m_ObjectMovePatchApplied(false),
-    m_PlayerVelocityPatchApplied(false),
-    m_SquaddieMovePatchApplied(false),
-    m_SquaddieOverlayBase(0),
     m_LandingCinematicSkipHookApplied(false),
     m_IntroCinematicSkipHookApplied(false),
     m_IntroCinematicSkipOverlayBase(0),
@@ -3435,13 +2810,10 @@ CJetForceGeminiRuntime::CJetForceGeminiRuntime(CMipsMemoryVM & MMU, CRecompiler 
     m_HudAlignmentOverlay6Base(0),
     m_HudAlignmentOverlay14Base(0),
     m_HudAlignmentScopeOwned(false),
-    m_CinematicProbeDown(false),
     m_Fps60ToggleDown(false),
     m_Fps30ToggleDown(false),
     m_SyncAudioEnabledState(-1),
     m_HalveFrameCounter(0),
-    m_WidescreenHudScopeForceDown(false),
-    m_WidescreenHudScopeForced(false),
     m_InputRateWindowValid(false),
     m_InputRateSamples(0),
     m_FrameSwaps(0),
@@ -3452,10 +2824,6 @@ CJetForceGeminiRuntime::CJetForceGeminiRuntime(CMipsMemoryVM & MMU, CRecompiler 
     memset(&m_ScrollButtons, 0, sizeof(m_ScrollButtons));
     memset(m_SecondaryScrollButtons, 0, sizeof(m_SecondaryScrollButtons));
     memset(m_SecondaryQueuedScroll, 0, sizeof(m_SecondaryQueuedScroll));
-    if (CinematicProbeEnabled)
-    {
-        OpenCinematicProbeLogSession();
-    }
 }
 
 CJetForceGeminiRuntime::~CJetForceGeminiRuntime()
@@ -3502,24 +2870,10 @@ void CJetForceGeminiRuntime::StateSaving(void)
     PatchLandingCinematicSkip(false);
     PatchIntroCinematicSkip(false);
     m_Memory.WriteU32(LandingCinematicSkipInputAddress, 0);
-    PatchTripleBuffer(false);
-    PatchWaterWakeRate(false);
     PatchWaterWakeRingRate(false);
-    PatchWaterWakeDrawProbe(false);
-    PatchWaterWakeCulling(false);
-    PatchWaterWakeDrawFallback(false);
-    PatchWaterWakeFrameRate(false);
-    PatchWaterWakeStockDrawProbe(false);
     PatchObjectMove(false);
-    PatchDroneLateralMove(false);
-    PatchFloydCameraLateralMove(false);
-    PatchSidekickVelocityLateralMove(false);
-    PatchSidekickLateralMove(false);
     PatchSidekickStrafe(false);
     PatchSidekickPadControlProbe(false);
-    PatchPlayerVelocity(false);
-    PatchSquaddieMove(false);
-    PatchSquadsTimeStep(false);
     m_Memory.WriteU32(DroneLateralFlagsAddress, 0);
     m_Memory.WriteF32(DroneLateralSideFactorAddress, 0.0f);
     m_Memory.WriteF32(DroneLateralVelocityAddress, 0.0f);
@@ -3547,7 +2901,7 @@ void CJetForceGeminiRuntime::StateLoaded(void)
     // States made by the first HUD prototype may contain an interrupted scope.
     // This byte is reserved alignment padding, so normalise it even when the
     // host-side ownership bookkeeping was reset before loading the state.
-    if (JfgAddresses() == &JfgUsAddresses)
+    if (JfgHudBuild::Current() != JfgHudBuild::BuildNone)
     {
         m_Memory.WriteU8(WidescreenHudScopeDepthAddress, 0);
     }
@@ -3557,27 +2911,13 @@ void CJetForceGeminiRuntime::StateLoaded(void)
     RemoveLegacyLandingCinematicSkip();
     RemoveLegacyIntroCinematicSkip();
     ApplyViBudget(false);
-    PatchTripleBuffer(false);
-    PatchWaterWakeRate(false);
     PatchWaterWakeRingRate(false);
-    PatchWaterWakeDrawProbe(false);
-    PatchWaterWakeCulling(false);
-    PatchWaterWakeDrawFallback(false);
-    PatchWaterWakeFrameRate(false);
-    PatchWaterWakeStockDrawProbe(false);
-    PatchSquaddieMove(false);
-    PatchSquadsTimeStep(false);
     ClearCameraState();
     ClearMovementState();
 
     PatchObjectMove(false);
-    PatchDroneLateralMove(false);
-    PatchFloydCameraLateralMove(false);
-    PatchSidekickVelocityLateralMove(false);
-    PatchSidekickLateralMove(false);
     PatchSidekickStrafe(false);
     PatchSidekickPadControlProbe(false);
-    PatchPlayerVelocity(false);
     m_Memory.WriteU32(DroneLateralFlagsAddress, 0);
     m_Memory.WriteF32(DroneLateralSideFactorAddress, 0.0f);
     m_Memory.WriteF32(DroneLateralVelocityAddress, 0.0f);
@@ -3614,11 +2954,11 @@ bool CJetForceGeminiRuntime::SupportsCurrentRom(void) const
 // Enhancements which do not consume controller input run on their own VI
 // path. In particular, do not put this behind UpdateEnabledState(): that helper
 // requires a JFG source on port one and would uninstall an otherwise
-// independent HUD option every frame. The prototype is intentionally
-// exact-US-only until its overlay signatures have been established elsewhere.
+// independent HUD option every frame. The HUD runs on the US build and, through
+// JetForceGeminiHudBuild.h, on PAL; the Kiosk demo's HUD has not been mapped.
 void CJetForceGeminiRuntime::ProcessRuntimeFrame(void)
 {
-    const bool Supported = IsSupportedRom() && JfgAddresses() == &JfgUsAddresses;
+    const bool Supported = IsSupportedRom() && JfgHudBuild::Current() != JfgHudBuild::BuildNone;
     const bool WidescreenRequested = Supported && g_Settings->LoadBool(Setting_JfgWidescreenHud);
     const bool AlignmentRequested = Supported && g_Settings->LoadBool(Setting_JfgAlignHud);
     if (!WidescreenRequested && !AlignmentRequested)
@@ -3654,7 +2994,7 @@ void CJetForceGeminiRuntime::ProcessRuntimeFrame(void)
         (WidescreenHudOverlayModule + 1) * OverlayHeaderSize;
     const bool GameplayHudReady =
         m_Memory.ReadU8(WidescreenHudResolutionIndexAddress, ResolutionIndex) &&
-        ResolutionIndex <= 3 &&
+        JfgHudBuild::VideoMode(ResolutionIndex) != 0xFF &&
         GetPlayerData(PlayerObject, PlayerData) && PlayerObject != 0 &&
         GetControlCamera(ControlCamera) && ControlCamera != 0 &&
         m_Memory.ReadU32(DisableJoyAddress, JoyDisabled) && JoyDisabled == 0 &&
@@ -3687,8 +3027,8 @@ void CJetForceGeminiRuntime::ProcessRuntimeFrame(void)
         ExitDelay == WidescreenHudOverlayExitDelayOriginal;
 
     uint8_t multiplayerPlayers = 0;
-    if (JfgAddresses() == &JfgUsAddresses &&
-        (!WidescreenRequested || !m_Memory.ReadU8(0x800A4FD0, multiplayerPlayers) ||
+    if (Supported &&
+        (!WidescreenRequested || !m_Memory.ReadU8(JfgHudBuild::Address(0x800A4FD0), multiplayerPlayers) ||
         multiplayerPlayers < 2 || multiplayerPlayers > 4 ||
         !IsWidescreenHudResolution(ResolutionIndex)))
         JfgMultiplayerHud::Update(m_Memory, m_CodePatcher, false);
@@ -3702,14 +3042,6 @@ void CJetForceGeminiRuntime::ProcessRuntimeFrame(void)
     const bool NativeText = WidescreenRequested && JfgHudRaster::TextReady(m_Memory);
     PatchHudRaster(NativeHud || NativeText, !NativeHud && NativeText);
 
-    // Republish the override every frame: the scope-exit stub decrements this
-    // byte on every HUD pass. Seed it well above zero so no legitimate exit can
-    // reach zero mid-frame and briefly close the scope again.
-    if (EnableWidescreen && HudPatched &&
-        m_WidescreenHudScopeForced && m_WidescreenHudScopeOwned)
-    {
-        m_Memory.WriteU8(WidescreenHudScopeDepthAddress, 0x20);
-    }
 }
 
 // Called when the game reads the controller, so the buttons it gets are live
@@ -3752,30 +3084,10 @@ void CJetForceGeminiRuntime::ProcessController(
     PatchLandingCinematicSkip(LandingSkipArmed);
     PatchIntroCinematicSkip(CinematicSkipRequested);
 
-    // The diagnostic and live-switch keys are keyboard only
+    // The live-switch keys are keyboard only
     if (Input.KeyboardMouse != nullptr)
     {
         const KEYBOARD_MOUSE_STATE & Keyboard = *Input.KeyboardMouse;
-        if (CinematicProbeEnabled)
-        {
-            const bool CinematicProbeDown = KeyDown(Keyboard, CinematicProbeKey);
-            if (CinematicProbeDown && !m_CinematicProbeDown)
-            {
-                DisplayCinematicProbe();
-            }
-            m_CinematicProbeDown = CinematicProbeDown;
-        }
-
-        const bool ScopeForceDown = KeyDown(Keyboard, WidescreenHudScopeForceKey);
-        if (ScopeForceDown && !m_WidescreenHudScopeForceDown)
-        {
-            m_WidescreenHudScopeForced = !m_WidescreenHudScopeForced;
-            g_Notify->DisplayMessage(
-                0, m_WidescreenHudScopeForced ? "JFG HUD scope forced open"
-                                              : "JFG HUD scope restored");
-        }
-        m_WidescreenHudScopeForceDown = ScopeForceDown;
-
         // Numpad +/- switch the frame-rate target live. Flip the setting only on
         // the key's rising edge, and only when it actually changes, so a held
         // key does not spam saves; the notification still confirms every press.
@@ -3786,7 +3098,8 @@ void CJetForceGeminiRuntime::ProcessController(
             {
                 g_Settings->SaveBool(Setting_JfgTarget60Fps, true);
             }
-            g_Notify->DisplayMessage(0, "JFG 60 FPS");
+            // A PAL console refreshes at 50 Hz, so the same two targets are 50 and 25.
+            g_Notify->DisplayMessage(0, JfgAddresses() == &JfgPalAddresses ? "JFG 50 FPS (PAL)" : "JFG 60 FPS");
         }
         m_Fps60ToggleDown = Fps60ToggleDown;
 
@@ -3797,7 +3110,7 @@ void CJetForceGeminiRuntime::ProcessController(
             {
                 g_Settings->SaveBool(Setting_JfgTarget60Fps, false);
             }
-            g_Notify->DisplayMessage(0, "JFG 30 FPS");
+            g_Notify->DisplayMessage(0, JfgAddresses() == &JfgPalAddresses ? "JFG 25 FPS (PAL)" : "JFG 30 FPS");
         }
         m_Fps30ToggleDown = Fps30ToggleDown;
 
@@ -3849,7 +3162,6 @@ void CJetForceGeminiRuntime::ProcessVideoFrame(const JFG_PORT_INPUT & Input, BUT
     // but requesting a third framebuffer before the title-to-level transition
     // completes prevents a cold boot with Parallel RSP. Keep the stock buffer
     // allocation and enable the scheduler only after gameplay is ready.
-    PatchTripleBuffer(false);
 
     // Nothing may touch the game before a level is live. A player object can
     // already exist while the title-to-level transition is still allocating
@@ -3886,22 +3198,10 @@ void CJetForceGeminiRuntime::ProcessVideoFrame(const JFG_PORT_INPUT & Input, BUT
     ApplyViBudget(BoostViBudget);
     m_Memory.WriteU32(EnemyHalveFlagAddress, HalveEnemySpeed ? 1 : 0);
     PatchObjectMove(HalveEnemySpeed);
-    // The squads time step is the game's frame delta (2 at 30fps, 1 at 60fps),
-    // so halving it ran the Squaddies' animation and timers in slow motion at
-    // 60fps. Keep it native; movement slowing is handled off the delta above.
-    PatchSquadsTimeStep(false);
     if (HalveEnemySpeed)
     {
         HalveNamedEnemyMovement();
     }
-    PatchPlayerVelocity(false);
-    UpdateDroneLateralControllerProbe();
-    // sidekickpadMovePlayer moves the player towards the hover pad, not Floyd,
-    // so its call-site hook is retired in favour of the sidekickControl one.
-    PatchDroneLateralMove(false);
-    PatchFloydCameraLateralMove(false);
-    PatchSidekickVelocityLateralMove(false);
-    PatchSidekickLateralMove(false);
     PatchSidekickStrafe(g_Settings->LoadBool(Setting_JfgDroneLateralMovement));
     PatchSidekickPadControlProbe(g_Settings->LoadBool(Setting_JfgDroneLateralMovement));
     m_DroneLateralState = 0;
@@ -3913,18 +3213,10 @@ void CJetForceGeminiRuntime::ProcessVideoFrame(const JFG_PORT_INPUT & Input, BUT
         m_Memory.ReadU32(DroneLateralHookHitsAddress, m_DroneLateralHookHits);
         m_DroneLateralApplied = m_DroneLateralHookHits != 0;
     }
-    PatchSquaddieMove(false);
     PatchFramePacing(Target60Fps || g_Settings->LoadBool(Setting_JfgUncapFramePacing));
     PatchFramePacing60(Target60Fps);
     PatchSchedulerRelease(SchedulerRelease);
-    PatchWaterWakeRate(false);
     PatchWaterWakeRingRate(Target60Fps);
-    PatchWaterWakeStockDrawProbe(false);
-    PatchWaterWakeDrawProbe(false);
-    PatchWaterWakeCulling(false);
-    PatchWaterWakeDrawFallback(false);
-    PatchWaterWakeFrameRate(false);
-    UpdateWaterWakeDrawTarget();
 }
 
 bool CJetForceGeminiRuntime::UpdateEnabledState(const JFG_PORT_INPUT & Input)
@@ -4073,6 +3365,11 @@ void CJetForceGeminiRuntime::BankStickCamera(ORBIT_CAMERA_STATE & Orbit, const J
     Speed = Speed < GamepadCameraSpeedMin ? GamepadCameraSpeedMin : Speed;
     Speed = Speed > GamepadCameraSpeedMax ? GamepadCameraSpeedMax : Speed;
     float Rate = (float)Speed * GamepadCameraCountsPerSpeed;
+    // Banked once per video interrupt: keep the same turn per second at 50 Hz.
+    if (JfgAddresses() == &JfgPalAddresses)
+    {
+        Rate *= PalVideoRateScale;
+    }
     // With the game's own reticle the stick bypasses the bank while aiming, so
     // the boost only concerns the mouse-style aim; see MapController.
     if (PadAiming && !g_Settings->LoadBool(Setting_JfgGamepadStockAim))
@@ -4340,52 +3637,6 @@ void CJetForceGeminiRuntime::PatchFramePacing(bool Enabled)
     m_FramePacingPatchApplied = Enabled;
 }
 
-// Applies a stub plus its hook entry, the entry being the last patch in the
-// table. A save state can restore a stub built by an earlier build of this code,
-// matching neither the original nor the current replacement, which makes the
-// patcher refuse the whole table: the hook then stays live while we no longer
-// feed it, and the game hangs. Take the entry down first, since a vanilla entry
-// leaves the stub as dead code whatever it holds, and clear anything unexpected
-// out of the stub before writing it back.
-bool CJetForceGeminiRuntime::SetHookEnabled(const GAME_HACK_CODE_PATCH * Patches, size_t Count, bool Enabled)
-{
-    if (Count < 2)
-    {
-        return false;
-    }
-    const GAME_HACK_CODE_PATCH & Entry = Patches[Count - 1];
-
-    if (!Enabled)
-    {
-        m_CodePatcher.SetEnabled(&Entry, 1, false);
-        m_CodePatcher.SetEnabled(Patches, Count - 1, false);
-        return true;
-    }
-
-    // Only overwrite unexpected stub words when the entry says the hook is
-    // already ours, which means the stub is a stale build of it. Free memory was
-    // only ever sampled at one instant, so forcing writes into it when the hook
-    // is not installed could land on live game data.
-    uint32_t EntryWord = 0;
-    if (m_Memory.ReadU32(Entry.Address, EntryWord) && EntryWord == Entry.Replacement)
-    {
-        for (size_t i = 0; i + 1 < Count; i++)
-        {
-            uint32_t Current = 0;
-            if (m_Memory.ReadU32(Patches[i].Address, Current) && Current != Patches[i].Original &&
-                Current != Patches[i].Replacement)
-            {
-                m_Memory.WriteU32(Patches[i].Address, Patches[i].Original);
-            }
-        }
-    }
-    if (m_CodePatcher.SetEnabled(Patches, Count - 1, true) != CGameHackCodePatcher::Result_SignatureMismatch)
-    {
-        return m_CodePatcher.SetEnabled(&Entry, 1, true) != CGameHackCodePatcher::Result_SignatureMismatch;
-    }
-    return false;
-}
-
 // The landing-skip code cave belongs to a completed retail diagnostic routine,
 // not a blank RDRAM page. Capture and restore it exactly, with the live entry
 // always removed first, so save states can never contain this trampoline.
@@ -4393,6 +3644,12 @@ bool CJetForceGeminiRuntime::PatchLandingCinematicSkip(bool Enabled)
 {
     const std::vector<uint32_t> StubImage = BuildLandingCinematicSkipImage();
     const size_t StubCount = StubImage.size();
+    if (LandingCinematicSkipEntry == 0 || LandingCinematicSkipStub == 0 || StubCount == 0)
+    {
+        // No landing skip on this build (the Kiosk demo): nothing to install
+        // and nothing that could have been installed.
+        return !Enabled;
+    }
     const GAME_HACK_CODE_PATCH EntryPatches[] =
     {
         { LandingCinematicSkipEntry, LandingCinematicSkipEntryOriginal, LandingCinematicSkipJump },
@@ -4541,7 +3798,7 @@ bool CJetForceGeminiRuntime::PatchIntroCinematicSkip(bool Enabled)
         Writes.resize(StubCount);
         for (size_t i = 0; i < StubCount; i++)
         {
-            uint32_t HookWord = IntroCinematicSkipHookCode[i];
+            uint32_t HookWord = ScratchCaveWord(IntroCinematicSkipHookCode[i]);
             if (i == IntroCinematicSkipResumeJumpIndex && Resume != 0)
             {
                 HookWord = JumpTo(Resume);
@@ -4747,13 +4004,14 @@ bool CJetForceGeminiRuntime::SetWidescreenHudReticle(bool Enabled)
     {
         uint32_t Current = 0;
         uint32_t Delay = 0;
-        if (!m_Memory.ReadU32(Base + Call.Offset, Current) ||
-            !m_Memory.ReadU32(Base + Call.Offset + 4, Delay) || Delay != Call.Delay ||
+        const uint32_t CallAddress = Base + JfgHudBuild::Offset(WidescreenHudReticleOverlayModule, Call.Offset);
+        if (!m_Memory.ReadU32(CallAddress, Current) ||
+            !m_Memory.ReadU32(CallAddress + 4, Delay) || Delay != Call.Delay ||
             (Current != WidescreenHudReticleLineCallOriginal && Current != Replacement))
         {
             return false;
         }
-        Patches.push_back({ Base + Call.Offset, WidescreenHudReticleLineCallOriginal, Replacement });
+        Patches.push_back({ CallAddress, WidescreenHudReticleLineCallOriginal, Replacement });
     }
     const CGameHackCodePatcher::Result Result =
         m_CodePatcher.SetEnabled(Patches.data(), Patches.size(), Enabled);
@@ -4781,9 +4039,9 @@ bool CJetForceGeminiRuntime::SetWidescreenHudBanner(uint32_t OverlayBase, bool E
     auto AddWrite = [&](const WIDESCREEN_HUD_BANNER_WORD_PATCH & Patch)
     {
         GAME_HACK_CODE_WRITE Write = {};
-        Write.Address = OverlayBase + Patch.Offset;
+        Write.Address = OverlayBase + JfgHudBuild::Offset(WidescreenHudOverlayModule, Patch.Offset);
         Write.Desired = !Enabled ? Patch.Original :
-            (Resolution & 2) != 0 ? Patch.HighResolution : Patch.LowResolution;
+            (JfgHudBuild::VideoMode(Resolution) & 2) != 0 ? Patch.HighResolution : Patch.LowResolution;
         Write.Allowed[0] = Patch.Original;
         Write.Allowed[1] = Patch.LowResolution;
         Write.Allowed[2] = Patch.HighResolution;
@@ -4795,9 +4053,11 @@ bool CJetForceGeminiRuntime::SetWidescreenHudBanner(uint32_t OverlayBase, bool E
     {
         AddWrite(Patch);
     }
-    for (const WIDESCREEN_HUD_BANNER_WORD_PATCH & Patch : WidescreenHudFuelPatches)
+    const WIDESCREEN_HUD_BANNER_WORD_PATCH * FuelPatches =
+        JfgHudBuild::Current() == JfgHudBuild::BuildPal ? WidescreenHudFuelPatchesPal : WidescreenHudFuelPatches;
+    for (size_t i = 0; i < sizeof(WidescreenHudFuelPatches) / sizeof(WidescreenHudFuelPatches[0]); i++)
     {
-        AddWrite(Patch);
+        AddWrite(FuelPatches[i]);
     }
     const CGameHackCodePatcher::Result Result = m_CodePatcher.Apply(Writes.data(), Writes.size());
     return Result != CGameHackCodePatcher::Result_SignatureMismatch &&
@@ -4820,7 +4080,7 @@ bool CJetForceGeminiRuntime::SetWidescreenHudShotGauge(uint32_t OverlayBase, boo
     };
     uint32_t Call = 0, Delay = 0;
     if ((OverlayBase & 3) != 0 ||
-        !m_Memory.IsRdramAddress(OverlayBase, 0x44CC) ||
+        !m_Memory.IsRdramAddress(OverlayBase, JfgHudBuild::Offset(WidescreenHudOverlayModule, 0x44C8) + 4) ||
         !m_Memory.ReadU32(CallPatch.Address, Call) ||
         !m_Memory.ReadU32(CallPatch.Address + 4, Delay))
     {
@@ -4849,14 +4109,15 @@ bool CJetForceGeminiRuntime::SetWidescreenHudShotGauge(uint32_t OverlayBase, boo
     for (const auto & Legacy : WidescreenHudShotGaugePatches)
     {
         uint32_t Current = 0;
-        if (!m_Memory.ReadU32(OverlayBase + Legacy.Offset, Current) ||
+        const uint32_t LegacyAddress = OverlayBase + JfgHudBuild::Offset(WidescreenHudOverlayModule, Legacy.Offset);
+        if (!m_Memory.ReadU32(LegacyAddress, Current) ||
             ((Current >> 16) != (Legacy.Original >> 16) &&
              (Current >> 16) != (Legacy.Replacement >> 16)))
         {
             return false;
         }
         GAME_HACK_CODE_WRITE Write = {};
-        Write.Address = OverlayBase + Legacy.Offset;
+        Write.Address = LegacyAddress;
         Write.Desired = (Legacy.Original & 0xFFFF0000) | (Current & 0xFFFF);
         Write.Allowed[0] = Current;
         Write.AllowedCount = 1;
@@ -4874,7 +4135,8 @@ bool CJetForceGeminiRuntime::SetWidescreenHudFloyd(uint32_t OverlayBase, bool En
     // The live overlay-14 scope signatures are validated by the caller. Only
     // this line call belongs to the Floyd HUD; its data table remains stock.
     const GAME_HACK_CODE_PATCH CallPatch = {
-        OverlayBase + 0x468, 0x0C01B4E4, CallTo(WidescreenHudFloydLineStub),
+        OverlayBase + JfgHudBuild::Offset(WidescreenHudOverlayModule, 0x468),
+        JfgHudBuild::Word(0x0C01B4E4), CallTo(WidescreenHudFloydLineStub),
     };
     uint32_t Call = 0, Delay = 0;
     if ((OverlayBase & 3) != 0 ||
@@ -5021,10 +4283,12 @@ bool CJetForceGeminiRuntime::PatchHudAlignment(bool Enabled, bool WidescreenCorr
     namespace Sites = JfgHudAlignmentSites;
     namespace Rdp = JfgHudAlignmentRdp;
     const bool HostOwned = m_HudAlignmentScopeOwned || !m_HudAlignmentImage.empty();
-    if (!IsSupportedRom() || JfgAddresses() != &JfgUsAddresses)
+    if (!IsSupportedRom() || JfgHudBuild::Current() == JfgHudBuild::BuildNone)
     {
         return !Enabled && !HostOwned;
     }
+    const uint32_t * OriginalCave = Layout::OriginalCaveWords();
+    const uint32_t * OriginalGuard = Layout::OriginalGuardWords();
     auto Succeeded = [](CGameHackCodePatcher::Result Result) {
         return Result == CGameHackCodePatcher::Result_NoChanges ||
                Result == CGameHackCodePatcher::Result_Changed;
@@ -5041,7 +4305,7 @@ bool CJetForceGeminiRuntime::PatchHudAlignment(bool Enabled, bool WidescreenCorr
         m_HudAlignmentScopeOwned = false;
     };
 
-    const size_t WordCount = (Layout::CaveEnd - Layout::CaveStart) / sizeof(uint32_t);
+    const size_t WordCount = (Layout::CaveEnd.Us - Layout::CaveStart.Us) / sizeof(uint32_t);
     std::vector<uint32_t> CurrentImage(WordCount);
     for (size_t i = 0; i < WordCount; i++)
     {
@@ -5050,10 +4314,9 @@ bool CJetForceGeminiRuntime::PatchHudAlignment(bool Enabled, bool WidescreenCorr
             return false;
         }
     }
-    const bool StockBody = std::equal(CurrentImage.begin(), CurrentImage.end(),
-                                      JfgHudAlignmentOriginal::CaveWords);
-    const bool StockGuard = WordIs(Layout::GuardAddress, JfgHudAlignmentOriginal::GuardWords[0]) &&
-                            WordIs(Layout::GuardAddress + 4, JfgHudAlignmentOriginal::GuardWords[1]);
+    const bool StockBody = std::equal(CurrentImage.begin(), CurrentImage.end(), OriginalCave);
+    const bool StockGuard = WordIs(Layout::GuardAddress, OriginalGuard[0]) &&
+                            WordIs(Layout::GuardAddress + 4, OriginalGuard[1]);
     const bool RetiredGuard = WordIs(Layout::GuardAddress, Layout::GuardRetired[0]) &&
                               WordIs(Layout::GuardAddress + 4, Layout::GuardRetired[1]);
     // Strong save-state adoption: every instruction, padding word and magic
@@ -5071,7 +4334,7 @@ bool CJetForceGeminiRuntime::PatchHudAlignment(bool Enabled, bool WidescreenCorr
     }
     if (KnownBody)
     {
-        const uint32_t BodyCall = CurrentImage[(Rdp::BodyCallAddress - Layout::CaveStart) / 4];
+        const uint32_t BodyCall = CurrentImage[(Rdp::BodyCallAddress.Us - Layout::CaveStart.Us) / 4];
         const uint32_t BodyAddress = 0x80000000 | ((BodyCall & 0x03FFFFFF) << 2);
         KnownBody = (BodyCall >> 26) == 3 && m_Memory.IsRdramAddress(BodyAddress, 8);
     }
@@ -5090,7 +4353,7 @@ bool CJetForceGeminiRuntime::PatchHudAlignment(bool Enabled, bool WidescreenCorr
         return false;
     }
     if (Enabled && (!m_Memory.ReadU8(WidescreenHudResolutionIndexAddress, ResolutionIndex) ||
-                    ResolutionIndex > 3 ||
+                    JfgHudBuild::VideoMode(ResolutionIndex) == 0xFF ||
                     !m_Memory.ReadU8(Layout::PlayerCountAddress, PlayerCount) || PlayerCount != 1))
     {
         Enabled = false;
@@ -5123,11 +4386,12 @@ bool CJetForceGeminiRuntime::PatchHudAlignment(bool Enabled, bool WidescreenCorr
         }
         return true;
     };
-    const bool Ready6 = TableReady && ValidBase(Base6, 0x0C3C) &&
-                        PrologueIs(Base6, Sites::HealthFunctionOffset,
+    const uint32_t Span6 = Sites::HealthSpan(), Span14 = Sites::WeaponSpan();
+    const bool Ready6 = TableReady && ValidBase(Base6, Span6) &&
+                        PrologueIs(Base6, JfgHudBuild::Offset(Sites::HealthModule, Sites::HealthFunctionOffset),
                                    Sites::HealthFunctionPrologue, 2);
-    const bool Ready14 = TableReady && ValidBase(Base14, 0x2BA8) &&
-                         PrologueIs(Base14, Sites::WeaponGroupFunctionOffset,
+    const bool Ready14 = TableReady && ValidBase(Base14, Span14) &&
+                         PrologueIs(Base14, JfgHudBuild::Offset(Sites::WeaponModule, Sites::WeaponGroupFunctionOffset),
                                     Sites::WeaponGroupFunctionPrologue, 2);
 
     struct Reference
@@ -5136,31 +4400,33 @@ bool CJetForceGeminiRuntime::PatchHudAlignment(bool Enabled, bool WidescreenCorr
         uint32_t Delay;
     };
     std::vector<Reference> References;
-    auto Add = [&](uint32_t Base, const Sites::CallSite & Site, uint32_t Entry) {
-        References.push_back({ { Base + Site.Offset, Site.Original, CallTo(Entry) }, Site.Delay });
+    auto Add = [&](uint32_t Base, uint32_t Module, const Sites::CallSite & Site, uint32_t Entry) {
+        References.push_back({ { Base + JfgHudBuild::Offset(Module, Site.Offset), Site.Original, CallTo(Entry) },
+                               Site.Delay });
     };
     References.push_back({ { Code::SpriteMatrixHookAddress, Code::SpriteMatrixHookOriginal,
                              CallTo(Code::SpriteMatrixEntry) }, Code::SpriteMatrixHookDelay });
     // The module table is authoritative. Never write into a cached allocation
     // after the loader has relocated/replaced that module, even on disable.
-    if (TableReady && ValidBase(Base6, 0x0C3C))
+    if (TableReady && ValidBase(Base6, Span6))
     {
-        Add(Base6, Sites::HealthSpriteCall, Code::SpriteHealthEntry);
-        Add(Base6, Sites::HealthMatrixCall, Code::MatrixHealthEntry);
+        Add(Base6, Sites::HealthModule, Sites::HealthSpriteCall, Code::SpriteHealthEntry);
+        Add(Base6, Sites::HealthModule, Sites::HealthMatrixCall, Code::MatrixHealthEntry);
     }
-    if (TableReady && ValidBase(Base14, 0x2BA8))
+    if (TableReady && ValidBase(Base14, Span14))
     {
         for (const auto & Site : Sites::WeaponSpriteCalls)
         {
-            Add(Base14, Site, Code::SpriteWeaponEntry);
+            Add(Base14, Sites::WeaponModule, Site, Code::SpriteWeaponEntry);
         }
         for (const auto & Site : Sites::WeaponMatrixCalls)
         {
-            Add(Base14, Site, Code::MatrixWeaponEntry);
+            Add(Base14, Sites::WeaponModule, Site, Code::MatrixWeaponEntry);
         }
         // Install the outer wrapper last, after the scoped sprite/matrix calls.
-        References.push_back({ { Base14 + Sites::WeaponGroupCallOffset,
-                                 CallTo(Base14 + Sites::WeaponGroupFunctionOffset),
+        References.push_back({ { Base14 + JfgHudBuild::Offset(Sites::WeaponModule, Sites::WeaponGroupCallOffset),
+                                 CallTo(Base14 + JfgHudBuild::Offset(Sites::WeaponModule,
+                                                                     Sites::WeaponGroupFunctionOffset)),
                                  CallTo(Rdp::Entry) }, Sites::WeaponGroupCallDelay });
     }
     auto RemoveReferences = [&]() {
@@ -5187,8 +4453,8 @@ bool CJetForceGeminiRuntime::PatchHudAlignment(bool Enabled, bool WidescreenCorr
         }
         // Zero means unloaded; a nonzero invalid pointer is not proof that the
         // old module and its references have gone away.
-        return Safe && (Base6 == 0 || ValidBase(Base6, 0x0C3C)) &&
-               (Base14 == 0 || ValidBase(Base14, 0x2BA8));
+        return Safe && (Base6 == 0 || ValidBase(Base6, Span6)) &&
+               (Base14 == 0 || ValidBase(Base14, Span14));
     };
     auto Restore = [&]() {
         // Independent removal means a problem in one overlay does not leave
@@ -5207,7 +4473,7 @@ bool CJetForceGeminiRuntime::PatchHudAlignment(bool Enabled, bool WidescreenCorr
         {
             GAME_HACK_CODE_WRITE Write = {};
             Write.Address = Layout::CaveStart + (uint32_t)(i * 4);
-            Write.Desired = JfgHudAlignmentOriginal::CaveWords[i];
+            Write.Desired = OriginalCave[i];
             Write.Allowed[0] = CurrentImage[i];
             Write.AllowedCount = 1;
             Writes.push_back(Write);
@@ -5217,8 +4483,8 @@ bool CJetForceGeminiRuntime::PatchHudAlignment(bool Enabled, bool WidescreenCorr
             return false;
         }
         const GAME_HACK_CODE_PATCH Guard[] = {
-            { Layout::GuardAddress, JfgHudAlignmentOriginal::GuardWords[0], Layout::GuardRetired[0] },
-            { Layout::GuardAddress + 4, JfgHudAlignmentOriginal::GuardWords[1], Layout::GuardRetired[1] },
+            { Layout::GuardAddress, OriginalGuard[0], Layout::GuardRetired[0] },
+            { Layout::GuardAddress + 4, OriginalGuard[1], Layout::GuardRetired[1] },
         };
         if (!Succeeded(m_CodePatcher.SetEnabled(Guard, 2, false)))
         {
@@ -5263,20 +4529,19 @@ bool CJetForceGeminiRuntime::PatchHudAlignment(bool Enabled, bool WidescreenCorr
         Patches.push_back(Reference.Patch);
     }
     std::vector<uint32_t> Image;
-    if (!Layout::BuildImage(Image, Base14, ResolutionIndex, WidescreenCorrected))
+    if (!Layout::BuildImage(Image, Base14, JfgHudBuild::VideoMode(ResolutionIndex), WidescreenCorrected))
     {
         return false;
     }
     const GAME_HACK_CODE_PATCH Guard[] = {
-        { Layout::GuardAddress, JfgHudAlignmentOriginal::GuardWords[0], Layout::GuardRetired[0] },
-        { Layout::GuardAddress + 4, JfgHudAlignmentOriginal::GuardWords[1], Layout::GuardRetired[1] },
+        { Layout::GuardAddress, OriginalGuard[0], Layout::GuardRetired[0] },
+        { Layout::GuardAddress + 4, OriginalGuard[1], Layout::GuardRetired[1] },
     };
     if (!Succeeded(m_CodePatcher.SetEnabled(Guard, 2, true)))
     {
         return false;
     }
-    m_HudAlignmentCaveOriginal.assign(JfgHudAlignmentOriginal::CaveWords,
-                                     JfgHudAlignmentOriginal::CaveWords + WordCount);
+    m_HudAlignmentCaveOriginal.assign(OriginalCave, OriginalCave + WordCount);
     m_HudAlignmentScopeOwned = true;
     std::vector<GAME_HACK_CODE_WRITE> Writes;
     Writes.reserve(WordCount);
@@ -5349,10 +4614,10 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         LegacyFixedPatches + sizeof(LegacyFixedPatches) / sizeof(LegacyFixedPatches[0]));
     const GAME_HACK_CODE_PATCH AmmoPatches[] =
     {
-        { 0x800590D0, 0x3C140400, 0x8FB40088 }, // lw s4, 0x88(sp), significant digits
-        { 0x800590F4, 0x3694FC00, 0x00000000 }, // step already includes dtdy
-        { 0x8005921C, 0x3C140400, 0x8FB40088 }, // lw s4, 0x88(sp), leading zeroes
-        { 0x80059228, 0x3694FC00, 0x00000000 },
+        { JfgHudBuild::Address(0x800590D0), 0x3C140400, 0x8FB40088 }, // lw s4, 0x88(sp), significant digits
+        { JfgHudBuild::Address(0x800590F4), 0x3694FC00, 0x00000000 }, // step already includes dtdy
+        { JfgHudBuild::Address(0x8005921C), 0x3C140400, 0x8FB40088 }, // lw s4, 0x88(sp), leading zeroes
+        { JfgHudBuild::Address(0x80059228), 0x3694FC00, 0x00000000 },
         { WidescreenHudAmmoEntry, WidescreenHudAmmoOriginal,
           JumpTo(WidescreenHudAmmoStub) },
     };
@@ -5361,13 +4626,16 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
     // Retire the diagnostic entry and install the Floyd rasterizer consumers
     // before exposing its overlay caller. Reverse removal disconnects the
     // consumers before restoring the diagnostic entry and cave image.
-    for (const auto & Patch : JfgFloydHud::FixedPatches)
+    for (const auto & Patch : JfgFloydHud::FixedPatchesForBuild())
     {
         FixedPatches.push_back({ Patch.Address, Patch.Original, Patch.Replacement });
     }
     // fxOutputLines has obtained the dimensions but has not flipped its queue.
-    FixedPatches.push_back({ 0x8006E1C4, 0x24A53B90, 0x3C058010 });
-    FixedPatches.push_back({ 0x8006E1C0, 0x3C058010, JumpTo(JfgRocketOverlay::Submit) });
+    // The lui a1 of its line-queue index moves into the entry's delay slot and
+    // the stub replays the displaced low half (0x3B90 on US, 0x35E8 on PAL).
+    const JfgHudBuild::BuildWord RocketLineIndexLow = { 0x24A53B90, 0x24A535E8 };
+    FixedPatches.push_back({ JfgHudBuild::Address(0x8006E1C4), RocketLineIndexLow, 0x3C058010 });
+    FixedPatches.push_back({ JfgHudBuild::Address(0x8006E1C0), 0x3C058010, JumpTo(JfgRocketOverlay::Submit) });
 
     // Earlier builds patched the framebuffer digit renderer, one of them
     // through a cave trampoline. Both forms are returned to stock below before
@@ -5378,8 +4646,10 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         for (uint32_t i = 0; i < WidescreenHudDigitalRetiredCount; i++)
         {
             const GAME_HACK_CODE_PATCH & Patch = WidescreenHudDigitalRetired[i];
+            GAME_HACK_CODE_PATCH Retire = Patch;
+            Retire.Address = JfgHudBuild::Address(Patch.Address);
             uint32_t Current = 0;
-            if (!m_Memory.ReadU32(Patch.Address, Current))
+            if (!m_Memory.ReadU32(Retire.Address, Current))
             {
                 return false;
             }
@@ -5387,8 +4657,7 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
             {
                 continue;
             }
-            GAME_HACK_CODE_PATCH Retire = Patch;
-            if (Patch.Address == WidescreenHudDigitalAdvanceEntry &&
+            if (Patch.Address == WidescreenHudDigitalAdvanceEntry.Us &&
                 Current == WidescreenHudDigitalAdvanceLegacyJump)
             {
                 Retire.Replacement = WidescreenHudDigitalAdvanceLegacyJump;
@@ -5411,8 +4680,11 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         return Current == Patch.Replacement;
     };
 
-    auto CaveCodeMatches = [this](uint32_t Address, const uint32_t * Code, size_t Count) {
-        if (Code == nullptr || Count == 0 ||
+    // Listings are compared as the ROM in hand holds them, see HudCode; an
+    // empty listing (no translation on this build) never matches.
+    auto CaveCodeMatches = [this](uint32_t Address, const std::vector<uint32_t> & Code) {
+        const size_t Count = Code.size();
+        if (Count == 0 ||
             !m_Memory.IsRdramAddress(Address, (uint32_t)(Count * sizeof(uint32_t))))
         {
             return false;
@@ -5431,27 +4703,21 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
     };
 
     auto CaptureCaveImage = [this, &CaveCodeMatches]() {
-        const bool SavedRocket = CaveCodeMatches(JfgRocketOverlay::Start,
-            JfgRocketOverlay::Code, sizeof(JfgRocketOverlay::Code) / sizeof(uint32_t));
-        if (!SavedRocket && !CaveCodeMatches(JfgRocketOverlay::Start,
-            JfgRocketOverlay::Original, sizeof(JfgRocketOverlay::Original) / sizeof(uint32_t)))
+        const std::vector<uint32_t> RocketOriginal = JfgRocketOverlay::OriginalImage();
+        const bool SavedRocket = CaveCodeMatches(JfgRocketOverlay::Start, HudCode(JfgRocketOverlay::Code));
+        if (!SavedRocket && !CaveCodeMatches(JfgRocketOverlay::Start, RocketOriginal))
             return false;
         // A fresh runtime may adopt a snapshot containing our raster helpers.
         // Reopening the original diagnostic entry over that saved helper body
         // would be unsafe. Normalize this entire recognizable function to its
         // ROM image, while leaving unrelated captured diagnostic bytes alone.
+        const std::vector<uint32_t> FloydDiagnostic = JfgFloydHud::OriginalDiagnosticImage();
         const bool SavedFloydDiagnostic =
-            CaveCodeMatches(JfgFloydHud::GuardStub, JfgFloydHud::GuardCode,
-                            sizeof(JfgFloydHud::GuardCode) / sizeof(uint32_t)) &&
-            CaveCodeMatches(JfgFloydHud::InitStub, JfgFloydHud::InitCode,
-                            sizeof(JfgFloydHud::InitCode) / sizeof(uint32_t)) &&
-            CaveCodeMatches(JfgFloydHud::StepStub, JfgFloydHud::StepCode,
-                            sizeof(JfgFloydHud::StepCode) / sizeof(uint32_t)) &&
-            CaveCodeMatches(JfgFloydHud::StepTailStub, JfgFloydHud::StepTailCode,
-                            sizeof(JfgFloydHud::StepTailCode) / sizeof(uint32_t));
-        if (!SavedFloydDiagnostic &&
-            !CaveCodeMatches(JfgFloydHud::GuardStub, JfgFloydHud::OriginalDiagnosticCode,
-                            sizeof(JfgFloydHud::OriginalDiagnosticCode) / sizeof(uint32_t)))
+            CaveCodeMatches(JfgFloydHud::GuardStub, HudCode(JfgFloydHud::GuardCode)) &&
+            CaveCodeMatches(JfgFloydHud::InitStub, HudCode(JfgFloydHud::InitCode)) &&
+            CaveCodeMatches(JfgFloydHud::StepStub, HudCode(JfgFloydHud::StepCode)) &&
+            CaveCodeMatches(JfgFloydHud::StepTailStub, HudCode(JfgFloydHud::StepTailCode));
+        if (!SavedFloydDiagnostic && !CaveCodeMatches(JfgFloydHud::GuardStub, FloydDiagnostic))
         {
             return false;
         }
@@ -5467,12 +4733,12 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
             }
             const uint32_t Address = WidescreenHudCaveWordAddress(i);
             if (Address >= JfgRocketOverlay::Start && Address < JfgRocketOverlay::End)
-                m_WidescreenHudCaveOriginal[i] = JfgRocketOverlay::Original[
+                m_WidescreenHudCaveOriginal[i] = RocketOriginal[
                     (Address - JfgRocketOverlay::Start) / 4];
             if (SavedFloydDiagnostic && Address >= JfgFloydHud::GuardStub &&
-                Address < JfgFloydHud::GuardStub + sizeof(JfgFloydHud::OriginalDiagnosticCode))
+                Address < JfgFloydHud::GuardStub + FloydDiagnostic.size() * sizeof(uint32_t))
             {
-                m_WidescreenHudCaveOriginal[i] = JfgFloydHud::OriginalDiagnosticCode[
+                m_WidescreenHudCaveOriginal[i] = FloydDiagnostic[
                     (Address - JfgFloydHud::GuardStub) / sizeof(uint32_t)];
             }
         }
@@ -5492,9 +4758,11 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         // guest then ran off the end of a stub. Claim every word so an overlap
         // fails the build of the image instead of the emulation.
         std::vector<bool> Claimed(WidescreenHudCaveWordCount, false);
-        auto PlaceCode = [&Image, &Claimed](
-                             uint32_t Address, const uint32_t * Code, size_t Count) {
-            if ((Address & 3) != 0)
+        // Each listing is placed as the ROM in hand needs it, see HudCode. An
+        // empty one means a word had no translation: refuse the whole image.
+        auto PlaceCode = [&Image, &Claimed](uint32_t Address, const std::vector<uint32_t> & Code) {
+            const size_t Count = Code.size();
+            if ((Address & 3) != 0 || Count == 0)
             {
                 return false;
             }
@@ -5534,49 +4802,28 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
             return true;
         };
 
-        if (!PlaceCode(JfgRocketOverlay::Start, JfgRocketOverlay::Code, sizeof(JfgRocketOverlay::Code) / 4) ||
-            !PlaceCode(WidescreenHudScopeEnterStub, WidescreenHudScopeEnterCode,
-                       sizeof(WidescreenHudScopeEnterCode) / sizeof(WidescreenHudScopeEnterCode[0])) ||
-            !PlaceCode(WidescreenHudScopeExitStub, WidescreenHudScopeExitCode,
-                       sizeof(WidescreenHudScopeExitCode) / sizeof(WidescreenHudScopeExitCode[0])) ||
-            !PlaceCode(WidescreenHudCamCopyStub, WidescreenHudCamCopyCode,
-                       sizeof(WidescreenHudCamCopyCode) / sizeof(WidescreenHudCamCopyCode[0])) ||
-            !PlaceCode(WidescreenHudFontYStub, WidescreenHudFontYCode,
-                       sizeof(WidescreenHudFontYCode) / sizeof(WidescreenHudFontYCode[0])) ||
-            !PlaceCode(WidescreenHudFontDtdyStub, WidescreenHudFontDtdyCode,
-                       sizeof(WidescreenHudFontDtdyCode) / sizeof(WidescreenHudFontDtdyCode[0])) ||
-            !PlaceCode(WidescreenHudSpriteScaleStub, WidescreenHudSpriteScaleCode,
-                       sizeof(WidescreenHudSpriteScaleCode) / sizeof(WidescreenHudSpriteScaleCode[0])) ||
-            !PlaceCode(WidescreenHudLineStub, WidescreenHudLineCode,
-                       sizeof(WidescreenHudLineCode) / sizeof(WidescreenHudLineCode[0])) ||
-            !PlaceCode(WidescreenHudRectangleStub, WidescreenHudRectangleCode,
-                       sizeof(WidescreenHudRectangleCode) / sizeof(WidescreenHudRectangleCode[0])) ||
-            !PlaceCode(WidescreenHudSpriteScaleAltStub, WidescreenHudSpriteScaleAltCode,
-                       sizeof(WidescreenHudSpriteScaleAltCode) / sizeof(WidescreenHudSpriteScaleAltCode[0])) ||
-            !PlaceCode(WidescreenHudSpritePositionStub, WidescreenHudSpritePositionCode,
-                       sizeof(WidescreenHudSpritePositionCode) / sizeof(WidescreenHudSpritePositionCode[0])) ||
-            !PlaceCode(WidescreenHudMatrixTranslateStub, WidescreenHudMatrixTranslateCode,
-                       sizeof(WidescreenHudMatrixTranslateCode) / sizeof(WidescreenHudMatrixTranslateCode[0])) ||
-            !PlaceCode(WidescreenHudAmmoStub, WidescreenHudAmmoCode,
-                       sizeof(WidescreenHudAmmoCode) / sizeof(WidescreenHudAmmoCode[0])) ||
-            !PlaceCode(WidescreenHudReticleStub, WidescreenHudReticleCode,
-                       sizeof(WidescreenHudReticleCode) / sizeof(WidescreenHudReticleCode[0])) ||
-            !PlaceCode(WidescreenHudReticleWeaponStub, WidescreenHudReticleWeaponCode,
-                       sizeof(WidescreenHudReticleWeaponCode) / sizeof(WidescreenHudReticleWeaponCode[0])) ||
-            !PlaceCode(WidescreenHudShotGaugeWrapperStub, WidescreenHudShotGaugeWrapperCode,
-                       sizeof(WidescreenHudShotGaugeWrapperCode) / sizeof(WidescreenHudShotGaugeWrapperCode[0])) ||
-            !PlaceCode(WidescreenHudShotGaugeAnchorStub, WidescreenHudShotGaugeAnchorCode,
-                       sizeof(WidescreenHudShotGaugeAnchorCode) / sizeof(WidescreenHudShotGaugeAnchorCode[0])) ||
-            !PlaceCode(WidescreenHudFloydLineStub, WidescreenHudFloydLineCode,
-                       sizeof(WidescreenHudFloydLineCode) / sizeof(uint32_t)) ||
-            !PlaceCode(JfgFloydHud::GuardStub, JfgFloydHud::GuardCode,
-                       sizeof(JfgFloydHud::GuardCode) / sizeof(uint32_t)) ||
-            !PlaceCode(JfgFloydHud::InitStub, JfgFloydHud::InitCode,
-                       sizeof(JfgFloydHud::InitCode) / sizeof(uint32_t)) ||
-            !PlaceCode(JfgFloydHud::StepStub, JfgFloydHud::StepCode,
-                       sizeof(JfgFloydHud::StepCode) / sizeof(uint32_t)) ||
-            !PlaceCode(JfgFloydHud::StepTailStub, JfgFloydHud::StepTailCode,
-                       sizeof(JfgFloydHud::StepTailCode) / sizeof(uint32_t)))
+        if (!PlaceCode(JfgRocketOverlay::Start, HudCode(JfgRocketOverlay::Code)) ||
+            !PlaceCode(WidescreenHudScopeEnterStub, HudCode(WidescreenHudScopeEnterCode)) ||
+            !PlaceCode(WidescreenHudScopeExitStub, HudCode(WidescreenHudScopeExitCode)) ||
+            !PlaceCode(WidescreenHudCamCopyStub, HudCode(WidescreenHudCamCopyCode)) ||
+            !PlaceCode(WidescreenHudFontYStub, HudCode(WidescreenHudFontYCode)) ||
+            !PlaceCode(WidescreenHudFontDtdyStub, HudCode(WidescreenHudFontDtdyCode)) ||
+            !PlaceCode(WidescreenHudSpriteScaleStub, HudCode(WidescreenHudSpriteScaleCode)) ||
+            !PlaceCode(WidescreenHudLineStub, HudCode(WidescreenHudLineCode)) ||
+            !PlaceCode(WidescreenHudRectangleStub, HudCode(WidescreenHudRectangleCode)) ||
+            !PlaceCode(WidescreenHudSpriteScaleAltStub, HudCode(WidescreenHudSpriteScaleAltCode)) ||
+            !PlaceCode(WidescreenHudSpritePositionStub, HudCode(WidescreenHudSpritePositionCode)) ||
+            !PlaceCode(WidescreenHudMatrixTranslateStub, HudCode(WidescreenHudMatrixTranslateCode)) ||
+            !PlaceCode(WidescreenHudAmmoStub, HudCode(WidescreenHudAmmoCode)) ||
+            !PlaceCode(WidescreenHudReticleStub, HudCode(WidescreenHudReticleCode)) ||
+            !PlaceCode(WidescreenHudReticleWeaponStub, HudCode(WidescreenHudReticleWeaponCode)) ||
+            !PlaceCode(WidescreenHudShotGaugeWrapperStub, HudCode(WidescreenHudShotGaugeWrapperCode)) ||
+            !PlaceCode(WidescreenHudShotGaugeAnchorStub, HudCode(WidescreenHudShotGaugeAnchorCode)) ||
+            !PlaceCode(WidescreenHudFloydLineStub, HudCode(WidescreenHudFloydLineCode)) ||
+            !PlaceCode(JfgFloydHud::GuardStub, HudCode(JfgFloydHud::GuardCode)) ||
+            !PlaceCode(JfgFloydHud::InitStub, HudCode(JfgFloydHud::InitCode)) ||
+            !PlaceCode(JfgFloydHud::StepStub, HudCode(JfgFloydHud::StepCode)) ||
+            !PlaceCode(JfgFloydHud::StepTailStub, HudCode(JfgFloydHud::StepTailCode)))
         {
             return false;
         }
@@ -5591,17 +4838,12 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
             return false;
         }
 
-        const bool LegacySpritePosition = CaveCodeMatches(
-            WidescreenHudSpritePositionStub, WidescreenHudSpritePositionLegacyCode,
-            sizeof(WidescreenHudSpritePositionLegacyCode) /
-                sizeof(WidescreenHudSpritePositionLegacyCode[0]));
-        const bool LegacyRectangle = CaveCodeMatches(
-            WidescreenHudRectangleStub, WidescreenHudRectangleLegacyCode,
-            sizeof(WidescreenHudRectangleLegacyCode) /
-                sizeof(WidescreenHudRectangleLegacyCode[0]));
-        const bool LegacyReticle = CaveCodeMatches(
-            WidescreenHudReticleStub, WidescreenHudReticleLegacyCode,
-            sizeof(WidescreenHudReticleLegacyCode) / sizeof(uint32_t));
+        const std::vector<uint32_t> SpritePositionLegacy = HudCode(WidescreenHudSpritePositionLegacyCode);
+        const std::vector<uint32_t> RectangleLegacy = HudCode(WidescreenHudRectangleLegacyCode);
+        const std::vector<uint32_t> ReticleLegacy = HudCode(WidescreenHudReticleLegacyCode);
+        const bool LegacySpritePosition = CaveCodeMatches(WidescreenHudSpritePositionStub, SpritePositionLegacy);
+        const bool LegacyRectangle = CaveCodeMatches(WidescreenHudRectangleStub, RectangleLegacy);
+        const bool LegacyReticle = CaveCodeMatches(WidescreenHudReticleStub, ReticleLegacy);
         std::vector<GAME_HACK_CODE_WRITE> Writes(WidescreenHudCaveWordCount);
         for (size_t i = 0; i < Writes.size(); i++)
         {
@@ -5621,21 +4863,21 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
                 Write.Allowed[Write.AllowedCount++] = HookImage[i];
             }
             if (LegacySpritePosition && Write.Address >= WidescreenHudSpritePositionStub &&
-                Write.Address < WidescreenHudSpritePositionStub + sizeof(WidescreenHudSpritePositionLegacyCode))
+                Write.Address < WidescreenHudSpritePositionStub + SpritePositionLegacy.size() * sizeof(uint32_t))
             {
-                Write.Allowed[Write.AllowedCount++] = WidescreenHudSpritePositionLegacyCode[
+                Write.Allowed[Write.AllowedCount++] = SpritePositionLegacy[
                     (Write.Address - WidescreenHudSpritePositionStub) / sizeof(uint32_t)];
             }
             if (LegacyReticle && Write.Address >= WidescreenHudReticleStub &&
-                Write.Address < WidescreenHudReticleStub + sizeof(WidescreenHudReticleLegacyCode))
+                Write.Address < WidescreenHudReticleStub + ReticleLegacy.size() * sizeof(uint32_t))
             {
-                Write.Allowed[Write.AllowedCount++] = WidescreenHudReticleLegacyCode[
+                Write.Allowed[Write.AllowedCount++] = ReticleLegacy[
                     (Write.Address - WidescreenHudReticleStub) / sizeof(uint32_t)];
             }
             if (LegacyRectangle && Write.Address >= WidescreenHudRectangleStub &&
-                Write.Address < WidescreenHudRectangleStub + sizeof(WidescreenHudRectangleLegacyCode))
+                Write.Address < WidescreenHudRectangleStub + RectangleLegacy.size() * sizeof(uint32_t))
             {
-                Write.Allowed[Write.AllowedCount++] = WidescreenHudRectangleLegacyCode[
+                Write.Allowed[Write.AllowedCount++] = RectangleLegacy[
                     (Write.Address - WidescreenHudRectangleStub) / sizeof(uint32_t)];
             }
         }
@@ -5645,13 +4887,17 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
                Result != CGameHackCodePatcher::Result_MemoryUnavailable;
     };
 
-    const bool ExactUsRom = IsSupportedRom() && JfgAddresses() == &JfgUsAddresses;
+    // The HUD tables are spelled in US terms and translated for PAL (see
+    // JetForceGeminiHudBuild.h); the Kiosk demo has no HUD support. The retired
+    // US-only experiments below are only ever looked for on the US build.
+    const bool HudRom = IsSupportedRom() && JfgHudBuild::Current() != JfgHudBuild::BuildNone;
+    const bool ExactUsRom = HudRom && JfgHudBuild::Current() == JfgHudBuild::BuildUs;
     if (Enabled)
     {
         uint8_t Resolution = 0;
         // Keep the mode check at the mutation boundary too, so another caller
         // cannot accidentally install any part of the patch in 4:3.
-        Enabled = ExactUsRom &&
+        Enabled = HudRom &&
             m_Memory.ReadU8(WidescreenHudResolutionIndexAddress, Resolution) &&
             IsWidescreenHudResolution(Resolution);
     }
@@ -5680,7 +4926,7 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         !m_WidescreenHudScopeOwned &&
         m_WidescreenHudOverlayBase == 0 &&
         m_WidescreenReticleOverlayBase == 0;
-    if (ExactUsRom && HasNoHudOwnership)
+    if (HudRom && HasNoHudOwnership)
     {
         bool AllFixedHooksInstalled = true;
         for (const GAME_HACK_CODE_PATCH & Patch : LegacyFixedPatches)
@@ -5703,14 +4949,12 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
             // fixed address: enough to prove the cave belongs to a HUD build
             // and not to some unrelated writer of the diagnostic region.
             const bool CompatibleCave = CaveCodeMatches(
-                WidescreenHudFontYStub, WidescreenHudFontYCode,
-                sizeof(WidescreenHudFontYCode) / sizeof(WidescreenHudFontYCode[0]));
+                WidescreenHudFontYStub, HudCode(WidescreenHudFontYCode));
             uint32_t AmmoEntry = 0;
             const bool CompatibleAmmo = m_Memory.ReadU32(WidescreenHudAmmoEntry, AmmoEntry) &&
                 (AmmoEntry == WidescreenHudAmmoOriginal ||
                  (AmmoEntry == JumpTo(WidescreenHudAmmoStub) &&
-                  CaveCodeMatches(WidescreenHudAmmoStub, WidescreenHudAmmoCode,
-                                  sizeof(WidescreenHudAmmoCode) / sizeof(WidescreenHudAmmoCode[0]))));
+                  CaveCodeMatches(WidescreenHudAmmoStub, HudCode(WidescreenHudAmmoCode))));
             if (!CompatibleCave || !CompatibleAmmo || !CaptureCaveImage())
             {
                 return false;
@@ -5729,7 +4973,7 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         // Old experiments could leave just these four constants behind after
         // removing the HUD hooks. They have independent exact-US signatures
         // and must be retired even without any cave ownership.
-        const bool DigitalRemoved = !ExactUsRom || RetireDeadDigitalPatches();
+        const bool DigitalRemoved = !HudRom || RetireDeadDigitalPatches();
         // A disabled or unsupported ROM reaches this path on every runtime
         // tick. Only remove fixed words after ownership has been established:
         // a natural NOP must not be mistaken for a displaced delay slot.
@@ -5743,10 +4987,10 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         {
             // The old implementation could remove every cave reference while
             // leaving translated gauge X values behind. Recognize only the
-            // current US overlay renderer before repairing that orphaned data.
+            // current overlay renderer before repairing that orphaned data.
             uint32_t Table = 0, Base = 0;
             uint32_t Enter = 0, EnterDelay = 0, Exit = 0, ExitDelay = 0;
-            if (ExactUsRom &&
+            if (HudRom &&
                 m_Memory.ReadU32(OverlayTableAddress, Table) && (Table & 3) == 0 &&
                 m_Memory.IsRdramAddress(Table, (WidescreenHudOverlayModule + 1) * OverlayHeaderSize) &&
                 m_Memory.ReadU32(Table + WidescreenHudOverlayModule * OverlayHeaderSize, Base) &&
@@ -5840,10 +5084,10 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
         return true;
     }
 
-    // Every address and instruction below is from the exact US executable.
-    // Refuse Kiosk (and any later PAL/JP table) even though the wider runtime
-    // supports it for unrelated features.
-    if (JfgAddresses() != &JfgUsAddresses)
+    // Every address and instruction below is spelled for the US executable and
+    // translated for PAL. Refuse the Kiosk demo, which the wider runtime
+    // supports for unrelated features but whose HUD has not been mapped.
+    if (!HudRom)
     {
         return false;
     }
@@ -6040,7 +5284,7 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
 
 void CJetForceGeminiRuntime::PatchHudRaster(bool Enabled, bool TextOnly)
 {
-    if (!IsSupportedRom() || JfgAddresses() != &JfgUsAddresses) return;
+    if (!IsSupportedRom() || JfgHudBuild::Current() == JfgHudBuild::BuildNone) return;
     if (!Enabled) JfgMultiplayerHud::Update(m_Memory, m_CodePatcher, false);
     JfgHudRaster::UpdateTitleLogo(m_Memory, m_CodePatcher, Enabled);
     uint32_t table = 0, health = 0, weapon = 0;
@@ -6113,9 +5357,8 @@ bool CJetForceGeminiRuntime::ReadObjectName(uint32_t Object, char * Buffer, size
     return i > 0;
 }
 
-// Some flying Galaxian variants move through a per-baddy mover that the
-// SquaddieControl step hook never reaches, so they stay full speed in 60 fps
-// mode. Halve their world movement directly, by model name: each frame the game
+// Some flying Galaxian variants move through a per-baddy mover of their own that
+// the objMoveXYZ hook never sees, so they stay full speed in 60 fps mode. Halve their world movement directly, by model name: each frame the game
 // has already moved the object from the halved position written last frame, so
 // averaging back toward that previous value halves the applied step with no
 // drift - whatever the internal mover does, and without touching guest code.
@@ -6217,50 +5460,6 @@ void CJetForceGeminiRuntime::HalveNamedEnemyMovement(void)
         Slot->Z = CorrectedZ;
         Slot->LastSeenFrame = m_HalveFrameCounter;
     }
-}
-
-// Records where the game stands at the instant the key is pressed. The scene
-// and setup name the level, the next/character words say what a transition is
-// heading for, and the animseq camera pointer is what separates the individual
-// shots of a cinematic from each other and from ordinary play. Pressing once
-// per shot and once more on the way out is what makes a run of these lines
-// describe a whole cinematic.
-void CJetForceGeminiRuntime::DisplayCinematicProbe(void)
-{
-    int16_t CurrentScene = 0;
-    int16_t CurrentSetup = 0;
-    int16_t NextLevel = 0;
-    int16_t NextSetup = 0;
-    int16_t NextCharacter = 0;
-    int16_t NextFrontMode = 0;
-    uint8_t Loading = 0;
-    uint8_t FrontMode = 0;
-    uint32_t AnimseqCamera = 0;
-
-    m_Memory.ReadS16(CurrentSceneAddress, CurrentScene);
-    m_Memory.ReadS16(CurrentSetupAddress, CurrentSetup);
-    m_Memory.ReadS16(NextLevelAddress, NextLevel);
-    m_Memory.ReadS16(NextSetupAddress, NextSetup);
-    m_Memory.ReadS16(NextCharacterAddress, NextCharacter);
-    m_Memory.ReadS16(NextFrontModeAddress, NextFrontMode);
-    m_Memory.ReadU8(LoadingAddress, Loading);
-    m_Memory.ReadU8(FrontModeAddress, FrontMode);
-    m_Memory.ReadU32(AnimseqCameraAddress, AnimseqCamera);
-
-    static uint32_t ProbeCount = 0;
-    ProbeCount += 1;
-
-    stdstr Message =
-        stdstr_f("JFG P%03u scene%04X setup%04X next%04X nset%04X char%04X f%02X nf%04X load%u anim%08X",
-                 ProbeCount, (uint16_t)CurrentScene, (uint16_t)CurrentSetup, (uint16_t)NextLevel,
-                 (uint16_t)NextSetup, (uint16_t)NextCharacter, FrontMode,
-                 (uint16_t)NextFrontMode, Loading, AnimseqCamera);
-
-    g_Notify->DisplayMessage(
-        0,
-        Message.c_str());
-
-    AppendCinematicProbeLog(Message);
 }
 
 void CJetForceGeminiRuntime::RemoveLegacyIntroCinematicSkip(void)
@@ -6459,99 +5658,6 @@ bool CJetForceGeminiRuntime::SetObjectMoveHook(bool Enabled)
     return true;
 }
 
-// Like the object-movement dispatcher, the Floyd velocity hook occupies a
-// dormant piece of game code rather than blank RAM. Preserve its original words
-// so disabling the option, saving a state, or leaving the ROM restores it
-// exactly. This also keeps it independent from the RSP microcode scratch page.
-bool CJetForceGeminiRuntime::SetPlayerVelocityHook(bool Enabled)
-{
-    const size_t PatchCount = sizeof(PlayerVelocityPatches) / sizeof(PlayerVelocityPatches[0]);
-    const size_t StubCount = PatchCount - 1;
-    const GAME_HACK_CODE_PATCH & Entry = PlayerVelocityPatches[PatchCount - 1];
-
-    auto BuildWrites = [this, StubCount](std::vector<GAME_HACK_CODE_WRITE> & Writes, bool Install) {
-        Writes.resize(StubCount);
-        for (size_t i = 0; i < StubCount; i++)
-        {
-            GAME_HACK_CODE_WRITE & Write = Writes[i];
-            Write.Address = PlayerVelocityPatches[i].Address;
-            Write.Desired = Install ? PlayerVelocityPatches[i].Replacement : m_PlayerVelocityStubOriginal[i];
-            Write.Allowed[0] = m_PlayerVelocityStubOriginal[i];
-            Write.Allowed[1] = PlayerVelocityPatches[i].Replacement;
-            Write.AllowedCount = 2;
-        }
-    };
-
-    if (!Enabled)
-    {
-        CGameHackCodePatcher::Result EntryResult = m_CodePatcher.SetEnabled(&Entry, 1, false);
-        if (EntryResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-            EntryResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-        {
-            return false;
-        }
-        if (m_PlayerVelocityStubOriginal.empty())
-        {
-            return true;
-        }
-        if (m_PlayerVelocityStubOriginal.size() != StubCount)
-        {
-            return false;
-        }
-
-        std::vector<GAME_HACK_CODE_WRITE> Writes;
-        BuildWrites(Writes, false);
-        CGameHackCodePatcher::Result StubResult = m_CodePatcher.Apply(Writes.data(), Writes.size());
-        if (StubResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-            StubResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-        {
-            return false;
-        }
-        m_PlayerVelocityStubOriginal.clear();
-        return true;
-    }
-
-    if (m_PlayerVelocityStubOriginal.empty())
-    {
-        uint32_t EntryWord = 0;
-        if (!m_Memory.ReadU32(Entry.Address, EntryWord) || EntryWord != Entry.Original)
-        {
-            return false;
-        }
-        m_PlayerVelocityStubOriginal.resize(StubCount);
-        for (size_t i = 0; i < StubCount; i++)
-        {
-            if (!m_Memory.ReadU32(PlayerVelocityPatches[i].Address, m_PlayerVelocityStubOriginal[i]))
-            {
-                m_PlayerVelocityStubOriginal.clear();
-                return false;
-            }
-        }
-    }
-    if (m_PlayerVelocityStubOriginal.size() != StubCount)
-    {
-        return false;
-    }
-
-    std::vector<GAME_HACK_CODE_WRITE> Writes;
-    BuildWrites(Writes, true);
-    CGameHackCodePatcher::Result StubResult = m_CodePatcher.Apply(Writes.data(), Writes.size());
-    if (StubResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-        StubResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        return false;
-    }
-    CGameHackCodePatcher::Result EntryResult = m_CodePatcher.SetEnabled(&Entry, 1, true);
-    if (EntryResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-        EntryResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        BuildWrites(Writes, false);
-        m_CodePatcher.Apply(Writes.data(), Writes.size());
-        return false;
-    }
-    return true;
-}
-
 // Scales object movement at the final transform step. The player is identified
 // through the game-owned player list, leaving sprint as the separate host-side
 // position adjustment in ApplySprint.
@@ -6605,297 +5711,6 @@ void CJetForceGeminiRuntime::PatchObjectMove(bool HalveEnemies)
     m_ObjectMovePatchApplied = Enabled;
 }
 
-void CJetForceGeminiRuntime::PatchPlayerVelocity(bool Enabled)
-{
-    uint32_t Entry = 0;
-    if (m_Memory.ReadU32(PlayerVelocityEntry, Entry))
-    {
-        m_PlayerVelocityPatchApplied = Entry == PlayerVelocityJump;
-    }
-
-    if (!Enabled && !m_PlayerVelocityPatchApplied)
-    {
-        return;
-    }
-
-    if (!SetPlayerVelocityHook(Enabled))
-    {
-        return;
-    }
-    m_PlayerVelocityPatchApplied = Enabled;
-
-}
-
-bool CJetForceGeminiRuntime::GetSquaddieOverlayBase(uint32_t & OverlayBase) const
-{
-    OverlayBase = 0;
-    uint32_t OverlayTable = 0;
-    const uint32_t RequiredTableSize = (SquaddieOverlayModule + 1) * OverlayHeaderSize;
-    if (!m_Memory.ReadU32(OverlayTableAddress, OverlayTable) ||
-        (OverlayTable & 3) != 0 || !m_Memory.IsRdramAddress(OverlayTable, RequiredTableSize))
-    {
-        return false;
-    }
-
-    uint32_t OverlayHeader = OverlayTable + SquaddieOverlayModule * OverlayHeaderSize;
-    if (!m_Memory.ReadU32(OverlayHeader, OverlayBase) || (OverlayBase & 3) != 0 ||
-        !m_Memory.IsRdramAddress(OverlayBase + SquaddieZResumeOffset, sizeof(uint32_t)))
-    {
-        OverlayBase = 0;
-        return false;
-    }
-    return true;
-}
-
-// sidekickpadMovePlayer is module 22's dedicated Floyd movement controller.
-// Read its live relocated entry for diagnostics before altering it: overlays
-// move in RDRAM, so their static ROM offsets alone cannot be patched safely.
-void CJetForceGeminiRuntime::UpdateDroneLateralControllerProbe(void)
-{
-    m_DroneLateralControllerEntry = 0;
-    m_DroneLateralControllerWord0 = 0;
-    m_DroneLateralControllerWord1 = 0;
-    m_DroneLateralControllerWord2 = 0;
-    m_DroneLateralControllerWord3 = 0;
-    m_DroneLateralControllerReturn = 0;
-    m_DroneLateralControllerReturnWord0 = 0;
-    m_DroneLateralControllerReturnWord1 = 0;
-    m_DroneLateralControllerReturnWord2 = 0;
-    m_DroneLateralControllerReturnWord3 = 0;
-    m_DroneLateralControllerReturnWord4 = 0;
-
-    uint32_t OverlayTable = 0;
-    const uint32_t RequiredTableSize = (FloydOverlayModule + 1) * OverlayHeaderSize;
-    if (!m_Memory.ReadU32(OverlayTableAddress, OverlayTable) || (OverlayTable & 3) != 0 ||
-        !m_Memory.IsRdramAddress(OverlayTable, RequiredTableSize))
-    {
-        return;
-    }
-
-    uint32_t OverlayBase = 0;
-    const uint32_t OverlayHeader = OverlayTable + FloydOverlayModule * OverlayHeaderSize;
-    if (!m_Memory.ReadU32(OverlayHeader, OverlayBase) || (OverlayBase & 3) != 0)
-    {
-        return;
-    }
-
-    const uint32_t Entry = OverlayBase + FloydMovePlayerOffset;
-    if (!m_Memory.IsRdramAddress(Entry, 5 * sizeof(uint32_t)) ||
-        !m_Memory.ReadU32(Entry + 0x00, m_DroneLateralControllerWord0) ||
-        !m_Memory.ReadU32(Entry + 0x04, m_DroneLateralControllerWord1) ||
-        !m_Memory.ReadU32(Entry + 0x08, m_DroneLateralControllerWord2) ||
-        !m_Memory.ReadU32(Entry + 0x0C, m_DroneLateralControllerWord3))
-    {
-        return;
-    }
-    m_DroneLateralControllerEntry = Entry;
-
-    for (uint32_t Offset = 0; Offset < FloydMovePlayerSize; Offset += sizeof(uint32_t))
-    {
-        uint32_t Instruction = 0;
-        const uint32_t Address = Entry + Offset;
-        if (!m_Memory.ReadU32(Address, Instruction) || Instruction != 0x03E00008)
-        {
-            continue;
-        }
-
-        if (Offset < 3 * sizeof(uint32_t) ||
-            !m_Memory.ReadU32(Address - 0x0C, m_DroneLateralControllerReturnWord0) ||
-            !m_Memory.ReadU32(Address - 0x08, m_DroneLateralControllerReturnWord1) ||
-            !m_Memory.ReadU32(Address - 0x04, m_DroneLateralControllerReturnWord2) ||
-            !m_Memory.ReadU32(Address + 0x00, m_DroneLateralControllerReturnWord3) ||
-            !m_Memory.ReadU32(Address + 0x04, m_DroneLateralControllerReturnWord4))
-        {
-            return;
-        }
-        m_DroneLateralControllerReturn = Address;
-        return;
-    }
-}
-
-bool CJetForceGeminiRuntime::PatchSidekickLateralMove(bool Enabled)
-{
-    const size_t TailStubCount = sizeof(SidekickLateralMoveHookCode) / sizeof(SidekickLateralMoveHookCode[0]);
-    const size_t ProbeStubCount = sizeof(SidekickControlProbeCode) / sizeof(SidekickControlProbeCode[0]);
-    auto Failed = [](CGameHackCodePatcher::Result Result) {
-        return Result == CGameHackCodePatcher::Result_SignatureMismatch ||
-               Result == CGameHackCodePatcher::Result_MemoryUnavailable;
-    };
-    auto BuildTailWrites = [this, TailStubCount](std::vector<GAME_HACK_CODE_WRITE> & Writes, bool Install) {
-        Writes.resize(TailStubCount);
-        for (size_t Index = 0; Index < TailStubCount; Index++)
-        {
-            GAME_HACK_CODE_WRITE & Write = Writes[Index];
-            Write.Address = SidekickLateralMoveStub + (uint32_t)(Index * sizeof(uint32_t));
-            Write.Desired = Install ? SidekickLateralMoveHookCode[Index] : m_SidekickLateralMoveHookStubOriginal[Index];
-            Write.Allowed[0] = m_SidekickLateralMoveHookStubOriginal[Index];
-            Write.Allowed[1] = SidekickLateralMoveHookCode[Index];
-            Write.AllowedCount = 2;
-        }
-    };
-    auto BuildProbeWrites = [this, ProbeStubCount](std::vector<GAME_HACK_CODE_WRITE> & Writes, bool Install) {
-        Writes.resize(ProbeStubCount);
-        for (size_t Index = 0; Index < ProbeStubCount; Index++)
-        {
-            GAME_HACK_CODE_WRITE & Write = Writes[Index];
-            Write.Address = SidekickControlProbeStub + (uint32_t)(Index * sizeof(uint32_t));
-            Write.Desired = Install ? SidekickControlProbeCode[Index] : m_SidekickControlProbeStubOriginal[Index];
-            Write.Allowed[0] = m_SidekickControlProbeStubOriginal[Index];
-            Write.Allowed[1] = SidekickControlProbeCode[Index];
-            Write.AllowedCount = 2;
-        }
-    };
-
-    const GAME_HACK_CODE_PATCH TailEntryPatches[] =
-    {
-        { SidekickLateralMoveEntry, SidekickLateralMoveEntryOriginal, SidekickLateralMoveJump },
-    };
-    const GAME_HACK_CODE_PATCH ProbeEntryPatches[] =
-    {
-        { SidekickControlProbeEntry, SidekickControlProbeEntryOriginal, SidekickControlProbeJump },
-        { SidekickControlProbeEntry + 0x04, SidekickControlProbeDelayOriginal, SidekickControlProbeEntryOriginal },
-    };
-    const GAME_HACK_CODE_PATCH InputLegacyPatches[] =
-    {
-        { SidekickLateralMoveInputLegacyEntry, SidekickLateralMoveInputLegacyOriginal, SidekickLateralMovePreviousJump },
-    };
-    const GAME_HACK_CODE_PATCH OldTailPreviousPatches[] =
-    {
-        { SidekickLateralMoveOldTailEntry, SidekickLateralMoveOldTailOriginal, SidekickLateralMovePreviousJump },
-        { SidekickLateralMoveOldTailEntry + 0x04, SidekickLateralMoveOldTailDelayOriginal, 0x00000000 },
-    };
-    const GAME_HACK_CODE_PATCH OldTailCurrentPatches[] =
-    {
-        { SidekickLateralMoveOldTailEntry, SidekickLateralMoveOldTailOriginal, SidekickLateralMoveJump },
-        { SidekickLateralMoveOldTailEntry + 0x04, SidekickLateralMoveOldTailDelayOriginal,
-          SidekickLateralMoveOldTailOriginal },
-    };
-
-    if (Failed(m_CodePatcher.SetEnabled(InputLegacyPatches, sizeof(InputLegacyPatches) / sizeof(InputLegacyPatches[0]), false)))
-    {
-        return false;
-    }
-
-    uint32_t OldTailEntry = 0;
-    if (!m_Memory.ReadU32(SidekickLateralMoveOldTailEntry, OldTailEntry))
-    {
-        return false;
-    }
-    if (OldTailEntry == SidekickLateralMovePreviousJump &&
-        Failed(m_CodePatcher.SetEnabled(OldTailPreviousPatches, sizeof(OldTailPreviousPatches) / sizeof(OldTailPreviousPatches[0]), false)))
-    {
-        return false;
-    }
-    if (OldTailEntry == SidekickLateralMoveJump &&
-        Failed(m_CodePatcher.SetEnabled(OldTailCurrentPatches, sizeof(OldTailCurrentPatches) / sizeof(OldTailCurrentPatches[0]), false)))
-    {
-        return false;
-    }
-    if (OldTailEntry != SidekickLateralMoveOldTailOriginal && OldTailEntry != SidekickLateralMovePreviousJump &&
-        OldTailEntry != SidekickLateralMoveJump)
-    {
-        return false;
-    }
-
-    if (!Enabled)
-    {
-        if (Failed(m_CodePatcher.SetEnabled(TailEntryPatches, sizeof(TailEntryPatches) / sizeof(TailEntryPatches[0]), false)) ||
-            Failed(m_CodePatcher.SetEnabled(ProbeEntryPatches, sizeof(ProbeEntryPatches) / sizeof(ProbeEntryPatches[0]), false)))
-        {
-            return false;
-        }
-        if (!m_SidekickLateralMoveHookApplied)
-        {
-            return true;
-        }
-        if (m_SidekickLateralMoveHookStubOriginal.size() != TailStubCount ||
-            m_SidekickControlProbeStubOriginal.size() != ProbeStubCount)
-        {
-            return false;
-        }
-        std::vector<GAME_HACK_CODE_WRITE> TailWrites;
-        std::vector<GAME_HACK_CODE_WRITE> ProbeWrites;
-        BuildTailWrites(TailWrites, false);
-        BuildProbeWrites(ProbeWrites, false);
-        if (Failed(m_CodePatcher.Apply(TailWrites.data(), TailWrites.size())) ||
-            Failed(m_CodePatcher.Apply(ProbeWrites.data(), ProbeWrites.size())))
-        {
-            return false;
-        }
-        m_SidekickLateralMoveHookStubOriginal.clear();
-        m_SidekickControlProbeStubOriginal.clear();
-        m_SidekickLateralMoveHookApplied = false;
-        return true;
-    }
-
-    if (m_SidekickLateralMoveHookApplied)
-    {
-        return true;
-    }
-    if (Failed(m_CodePatcher.SetEnabled(ProbeEntryPatches, sizeof(ProbeEntryPatches) / sizeof(ProbeEntryPatches[0]), false)))
-    {
-        return false;
-    }
-
-    uint32_t TailEntry = 0;
-    uint32_t ProbeEntry = 0;
-    uint32_t ProbeDelay = 0;
-    if (!m_Memory.ReadU32(SidekickLateralMoveEntry, TailEntry) ||
-        !m_Memory.ReadU32(SidekickControlProbeEntry, ProbeEntry) ||
-        !m_Memory.ReadU32(SidekickControlProbeEntry + 0x04, ProbeDelay) ||
-        TailEntry != SidekickLateralMoveEntryOriginal || ProbeEntry != SidekickControlProbeEntryOriginal ||
-        ProbeDelay != SidekickControlProbeDelayOriginal)
-    {
-        return false;
-    }
-
-    m_SidekickLateralMoveHookStubOriginal.resize(TailStubCount);
-    m_SidekickControlProbeStubOriginal.resize(ProbeStubCount);
-    for (size_t Index = 0; Index < TailStubCount; Index++)
-    {
-        if (!m_Memory.ReadU32(SidekickLateralMoveStub + (uint32_t)(Index * sizeof(uint32_t)),
-                              m_SidekickLateralMoveHookStubOriginal[Index]))
-        {
-            m_SidekickLateralMoveHookStubOriginal.clear();
-            m_SidekickControlProbeStubOriginal.clear();
-            return false;
-        }
-    }
-    for (size_t Index = 0; Index < ProbeStubCount; Index++)
-    {
-        if (!m_Memory.ReadU32(SidekickControlProbeStub + (uint32_t)(Index * sizeof(uint32_t)),
-                              m_SidekickControlProbeStubOriginal[Index]))
-        {
-            m_SidekickLateralMoveHookStubOriginal.clear();
-            m_SidekickControlProbeStubOriginal.clear();
-            return false;
-        }
-    }
-
-    std::vector<GAME_HACK_CODE_WRITE> TailWrites;
-    std::vector<GAME_HACK_CODE_WRITE> ProbeWrites;
-    BuildTailWrites(TailWrites, true);
-    BuildProbeWrites(ProbeWrites, true);
-    if (Failed(m_CodePatcher.Apply(TailWrites.data(), TailWrites.size())) ||
-        Failed(m_CodePatcher.Apply(ProbeWrites.data(), ProbeWrites.size())) ||
-        Failed(m_CodePatcher.SetEnabled(TailEntryPatches, sizeof(TailEntryPatches) / sizeof(TailEntryPatches[0]), true)) ||
-        Failed(m_CodePatcher.SetEnabled(ProbeEntryPatches, sizeof(ProbeEntryPatches) / sizeof(ProbeEntryPatches[0]), true)))
-    {
-        m_CodePatcher.SetEnabled(TailEntryPatches, sizeof(TailEntryPatches) / sizeof(TailEntryPatches[0]), false);
-        m_CodePatcher.SetEnabled(ProbeEntryPatches, sizeof(ProbeEntryPatches) / sizeof(ProbeEntryPatches[0]), false);
-        BuildTailWrites(TailWrites, false);
-        BuildProbeWrites(ProbeWrites, false);
-        m_CodePatcher.Apply(TailWrites.data(), TailWrites.size());
-        m_CodePatcher.Apply(ProbeWrites.data(), ProbeWrites.size());
-        m_SidekickLateralMoveHookStubOriginal.clear();
-        m_SidekickControlProbeStubOriginal.clear();
-        return false;
-    }
-
-    m_SidekickLateralMoveHookApplied = true;
-    return true;
-}
-
 bool CJetForceGeminiRuntime::PatchSidekickPadControlProbe(bool Enabled)
 {
     const size_t StubCount = sizeof(SidekickPadProbeCode) / sizeof(SidekickPadProbeCode[0]);
@@ -6925,7 +5740,7 @@ bool CJetForceGeminiRuntime::PatchSidekickPadControlProbe(bool Enabled)
         for (size_t Index = 0; Index < StubCount; Index++)
         {
             GAME_HACK_CODE_WRITE & Write = Writes[Index];
-            uint32_t Desired = SidekickPadProbeCode[Index];
+            uint32_t Desired = ScratchCaveWord(SidekickPadProbeCode[Index]);
             if (Index == SidekickPadProbeResumeIndex)
             {
                 Desired = ResumeJump;
@@ -7051,395 +5866,6 @@ bool CJetForceGeminiRuntime::PatchSidekickPadControlProbe(bool Enabled)
     m_Memory.WriteU32(SidekickPadProbeStateAddress, 0);
     m_Memory.WriteU32(SidekickPadProbeActorAddress, 0);
     m_SidekickPadControlProbeApplied = true;
-    return true;
-}
-
-bool CJetForceGeminiRuntime::PatchDroneLateralMove(bool Enabled)
-{
-    const size_t StubCount = sizeof(FloydMoveCallHookCode) / sizeof(FloydMoveCallHookCode[0]);
-
-    auto BuildStubWrites = [this, StubCount](std::vector<GAME_HACK_CODE_WRITE> & Writes, bool Install) {
-        Writes.resize(StubCount);
-        const uint32_t Resume = m_DroneLateralMoveHookEntry + 0x08;
-        const uint32_t ResumeJump = 0x08000000 | ((Resume >> 2) & 0x03FFFFFF);
-        for (size_t Index = 0; Index < StubCount; Index++)
-        {
-            uint32_t Desired = FloydMoveCallHookCode[Index];
-            if (Index == FloydMoveCallHookResumeIndex)
-            {
-                Desired = ResumeJump;
-            }
-
-            GAME_HACK_CODE_WRITE & Write = Writes[Index];
-            Write.Address = FloydMoveHookStub + (uint32_t)(Index * sizeof(uint32_t));
-            Write.Desired = Install ? Desired : m_DroneLateralMoveHookStubOriginal[Index];
-            Write.Allowed[0] = m_DroneLateralMoveHookStubOriginal[Index];
-            Write.Allowed[1] = Desired;
-            Write.AllowedCount = 2;
-        }
-    };
-
-    if (!Enabled)
-    {
-        if (!m_DroneLateralMoveHookApplied)
-        {
-            // Save states carry RDRAM. Restore a stale call-site hook even if
-            // the new process has no record of having installed it.
-            UpdateDroneLateralControllerProbe();
-            if (m_DroneLateralControllerEntry != 0)
-            {
-                const uint32_t StaleEntry = m_DroneLateralControllerEntry + FloydMoveObjMoveCallOffset;
-                uint32_t StaleWord = 0;
-                if (m_Memory.ReadU32(StaleEntry, StaleWord) && StaleWord == FloydMoveHookJump)
-                {
-                    const GAME_HACK_CODE_PATCH StalePatches[] =
-                    {
-                        { StaleEntry, FloydMoveHookJump, FloydMoveObjMoveCallOriginal },
-                        { StaleEntry + 0x04, 0x00000000, FloydMoveObjMoveDelayOriginal },
-                    };
-                    m_CodePatcher.SetEnabled(StalePatches, sizeof(StalePatches) / sizeof(StalePatches[0]), true);
-                }
-            }
-            return true;
-        }
-
-        const GAME_HACK_CODE_PATCH EntryPatches[] =
-        {
-            { m_DroneLateralMoveHookEntry, FloydMoveObjMoveCallOriginal, FloydMoveHookJump },
-            { m_DroneLateralMoveHookEntry + 0x04, FloydMoveObjMoveDelayOriginal, 0x00000000 },
-        };
-        CGameHackCodePatcher::Result EntryResult = m_CodePatcher.SetEnabled(
-            EntryPatches, sizeof(EntryPatches) / sizeof(EntryPatches[0]), false);
-        if (EntryResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-            EntryResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-        {
-            return false;
-        }
-
-        if (m_DroneLateralMoveHookStubOriginal.size() != StubCount)
-        {
-            return false;
-        }
-        std::vector<GAME_HACK_CODE_WRITE> Writes;
-        BuildStubWrites(Writes, false);
-        CGameHackCodePatcher::Result StubResult = m_CodePatcher.Apply(Writes.data(), Writes.size());
-        if (StubResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-            StubResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-        {
-            return false;
-        }
-
-        m_DroneLateralMoveHookStubOriginal.clear();
-        m_DroneLateralMoveHookApplied = false;
-        m_DroneLateralMoveHookEntry = 0;
-        return true;
-    }
-
-    if (m_DroneLateralControllerEntry == 0)
-    {
-        return false;
-    }
-    const uint32_t HookEntry = m_DroneLateralControllerEntry + FloydMoveObjMoveCallOffset;
-    if (m_DroneLateralMoveHookApplied)
-    {
-        return m_DroneLateralMoveHookEntry == HookEntry;
-    }
-
-    uint32_t EntryWord = 0;
-    uint32_t DelayWord = 0;
-    if (!m_Memory.ReadU32(HookEntry, EntryWord) || !m_Memory.ReadU32(HookEntry + 0x04, DelayWord) ||
-        EntryWord != FloydMoveObjMoveCallOriginal || DelayWord != FloydMoveObjMoveDelayOriginal)
-    {
-        return false;
-    }
-
-    m_DroneLateralMoveHookEntry = HookEntry;
-    m_DroneLateralMoveHookStubOriginal.resize(StubCount);
-    for (size_t Index = 0; Index < StubCount; Index++)
-    {
-        if (!m_Memory.ReadU32(
-                FloydMoveHookStub + (uint32_t)(Index * sizeof(uint32_t)),
-                m_DroneLateralMoveHookStubOriginal[Index]))
-        {
-            m_DroneLateralMoveHookStubOriginal.clear();
-            m_DroneLateralMoveHookEntry = 0;
-            return false;
-        }
-    }
-
-    std::vector<GAME_HACK_CODE_WRITE> Writes;
-    BuildStubWrites(Writes, true);
-    CGameHackCodePatcher::Result StubResult = m_CodePatcher.Apply(Writes.data(), Writes.size());
-    if (StubResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-        StubResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        m_DroneLateralMoveHookStubOriginal.clear();
-        m_DroneLateralMoveHookEntry = 0;
-        return false;
-    }
-
-    const GAME_HACK_CODE_PATCH EntryPatches[] =
-    {
-        { HookEntry, FloydMoveObjMoveCallOriginal, FloydMoveHookJump },
-        { HookEntry + 0x04, FloydMoveObjMoveDelayOriginal, 0x00000000 },
-    };
-    CGameHackCodePatcher::Result EntryResult = m_CodePatcher.SetEnabled(
-        EntryPatches, sizeof(EntryPatches) / sizeof(EntryPatches[0]), true);
-    if (EntryResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-        EntryResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        BuildStubWrites(Writes, false);
-        m_CodePatcher.Apply(Writes.data(), Writes.size());
-        m_DroneLateralMoveHookStubOriginal.clear();
-        m_DroneLateralMoveHookEntry = 0;
-        return false;
-    }
-
-    m_DroneLateralMoveHookApplied = true;
-    return true;
-}
-
-bool CJetForceGeminiRuntime::PatchFloydCameraLateralMove(bool Enabled)
-{
-    const size_t StubCount = sizeof(FloydCameraLateralHookCode) / sizeof(FloydCameraLateralHookCode[0]);
-    auto FindEntry = [this](uint32_t & Entry) {
-        Entry = 0;
-        uint32_t OverlayTable = 0;
-        const uint32_t RequiredTableSize = (FloydOverlayModule + 1) * OverlayHeaderSize;
-        if (!m_Memory.ReadU32(OverlayTableAddress, OverlayTable) || (OverlayTable & 3) != 0 ||
-            !m_Memory.IsRdramAddress(OverlayTable, RequiredTableSize))
-        {
-            return false;
-        }
-        uint32_t OverlayBase = 0;
-        const uint32_t OverlayHeader = OverlayTable + FloydOverlayModule * OverlayHeaderSize;
-        if (!m_Memory.ReadU32(OverlayHeader, OverlayBase) || (OverlayBase & 3) != 0 ||
-            !m_Memory.IsRdramAddress(OverlayBase + FloydCameraLateralCallOffset, 2 * sizeof(uint32_t)))
-        {
-            return false;
-        }
-        Entry = OverlayBase + FloydCameraLateralCallOffset;
-        return true;
-    };
-    auto BuildStubWrites = [this, StubCount](std::vector<GAME_HACK_CODE_WRITE> & Writes, bool Install) {
-        Writes.resize(StubCount);
-        for (size_t Index = 0; Index < StubCount; Index++)
-        {
-            GAME_HACK_CODE_WRITE & Write = Writes[Index];
-            Write.Address = FloydCameraLateralStub + (uint32_t)(Index * sizeof(uint32_t));
-            Write.Desired = Install ? FloydCameraLateralHookCode[Index] :
-                                      m_FloydCameraLateralHookStubOriginal[Index];
-            Write.Allowed[0] = m_FloydCameraLateralHookStubOriginal[Index];
-            Write.Allowed[1] = FloydCameraLateralHookCode[Index];
-            Write.AllowedCount = 2;
-        }
-    };
-
-    if (!Enabled)
-    {
-        if (!m_FloydCameraLateralHookApplied)
-        {
-            uint32_t Entry = 0;
-            uint32_t Current = 0;
-            if (FindEntry(Entry) && m_Memory.ReadU32(Entry, Current) && Current == FloydCameraLateralJump)
-            {
-                const GAME_HACK_CODE_PATCH StalePatch =
-                    { Entry, FloydCameraLateralCallOriginal, FloydCameraLateralJump };
-                CGameHackCodePatcher::Result Result = m_CodePatcher.SetEnabled(&StalePatch, 1, false);
-                return Result != CGameHackCodePatcher::Result_SignatureMismatch &&
-                       Result != CGameHackCodePatcher::Result_MemoryUnavailable;
-            }
-            return true;
-        }
-
-        const GAME_HACK_CODE_PATCH EntryPatch =
-            { m_FloydCameraLateralHookEntry, FloydCameraLateralCallOriginal, FloydCameraLateralJump };
-        CGameHackCodePatcher::Result EntryResult = m_CodePatcher.SetEnabled(&EntryPatch, 1, false);
-        if (EntryResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-            EntryResult == CGameHackCodePatcher::Result_MemoryUnavailable ||
-            m_FloydCameraLateralHookStubOriginal.size() != StubCount)
-        {
-            return false;
-        }
-        std::vector<GAME_HACK_CODE_WRITE> Writes;
-        BuildStubWrites(Writes, false);
-        CGameHackCodePatcher::Result StubResult = m_CodePatcher.Apply(Writes.data(), Writes.size());
-        if (StubResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-            StubResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-        {
-            return false;
-        }
-        m_FloydCameraLateralHookStubOriginal.clear();
-        m_FloydCameraLateralHookApplied = false;
-        m_FloydCameraLateralHookEntry = 0;
-        m_Memory.WriteU32(FloydCameraPreviousObjectAddress, 0);
-        return true;
-    }
-
-    uint32_t Entry = 0;
-    uint32_t Delay = 0;
-    if (!FindEntry(Entry) || !m_Memory.ReadU32(Entry, Delay) ||
-        !m_Memory.ReadU32(Entry + sizeof(uint32_t), Delay) || Delay != FloydCameraLateralCallDelayOriginal)
-    {
-        return false;
-    }
-    if (m_FloydCameraLateralHookApplied)
-    {
-        return Entry == m_FloydCameraLateralHookEntry;
-    }
-
-    uint32_t Current = 0;
-    if (!m_Memory.ReadU32(Entry, Current) || Current != FloydCameraLateralCallOriginal)
-    {
-        return false;
-    }
-    m_FloydCameraLateralHookEntry = Entry;
-    m_FloydCameraLateralHookStubOriginal.resize(StubCount);
-    for (size_t Index = 0; Index < StubCount; Index++)
-    {
-        if (!m_Memory.ReadU32(
-                FloydCameraLateralStub + (uint32_t)(Index * sizeof(uint32_t)),
-                m_FloydCameraLateralHookStubOriginal[Index]))
-        {
-            m_FloydCameraLateralHookStubOriginal.clear();
-            m_FloydCameraLateralHookEntry = 0;
-            return false;
-        }
-    }
-
-    std::vector<GAME_HACK_CODE_WRITE> Writes;
-    BuildStubWrites(Writes, true);
-    CGameHackCodePatcher::Result StubResult = m_CodePatcher.Apply(Writes.data(), Writes.size());
-    if (StubResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-        StubResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        m_FloydCameraLateralHookStubOriginal.clear();
-        m_FloydCameraLateralHookEntry = 0;
-        return false;
-    }
-
-    const GAME_HACK_CODE_PATCH EntryPatch =
-        { Entry, FloydCameraLateralCallOriginal, FloydCameraLateralJump };
-    CGameHackCodePatcher::Result EntryResult = m_CodePatcher.SetEnabled(&EntryPatch, 1, true);
-    if (EntryResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-        EntryResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        BuildStubWrites(Writes, false);
-        m_CodePatcher.Apply(Writes.data(), Writes.size());
-        m_FloydCameraLateralHookStubOriginal.clear();
-        m_FloydCameraLateralHookEntry = 0;
-        return false;
-    }
-
-    m_Memory.WriteU32(FloydCameraPreviousObjectAddress, 0);
-    m_Memory.WriteU32(DroneLateralHookHitsAddress, 0);
-    m_FloydCameraLateralHookApplied = true;
-    return true;
-}
-
-bool CJetForceGeminiRuntime::PatchSidekickVelocityLateralMove(bool Enabled)
-{
-    const size_t StubCount = sizeof(SidekickVelocityLateralHookCode) / sizeof(SidekickVelocityLateralHookCode[0]);
-    const GAME_HACK_CODE_PATCH EntryPatches[] =
-    {
-        { SidekickVelocityLateralEntry, SidekickVelocityLateralEntryOriginal, SidekickVelocityLateralJump },
-        { SidekickVelocityLateralDelay, SidekickVelocityLateralDelayOriginal, SidekickVelocityLateralEntryOriginal },
-    };
-    auto BuildStubWrites = [this, StubCount](std::vector<GAME_HACK_CODE_WRITE> & Writes, bool Install) {
-        Writes.resize(StubCount);
-        for (size_t Index = 0; Index < StubCount; Index++)
-        {
-            GAME_HACK_CODE_WRITE & Write = Writes[Index];
-            Write.Address = SidekickVelocityLateralStub + (uint32_t)(Index * sizeof(uint32_t));
-            Write.Desired = Install ? SidekickVelocityLateralHookCode[Index] :
-                                      m_SidekickVelocityLateralHookStubOriginal[Index];
-            Write.Allowed[0] = m_SidekickVelocityLateralHookStubOriginal[Index];
-            Write.Allowed[1] = SidekickVelocityLateralHookCode[Index];
-            Write.AllowedCount = 2;
-        }
-    };
-
-    if (!Enabled)
-    {
-        if (!m_SidekickVelocityLateralHookApplied)
-        {
-            uint32_t Current = 0;
-            if (m_Memory.ReadU32(SidekickVelocityLateralEntry, Current) && Current == SidekickVelocityLateralJump)
-            {
-                CGameHackCodePatcher::Result Result = m_CodePatcher.SetEnabled(
-                    EntryPatches, sizeof(EntryPatches) / sizeof(EntryPatches[0]), false);
-                return Result != CGameHackCodePatcher::Result_SignatureMismatch &&
-                       Result != CGameHackCodePatcher::Result_MemoryUnavailable;
-            }
-            return true;
-        }
-
-        CGameHackCodePatcher::Result EntryResult = m_CodePatcher.SetEnabled(
-            EntryPatches, sizeof(EntryPatches) / sizeof(EntryPatches[0]), false);
-        if (EntryResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-            EntryResult == CGameHackCodePatcher::Result_MemoryUnavailable ||
-            m_SidekickVelocityLateralHookStubOriginal.size() != StubCount)
-        {
-            return false;
-        }
-        std::vector<GAME_HACK_CODE_WRITE> Writes;
-        BuildStubWrites(Writes, false);
-        CGameHackCodePatcher::Result StubResult = m_CodePatcher.Apply(Writes.data(), Writes.size());
-        if (StubResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-            StubResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-        {
-            return false;
-        }
-        m_SidekickVelocityLateralHookStubOriginal.clear();
-        m_SidekickVelocityLateralHookApplied = false;
-        return true;
-    }
-
-    if (m_SidekickVelocityLateralHookApplied)
-    {
-        return true;
-    }
-
-    uint32_t Entry = 0;
-    uint32_t Delay = 0;
-    if (!m_Memory.ReadU32(SidekickVelocityLateralEntry, Entry) ||
-        !m_Memory.ReadU32(SidekickVelocityLateralDelay, Delay) ||
-        Entry != SidekickVelocityLateralEntryOriginal || Delay != SidekickVelocityLateralDelayOriginal)
-    {
-        return false;
-    }
-    m_SidekickVelocityLateralHookStubOriginal.resize(StubCount);
-    for (size_t Index = 0; Index < StubCount; Index++)
-    {
-        if (!m_Memory.ReadU32(
-                SidekickVelocityLateralStub + (uint32_t)(Index * sizeof(uint32_t)),
-                m_SidekickVelocityLateralHookStubOriginal[Index]))
-        {
-            m_SidekickVelocityLateralHookStubOriginal.clear();
-            return false;
-        }
-    }
-    std::vector<GAME_HACK_CODE_WRITE> Writes;
-    BuildStubWrites(Writes, true);
-    CGameHackCodePatcher::Result StubResult = m_CodePatcher.Apply(Writes.data(), Writes.size());
-    if (StubResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-        StubResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        m_SidekickVelocityLateralHookStubOriginal.clear();
-        return false;
-    }
-    CGameHackCodePatcher::Result EntryResult = m_CodePatcher.SetEnabled(
-        EntryPatches, sizeof(EntryPatches) / sizeof(EntryPatches[0]), true);
-    if (EntryResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-        EntryResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        BuildStubWrites(Writes, false);
-        m_CodePatcher.Apply(Writes.data(), Writes.size());
-        m_SidekickVelocityLateralHookStubOriginal.clear();
-        return false;
-    }
-    m_Memory.WriteU32(DroneLateralHookHitsAddress, 0);
-    m_SidekickVelocityLateralHookApplied = true;
     return true;
 }
 
@@ -7587,246 +6013,6 @@ bool CJetForceGeminiRuntime::PatchSidekickStrafe(bool Enabled)
     return true;
 }
 
-// SquaddieControl's common heading helper converts speed and yaw into X/Z
-// velocity. Each hook moves the original multiply into the jump delay slot,
-// multiplies its result by 0.5 in free RAM, stores it, then resumes the overlay.
-// Halves the squads module's published time step. Both controllers convert the
-// tick count they are given and store it, so the store is what gets displaced:
-// the stub multiplies the converted value by a half and writes it instead. The
-// displaced instruction addressed the step through $at, and the jump's delay
-// slot reloads $at for the instruction that follows, so the stub rebuilds the
-// address itself and hands $at back exactly as the delay slot left it. The
-// scratch registers are the two the conversions read, dead from the conversion
-// onwards.
-void CJetForceGeminiRuntime::PatchSquadsTimeStep(bool Enabled)
-{
-    uint32_t OverlayBase = 0;
-    if (!GetSquaddieOverlayBase(OverlayBase))
-    {
-        m_SquadsTimeStepPatchApplied = false;
-        return;
-    }
-
-    const uint32_t Step = OverlayBase + SquadsTimeStepOffset;
-    const uint32_t SquaddieDelayTarget = OverlayBase + SquaddieStepDelayTargetOffset;
-    const uint32_t SquadronEntry = OverlayBase + SquadronStepEntryOffset;
-    const uint32_t SquaddieEntry = OverlayBase + SquaddieStepEntryOffset;
-    const uint32_t SquadronJump = JalInstruction(SquadronStepStub);
-    const uint32_t SquaddieJump = JalInstruction(SquaddieStepStub);
-
-    // The instruction each stub replaces is the store of the freshly computed
-    // step, `swc1 $fN, %lo(Step)($at)`. Its low 16 bits are %lo(Step), so the
-    // whole word changes every time overlay 3 is relocated to a new address.
-    // Reconstruct it from the live Step instead of comparing against a fixed
-    // constant: the old constant only matched the single load address it was
-    // captured at, so the signature check failed - and the entire enemy-speed
-    // halve silently never installed - in every other scene.
-    const uint32_t SquadronStepEntryOriginal = 0xE4260000 | (Step & 0xFFFF); // swc1 $f6, %lo(Step)($at)
-    const uint32_t SquaddieStepEntryOriginal = 0xE42A0000 | (Step & 0xFFFF); // swc1 $f10, %lo(Step)($at)
-
-    // Stub words first, live jump entries last, so a half written stub is never
-    // reachable.
-    GAME_HACK_CODE_PATCH Patches[] = {
-        {SquadronStepStub + 0x00, 0x00000000, 0x3C013F00},                    // lui   $at, 0x3F00
-        {SquadronStepStub + 0x04, 0x00000000, 0x44812000},                    // mtc1  $at, $f4
-        {SquadronStepStub + 0x08, 0x00000000, WithHi(0x3C010000, Step)},      // lui   $at, hi
-        {SquadronStepStub + 0x0C, 0x00000000, 0x46043182},                    // mul.s $f6,$f6,$f4
-        {SquadronStepStub + 0x10, 0x00000000, WithLo(0xE4260000, Step)},      // swc1  $f6, lo($at)
-        {SquadronStepStub + 0x14, 0x00000000,
-         WithHi(0x3C010000, SquadsTickCountAddress)},                    // lui   $at, restore
-        {SquadronStepStub + 0x18, 0x00000000, 0x03E00008},                    // jr    $ra
-        {SquadronStepStub + 0x1C, 0x00000000, 0x00000000},                    // nop
-        {SquaddieStepStub + 0x00, 0x00000000, 0x3C013F00},                    // lui   $at, 0x3F00
-        {SquaddieStepStub + 0x04, 0x00000000, 0x44814000},                    // mtc1  $at, $f8
-        {SquaddieStepStub + 0x08, 0x00000000, WithHi(0x3C010000, Step)},      // lui   $at, hi
-        {SquaddieStepStub + 0x0C, 0x00000000, 0x46085282},                    // mul.s $f10,$f10,$f8
-        {SquaddieStepStub + 0x10, 0x00000000, WithLo(0xE42A0000, Step)},      // swc1  $f10, lo($at)
-        {SquaddieStepStub + 0x14, 0x00000000,
-         WithHi(0x3C010000, SquaddieDelayTarget)},                            // lui   $at, restore
-        {SquaddieStepStub + 0x18, 0x00000000, 0x03E00008},                    // jr    $ra
-        {SquaddieStepStub + 0x1C, 0x00000000, 0x00000000},                    // nop
-        {SquadronEntry, SquadronStepEntryOriginal, SquadronJump},
-        {SquaddieEntry, SquaddieStepEntryOriginal, SquaddieJump},
-    };
-    const size_t StubCount = 16;
-    const size_t EntryCount = 2;
-
-    // The conversions feeding each store, which reject a different build or a
-    // different module sitting in the slot even if one target word coincides.
-    uint32_t Signature[2];
-    if (!m_Memory.ReadU32(OverlayBase + SquadronStepCvtOffset, Signature[0]) ||
-        !m_Memory.ReadU32(OverlayBase + SquaddieStepCvtOffset, Signature[1]) ||
-        Signature[0] != SquadronStepCvtOriginal || Signature[1] != SquaddieStepCvtOriginal)
-    {
-        m_SquadsTimeStepPatchApplied = false;
-        return;
-    }
-
-    uint32_t SquadronWord = 0;
-    uint32_t SquaddieWord = 0;
-    if (!m_Memory.ReadU32(SquadronEntry, SquadronWord) ||
-        !m_Memory.ReadU32(SquaddieEntry, SquaddieWord))
-    {
-        m_SquadsTimeStepPatchApplied = false;
-        return;
-    }
-    m_SquadsTimeStepPatchApplied = SquadronWord == SquadronJump && SquaddieWord == SquaddieJump;
-    if (Enabled == m_SquadsTimeStepPatchApplied)
-    {
-        return;
-    }
-
-    if (Enabled)
-    {
-        CGameHackCodePatcher::Result StubResult =
-            m_CodePatcher.SetEnabled(Patches, StubCount, true);
-        if (StubResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-            StubResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-        {
-            return;
-        }
-    }
-
-    CGameHackCodePatcher::Result EntryResult =
-        m_CodePatcher.SetEnabled(Patches + StubCount, EntryCount, Enabled);
-    if (EntryResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-        EntryResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        return;
-    }
-    m_SquadsTimeStepPatchApplied = Enabled;
-
-    // The stub is only reclaimed once nothing can reach it.
-    if (!Enabled)
-    {
-        m_CodePatcher.SetEnabled(Patches, StubCount, false);
-    }
-}
-
-void CJetForceGeminiRuntime::PatchSquaddieMove(bool Enabled)
-{
-    uint32_t OverlayBase = 0;
-    if (!GetSquaddieOverlayBase(OverlayBase))
-    {
-        if (Enabled || m_SquaddieOverlayBase == 0 ||
-            !m_Memory.IsRdramAddress(
-                m_SquaddieOverlayBase + SquaddieZResumeOffset, sizeof(uint32_t)))
-        {
-            m_SquaddieMovePatchApplied = false;
-            m_SquaddieOverlayBase = 0;
-            return;
-        }
-        OverlayBase = m_SquaddieOverlayBase;
-    }
-
-    const uint32_t XEntry = OverlayBase + SquaddieXEntryOffset;
-    const uint32_t XDelay = OverlayBase + SquaddieXDelayOffset;
-    const uint32_t XResume = OverlayBase + SquaddieXResumeOffset;
-    const uint32_t ZEntry = OverlayBase + SquaddieZEntryOffset;
-    const uint32_t ZDelay = OverlayBase + SquaddieZDelayOffset;
-    const uint32_t ZResume = OverlayBase + SquaddieZResumeOffset;
-    const uint32_t XJump = JalInstruction(SquaddieXStub);
-    const uint32_t ZJump = JalInstruction(SquaddieZStub);
-
-    // Stub words first, displaced delay slots next, live jump entries last.
-    GAME_HACK_CODE_PATCH Patches[] =
-        {
-            {SquaddieXStub + 0x00, 0x00000000, 0x3C013F00}, // lui   $at, 0x3F00
-            {SquaddieXStub + 0x04, 0x00000000, 0x44815000}, // mtc1  $at, $f10
-            {SquaddieXStub + 0x08, 0x00000000, 0x00000000}, // nop
-            {SquaddieXStub + 0x0C, 0x00000000, 0x00000000}, // nop
-            {SquaddieXStub + 0x10, 0x00000000, 0x460A8402}, // mul.s $f16, $f16, $f10
-            {SquaddieXStub + 0x14, 0x00000000, 0x03E00008}, // jr    $ra
-            {SquaddieXStub + 0x18, 0x00000000, 0xE510001C}, // swc1  $f16, 0x1C($t0)
-            {SquaddieZStub + 0x00, 0x00000000, 0x3C013F00}, // lui   $at, 0x3F00
-            {SquaddieZStub + 0x04, 0x00000000, 0x44819000}, // mtc1  $at, $f18
-            {SquaddieZStub + 0x08, 0x00000000, 0x00000000}, // nop
-            {SquaddieZStub + 0x0C, 0x00000000, 0x00000000}, // nop
-            {SquaddieZStub + 0x10, 0x00000000, 0x46122102}, // mul.s $f4, $f4, $f18
-            {SquaddieZStub + 0x14, 0x00000000, 0x03E00008}, // jr    $ra
-            {SquaddieZStub + 0x18, 0x00000000, 0xE5640024}, // swc1  $f4, 0x24($t3)
-            {XDelay, 0xE510001C, 0x460A0402},
-            {ZDelay, 0xE5640024, 0x46120102},
-            {XEntry, 0x460A0402, XJump},
-            {ZEntry, 0x46120102, ZJump},
-        };
-    const size_t StubCount = 14;
-    const size_t DelayCount = 2;
-    const size_t EntryCount = 2;
-    const size_t PatchCount = sizeof(Patches) / sizeof(Patches[0]);
-
-    // These instructions bracket the two patched pairs and reject a different
-    // module, build or overlay generation even if one target word coincides.
-    uint32_t Signature[4];
-    if (!m_Memory.ReadU32(XResume, Signature[0]) ||
-        !m_Memory.ReadU32(OverlayBase + 0xAE48, Signature[1]) ||
-        !m_Memory.ReadU32(OverlayBase + 0xAE60, Signature[2]) ||
-        !m_Memory.ReadU32(ZResume, Signature[3]) ||
-        Signature[0] != 0x8C490000 || Signature[1] != 0x8524001C ||
-        Signature[2] != 0xC5520020 || Signature[3] != 0x8FBF0014)
-    {
-        m_SquaddieMovePatchApplied = false;
-        return;
-    }
-
-    uint32_t XEntryWord = 0;
-    uint32_t ZEntryWord = 0;
-    if (!m_Memory.ReadU32(XEntry, XEntryWord) || !m_Memory.ReadU32(ZEntry, ZEntryWord))
-    {
-        m_SquaddieMovePatchApplied = false;
-        return;
-    }
-    bool HookPresent = XEntryWord == XJump || ZEntryWord == ZJump;
-    m_SquaddieMovePatchApplied = XEntryWord == XJump && ZEntryWord == ZJump;
-    m_SquaddieOverlayBase = OverlayBase;
-
-    if (!Enabled)
-    {
-        if (!HookPresent)
-        {
-            m_SquaddieMovePatchApplied = false;
-            m_SquaddieOverlayBase = 0;
-            return;
-        }
-        CGameHackCodePatcher::Result EntryResult =
-            m_CodePatcher.SetEnabled(Patches + StubCount + DelayCount, EntryCount, false);
-        if (EntryResult == CGameHackCodePatcher::Result_SignatureMismatch ||
-            EntryResult == CGameHackCodePatcher::Result_MemoryUnavailable)
-        {
-            return;
-        }
-        m_SquaddieMovePatchApplied = false;
-        m_CodePatcher.SetEnabled(Patches + StubCount, DelayCount, false);
-        m_CodePatcher.SetEnabled(Patches, StubCount, false);
-        m_SquaddieOverlayBase = 0;
-        return;
-    }
-
-    // A loaded state can contain an older version of our stub. Only reclaim
-    // unexpected words when an entry proves the region belongs to this hook.
-    if (HookPresent)
-    {
-        for (size_t i = 0; i < StubCount + DelayCount; i++)
-        {
-            uint32_t Current = 0;
-            if (m_Memory.ReadU32(Patches[i].Address, Current) &&
-                Current != Patches[i].Original && Current != Patches[i].Replacement)
-            {
-                m_Memory.WriteU32(Patches[i].Address, Patches[i].Original);
-            }
-        }
-    }
-
-    CGameHackCodePatcher::Result Result = m_CodePatcher.SetEnabled(Patches, PatchCount, true);
-    if (Result == CGameHackCodePatcher::Result_SignatureMismatch ||
-        Result == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        m_SquaddieMovePatchApplied = false;
-        return;
-    }
-    m_SquaddieMovePatchApplied = true;
-}
-
 // VI_INTR_TIME is (VI_V_SYNC_REG + 1) * viRefreshRate, so doubling the rate
 // doubles the instructions the emulated CPU gets between video interrupts and
 // lets a busy frame finish inside one VI period. This is an overclock of the
@@ -7890,297 +6076,6 @@ void CJetForceGeminiRuntime::PatchSchedulerRelease(bool Enabled)
     m_SchedulerReleasePatchApplied = Enabled;
 }
 
-// viSetTrippleBuffer normally only requests a third framebuffer for widescreen
-// resolutions. Applying this before the level's video setup makes viChangeMode
-// allocate the same third buffer for the 60fps scheduler path.
-void CJetForceGeminiRuntime::PatchTripleBuffer(bool Enabled)
-{
-    uint32_t Current = 0;
-    if (m_Memory.ReadU32(TripleBufferRequest, Current))
-    {
-        m_TripleBufferPatchApplied = Current == TripleBufferPatches[0].Replacement;
-    }
-
-    if (!Enabled && !m_TripleBufferPatchApplied)
-    {
-        return;
-    }
-
-    CGameHackCodePatcher::Result Result = m_CodePatcher.SetEnabled(
-        TripleBufferPatches, sizeof(TripleBufferPatches) / sizeof(TripleBufferPatches[0]), Enabled);
-    if (Result == CGameHackCodePatcher::Result_SignatureMismatch ||
-        Result == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        return;
-    }
-    m_TripleBufferPatchApplied = Enabled;
-    if (Enabled)
-    {
-        // The game normally reaches viSetTrippleBuffer during video setup. The
-        // hack is already active before that call, but set the backing flag as
-        // well so an earlier setup path cannot leave the allocation at two
-        // buffers.
-        m_Memory.WriteU8(TripleBufferActive, 1);
-    }
-}
-
-// Preserve the 30fps update cadence of the wake while the main game loop runs
-// at 60fps. The retained update deliberately keeps its native delta of one,
-// which gives its short-lived mesh segments their 30fps lifetime again.
-void CJetForceGeminiRuntime::PatchWaterWakeRate(bool Enabled)
-{
-    // Migrate either of the two earlier experiments out of a loaded save state.
-    uint32_t LegacyStubWord = 0;
-    if (m_Memory.ReadU32(WaterWakeGateStub + 0x04, LegacyStubWord) &&
-        LegacyStubWord == WaterWakeLegacyGatePatches[1].Replacement)
-    {
-        uint32_t LegacyCall = 0;
-        if (m_Memory.ReadU32(WaterWakeLegacyCallSite, LegacyCall) && LegacyCall == WaterWakeGateJump)
-        {
-            const GAME_HACK_CODE_PATCH LegacyCallPatch = {
-                WaterWakeLegacyCallSite, WaterWakeUpdateCall, WaterWakeGateJump};
-            m_CodePatcher.SetEnabled(&LegacyCallPatch, 1, false);
-        }
-        m_CodePatcher.SetEnabled(WaterWakeLegacyGatePatches,
-                                 sizeof(WaterWakeLegacyGatePatches) / sizeof(WaterWakeLegacyGatePatches[0]), false);
-    }
-
-    uint32_t LegacyRate = 0;
-    if (m_Memory.ReadU32(WaterWakeLegacyRatePatches[0].Address, LegacyRate) &&
-        LegacyRate == WaterWakeLegacyRatePatches[0].Replacement)
-    {
-        m_CodePatcher.SetEnabled(
-            WaterWakeLegacyRatePatches, sizeof(WaterWakeLegacyRatePatches) / sizeof(WaterWakeLegacyRatePatches[0]), false);
-    }
-
-    uint32_t Current = 0;
-    uint32_t GateStubWord = 0;
-    if (m_Memory.ReadU32(WaterWakeLegacyCallSite, Current) &&
-        m_Memory.ReadU32(WaterWakeGateStub + 0x04, GateStubWord))
-    {
-        m_WaterWakeRatePatchApplied = Current == WaterWakeGateJump && GateStubWord == WaterWakeGatePatches[1].Replacement;
-    }
-
-    if (!Enabled)
-    {
-        if (m_WaterWakeRatePatchApplied)
-        {
-            m_CodePatcher.SetEnabled(
-                WaterWakeGatePatches, sizeof(WaterWakeGatePatches) / sizeof(WaterWakeGatePatches[0]), false);
-        }
-        m_Memory.WriteU32(WaterWakeGateCounter, 0);
-        m_WaterWakeRatePatchApplied = false;
-        m_WaterWakeRatePatchStatus = 0;
-        return;
-    }
-
-    if (m_WaterWakeRatePatchApplied)
-    {
-        return;
-    }
-
-    m_Memory.WriteU32(WaterWakeGateCounter, 0);
-    CGameHackCodePatcher::Result Result = m_CodePatcher.SetEnabled(
-        WaterWakeGatePatches, sizeof(WaterWakeGatePatches) / sizeof(WaterWakeGatePatches[0]), true);
-    if (Result == CGameHackCodePatcher::Result_SignatureMismatch ||
-        Result == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        m_WaterWakeRatePatchStatus = 1;
-        return;
-    }
-
-    m_WaterWakeRatePatchApplied = true;
-    m_WaterWakeRatePatchStatus = 16;
-}
-
-void CJetForceGeminiRuntime::PatchWaterWakeDrawProbe(bool Enabled)
-{
-    uint32_t Current = 0;
-    if (m_Memory.ReadU32(WaterWakeDrawProbePatches[0].Address, Current))
-    {
-        m_WaterWakeDrawProbeApplied = Current == WaterWakeDrawProbePatches[0].Replacement;
-    }
-
-    if (!Enabled && !m_WaterWakeDrawProbeApplied)
-    {
-        return;
-    }
-
-    CGameHackCodePatcher::Result Result = m_CodePatcher.SetEnabled(
-        WaterWakeDrawProbePatches,
-        sizeof(WaterWakeDrawProbePatches) / sizeof(WaterWakeDrawProbePatches[0]), Enabled);
-    if (Result == CGameHackCodePatcher::Result_SignatureMismatch ||
-        Result == CGameHackCodePatcher::Result_MemoryUnavailable)
-    {
-        return;
-    }
-    m_WaterWakeDrawProbeApplied = Enabled;
-    if (Enabled)
-    {
-        m_WaterWakeRatePatchStatus = 9;
-    }
-}
-
-void CJetForceGeminiRuntime::PatchWaterWakeCulling(bool Enabled)
-{
-    uint32_t Current = 0;
-    if (m_Memory.ReadU32(WaterWakeCullingEntry, Current))
-    {
-        m_WaterWakeCullingPatchApplied = Current == WaterWakeCullingJump;
-    }
-
-    if (Enabled == m_WaterWakeCullingPatchApplied)
-    {
-        if (Enabled)
-        {
-            m_WaterWakeRatePatchStatus = 10;
-        }
-        return;
-    }
-
-    if (!SetHookEnabled(
-            WaterWakeCullingPatches,
-            sizeof(WaterWakeCullingPatches) / sizeof(WaterWakeCullingPatches[0]), Enabled))
-    {
-        m_WaterWakeRatePatchStatus = 1;
-        return;
-    }
-    m_WaterWakeCullingPatchApplied = Enabled;
-    m_WaterWakeRatePatchStatus = Enabled ? 10 : 0;
-}
-
-void CJetForceGeminiRuntime::PatchWaterWakeDrawFallback(bool Enabled)
-{
-    uint32_t Current = 0;
-    uint32_t StubTail = 0;
-    if (m_Memory.ReadU32(WaterWakeDrawFallbackEntry, Current) &&
-        m_Memory.ReadU32(WaterWakeDrawFallbackStub + 0x38, StubTail))
-    {
-        m_WaterWakeDrawFallbackPatchApplied = Current == WaterWakeDrawFallbackJump &&
-                                              StubTail == WaterWakeDrawFallbackPatches[14].Replacement;
-    }
-
-    if (Enabled == m_WaterWakeDrawFallbackPatchApplied)
-    {
-        if (Enabled)
-        {
-            m_WaterWakeRatePatchStatus = 13;
-        }
-        else
-        {
-            m_Memory.WriteU32(WaterWakeDrawTargetAddress, 0);
-            m_Memory.WriteU32(WaterWakeDrawFallbackCalledAddress, 0);
-        }
-        return;
-    }
-
-    if (!SetHookEnabled(
-            WaterWakeDrawFallbackPatches,
-            sizeof(WaterWakeDrawFallbackPatches) / sizeof(WaterWakeDrawFallbackPatches[0]), Enabled))
-    {
-        m_WaterWakeRatePatchStatus = 1;
-        return;
-    }
-    m_WaterWakeDrawFallbackPatchApplied = Enabled;
-    m_WaterWakeRatePatchStatus = Enabled ? 13 : 0;
-    if (!Enabled)
-    {
-        m_Memory.WriteU32(WaterWakeDrawTargetAddress, 0);
-        m_Memory.WriteU32(WaterWakeDrawFallbackCalledAddress, 0);
-    }
-}
-
-void CJetForceGeminiRuntime::PatchWaterWakeFrameRate(bool Enabled)
-{
-    uint32_t Current = 0;
-    if (m_Memory.ReadU32(WaterWakeFrameRateEntry, Current))
-    {
-        m_WaterWakeFrameRatePatchApplied = Current == WaterWakeFrameRateJump;
-    }
-
-    if (Enabled == m_WaterWakeFrameRatePatchApplied)
-    {
-        if (Enabled)
-        {
-            m_WaterWakeRatePatchStatus = 14;
-        }
-        return;
-    }
-
-    if (!SetHookEnabled(
-            WaterWakeFrameRatePatches,
-            sizeof(WaterWakeFrameRatePatches) / sizeof(WaterWakeFrameRatePatches[0]), Enabled))
-    {
-        m_WaterWakeRatePatchStatus = 1;
-        return;
-    }
-    m_WaterWakeFrameRatePatchApplied = Enabled;
-    m_WaterWakeRatePatchStatus = Enabled ? 14 : 0;
-}
-
-void CJetForceGeminiRuntime::PatchWaterWakeStockDrawProbe(bool Enabled)
-{
-    uint32_t Current = 0;
-    if (m_Memory.ReadU32(WaterWakeStockDrawEntry, Current))
-    {
-        m_WaterWakeStockDrawProbeApplied = Current == WaterWakeStockDrawJump;
-    }
-
-    if (Enabled == m_WaterWakeStockDrawProbeApplied)
-    {
-        if (Enabled)
-        {
-            m_WaterWakeRatePatchStatus = 15;
-        }
-        return;
-    }
-
-    if (!SetHookEnabled(
-            WaterWakeStockDrawProbePatches,
-            sizeof(WaterWakeStockDrawProbePatches) / sizeof(WaterWakeStockDrawProbePatches[0]), Enabled))
-    {
-        m_WaterWakeRatePatchStatus = 1;
-        return;
-    }
-    m_WaterWakeStockDrawProbeApplied = Enabled;
-    m_WaterWakeRatePatchStatus = Enabled ? 15 : 0;
-    if (!Enabled)
-    {
-        m_Memory.WriteU32(WaterWakeStockDrawTargetAddress, 0);
-        m_Memory.WriteU32(WaterWakeStockDrawCalledAddress, 0);
-    }
-}
-
-void CJetForceGeminiRuntime::UpdateWaterWakeDrawTarget(void)
-{
-    uint32_t Target = 0;
-    uint32_t ObjectList = 0;
-    uint32_t ObjectCount = 0;
-    if (m_Memory.ReadU32(WaterWakeObjectListAddress, ObjectList) &&
-        m_Memory.ReadU32(WaterWakeObjectCountAddress, ObjectCount) && ObjectCount <= WaterWakeObjectLimit)
-    {
-        for (uint32_t Index = 0; Index < ObjectCount; Index++)
-        {
-            uint32_t Object = 0;
-            uint32_t Wake = 0;
-            uint32_t DrawSetup = 0;
-            uint8_t Marker = 0;
-            int16_t Alpha = 0;
-            if (!m_Memory.ReadU32(ObjectList + Index * sizeof(uint32_t), Object) ||
-                !m_Memory.ReadU32(Object + 0x58, Wake) || Wake == 0 ||
-                !m_Memory.ReadU8(Wake, Marker) || Marker != 0x40 ||
-                !m_Memory.ReadU32(Wake + 0x70, DrawSetup) || DrawSetup == 0 ||
-                !m_Memory.ReadS16(Wake + 0x76, Alpha) || Alpha == 0)
-            {
-                continue;
-            }
-            Target = Wake;
-            break;
-        }
-    }
-    m_Memory.WriteU32(WaterWakeDrawTargetAddress, Target);
-}
-
 // Reports how often the mouse camera actually updates. ProcessController runs
 // once per call into the input plugin, so this is the rate the aiming code sees:
 // compare it against VI/s to tell whether the camera keeps up with the render.
@@ -8216,188 +6111,8 @@ void CJetForceGeminiRuntime::UpdateInputRate(void)
     {
         uint32_t InputRate = (uint32_t)(((uint64_t)m_InputRateSamples * 1000000) / Elapsed);
         uint32_t FrameRate = (uint32_t)(((uint64_t)m_FrameSwaps * 1000000) / Elapsed);
-        uint8_t TripleBuffer = 0;
-        m_Memory.ReadU8(TripleBufferActive, TripleBuffer);
-        uint32_t ObjectMoveEntryWord = 0;
-        uint32_t ObjectMoveResumeWord = 0;
-        uint32_t ObjectMoveStubWord = 0;
-        m_Memory.ReadU32(ObjectMoveEntry, ObjectMoveEntryWord);
-        m_Memory.ReadU32(ObjectMoveResume, ObjectMoveResumeWord);
-        m_Memory.ReadU32(ObjectMoveStub, ObjectMoveStubWord);
-        uint32_t WakeGlobalFadeRaw = 0;
-        m_Memory.ReadU32(WaterWakeGlobalFadeAddress, WakeGlobalFadeRaw);
-        int32_t WakeGlobalFade = (int32_t)WakeGlobalFadeRaw;
-        uint32_t WakeFallbackTarget = 0;
-        m_Memory.ReadU32(WaterWakeDrawTargetAddress, WakeFallbackTarget);
-        uint32_t WakeStockTarget = 0;
-        uint32_t WakeStockCalled = 0;
-        m_Memory.ReadU32(WaterWakeStockDrawTargetAddress, WakeStockTarget);
-        m_Memory.ReadU32(WaterWakeStockDrawCalledAddress, WakeStockCalled);
-        uint8_t WakeDirection = 0;
-        uint8_t WakeSegments = 0;
-        uint8_t WakeCapacity = 0;
-        uint8_t WakeFrame = 0;
-        int16_t WakeAlpha = 0;
-        int16_t WakeIntensity = 0;
-        int16_t WakeTimer = 0;
-        int16_t WakeChildAlpha = 0;
-        int16_t WakeSegmentLifetime = 0;
-        uint8_t WakeChildDirection = 0;
-        uint8_t WakeDrawCount = 0;
-        uint8_t WakeDrawActive = 0;
-        bool WakeChildValid = false;
-        bool WakeChildIsSelf = false;
-        bool WakeMesh = false;
-        uint32_t WakeVertex = 0;
-        int16_t WakeVertexX = 0;
-        int16_t WakeVertexY = 0;
-        int16_t WakeVertexZ = 0;
-        uint32_t WakeCount = 0;
-        uint32_t WakeObject = 0;
-        uint32_t WakeRenderListIndex = 0;
-        bool WakeValid = false;
-
-        // wakeUpdateRipple is driven by the generic effects-object list, not
-        // the player list. A wake block starts with its fixed 0x40 capacity;
-        // scan that exact list and report the instance with most segments.
-        uint32_t WakeObjectList = 0;
-        uint32_t WakeObjectCount = 0;
-        if (m_Memory.ReadU32(WaterWakeObjectListAddress, WakeObjectList) &&
-            m_Memory.ReadU32(WaterWakeObjectCountAddress, WakeObjectCount) &&
-            WakeObjectCount <= WaterWakeObjectLimit)
-        {
-            for (uint32_t Index = 0; Index < WakeObjectCount; Index++)
-            {
-                uint32_t Object = 0;
-                uint32_t Wake = 0;
-                uint8_t WakeMarker = 0;
-                uint8_t Direction = 0;
-                uint8_t Segments = 0;
-                uint8_t Capacity = 0;
-                uint8_t Frame = 0;
-                int16_t Alpha = 0;
-                int16_t Intensity = 0;
-                int16_t Timer = 0;
-                int16_t ChildAlpha = 0;
-                uint32_t DrawBuffer = 0;
-                uint32_t Child = 0;
-                uint8_t ChildDirection = 0;
-                bool ChildValid = false;
-                uint8_t DrawCount = 0;
-                uint8_t DrawActive = 0;
-                int16_t DrawSpan = 0;
-                uint32_t Vertex = 0;
-                int16_t VertexX = 0;
-                int16_t VertexY = 0;
-                int16_t VertexZ = 0;
-                if (!m_Memory.ReadU32(WakeObjectList + Index * sizeof(uint32_t), Object) ||
-                    !m_Memory.ReadU32(Object + 0x58, Wake) || Wake == 0 ||
-                    !m_Memory.ReadU8(Wake, WakeMarker) || WakeMarker != 0x40 ||
-                    !m_Memory.ReadU8(Wake + 0x75, Direction) ||
-                    !m_Memory.ReadU8(Wake + 0x3B, Segments) ||
-                    !m_Memory.ReadU8(Wake + 0x01, Capacity) ||
-                    !m_Memory.ReadU8(Wake + 0x74, Frame) ||
-                    !m_Memory.ReadS16(Wake + 0x76, Alpha) ||
-                    !m_Memory.ReadS16(Wake + 0x08, Intensity) ||
-                    !m_Memory.ReadS16(Wake + 0x78, Timer) || !m_Memory.ReadU32(Wake + 0x10, DrawBuffer))
-                {
-                    continue;
-                }
-
-                ChildValid = m_Memory.ReadU32(Wake + 0x58, Child) && Child != 0 &&
-                             m_Memory.IsRdramAddress(Child, 0x78) &&
-                             m_Memory.ReadU8(Child + 0x75, ChildDirection) &&
-                             m_Memory.ReadS16(Child + 0x76, ChildAlpha);
-
-                if (DrawBuffer != 0 && m_Memory.ReadU8(Wake + 0x38, DrawCount))
-                {
-                    // wakeDraw treats +0x0E in each 16-byte entry as its
-                    // non-zero vertex span. The entries themselves start at
-                    // wake + 0x10, not at the texture/render object + 0x84.
-                    const uint8_t SegmentCount = DrawCount > 64 ? 64 : DrawCount;
-                    for (uint8_t SegmentIndex = 0; SegmentIndex < SegmentCount; SegmentIndex++)
-                    {
-                        int16_t Span = 0;
-                        if (!m_Memory.ReadS16(DrawBuffer + SegmentIndex * 0x10 + 0x0E, Span))
-                        {
-                            break;
-                        }
-                        if (Span > 0)
-                        {
-                            DrawActive += 1;
-                            if (Span > DrawSpan)
-                            {
-                                DrawSpan = Span;
-                            }
-                        }
-                    }
-
-                    if (DrawCount != 0 && m_Memory.ReadU32(DrawBuffer, Vertex) && Vertex != 0)
-                    {
-                        uint32_t VertexAddress = Vertex | 0x80000000;
-                        m_Memory.ReadS16(VertexAddress + 0x00, VertexX);
-                        m_Memory.ReadS16(VertexAddress + 0x02, VertexY);
-                        m_Memory.ReadS16(VertexAddress + 0x04, VertexZ);
-                    }
-                }
-
-                WakeCount += 1;
-                if (!WakeValid || (DrawBuffer != 0 && !WakeMesh) ||
-                    (DrawBuffer != 0 && WakeMesh && DrawActive > WakeDrawActive) ||
-                    ((DrawBuffer != 0 || !WakeMesh) && DrawActive == WakeDrawActive && Segments > WakeSegments) ||
-                    ((DrawBuffer != 0 || !WakeMesh) && DrawActive == WakeDrawActive && Segments == WakeSegments &&
-                     Intensity > WakeIntensity))
-                {
-                    WakeValid = true;
-                    WakeDirection = Direction;
-                    WakeSegments = Segments;
-                    WakeCapacity = Capacity;
-                    WakeFrame = Frame;
-                    WakeAlpha = Alpha;
-                    WakeIntensity = Intensity;
-                    WakeTimer = Timer;
-                    WakeChildAlpha = ChildAlpha;
-                    WakeSegmentLifetime = DrawSpan;
-                    WakeChildDirection = ChildDirection;
-                    WakeDrawCount = DrawCount;
-                    WakeDrawActive = DrawActive;
-                    WakeChildValid = ChildValid;
-                    WakeChildIsSelf = ChildValid && Child == Wake;
-                    WakeMesh = DrawBuffer != 0;
-                    WakeVertex = Vertex;
-                    WakeVertexX = VertexX;
-                    WakeVertexY = VertexY;
-                    WakeVertexZ = VertexZ;
-                    WakeObject = Object;
-                }
-            }
-        }
-
-        if (WakeObject != 0)
-        {
-            for (uint32_t Index = 0; Index < GeneralRenderListLimit; Index++)
-            {
-                uint32_t RenderObject = 0;
-                if (!m_Memory.ReadU32(GeneralRenderListAddress + Index * sizeof(uint32_t), RenderObject))
-                {
-                    break;
-                }
-                if (RenderObject == WakeObject)
-                {
-                    WakeRenderListIndex = Index + 1;
-                    break;
-                }
-            }
-        }
-        uint8_t WakeOutputAlpha = 0;
-        if (WakeValid)
-        {
-            WakeOutputAlpha = (uint8_t)(((uint32_t)(255 - (WakeGlobalFade >> 1)) * (uint16_t)WakeAlpha) >> 8);
-        }
         uint32_t DroneLateralFlags = 0;
-        uint32_t DroneLateralHookFlags = 0;
         m_Memory.ReadU32(DroneLateralFlagsAddress, DroneLateralFlags);
-        m_Memory.ReadU32(DroneLateralHookFlagsAddress, DroneLateralHookFlags);
         // Calibration readout for moving the strafe axis onto the camera. Read
         // these while flying straight with no strafe held: the heading is the
         // camera forward then, which pins down how the yaw maps to X and Z.
@@ -8407,12 +6122,12 @@ void CJetForceGeminiRuntime::UpdateInputRate(void)
         m_Memory.ReadF32(DroneLateralVelocityAddress, DroneHeadingX);
         g_Notify->DisplayMessage(
             0,
-            stdstr_f("input %u Hz  video %u Hz  floyd%u/%u/state%u patch%u flags%u calls%u seen%u"
+            stdstr_f("input %u Hz  video %u Hz  floyd%u/%u/state%u patch%u flags%u calls%u"
                      "  fwd%.2f lat%+.2f",
                      InputRate, FrameRate, m_DroneLateralActive ? 1 : 0,
                      m_DroneLateralApplied ? 1 : 0, m_DroneLateralState,
                      m_SidekickStrafeHookApplied ? 1 : 0, DroneLateralFlags, m_DroneLateralHookHits,
-                     DroneLateralHookFlags, DroneForwardSpeed, DroneHeadingX)
+                     DroneForwardSpeed, DroneHeadingX)
                 .c_str());
         m_InputRateWindowStart = Now;
         m_InputRateSamples = 0;
@@ -8441,7 +6156,7 @@ void CJetForceGeminiRuntime::PatchFramePacing60(bool Enabled)
         !m_Memory.ReadU32(FramePacing60SignatureBase + 0x04, Signature[1]) ||
         !m_Memory.ReadU32(FramePacing60SignatureBase + 0x10, Signature[2]) ||
         Signature[0] != FramePacing60SignatureWord0 || Signature[1] != 0x240F0001 ||
-        Signature[2] != 0xA22F0000)
+        Signature[2] != FramePacing60StoreWord)
     {
         return;
     }
@@ -8516,16 +6231,9 @@ void CJetForceGeminiRuntime::Deactivate(void)
     PatchIntroCinematicSkip(false);
     m_Memory.WriteU32(LandingCinematicSkipInputAddress, 0);
     ApplyViBudget(false);
-    PatchSquaddieMove(false);
-    PatchSquadsTimeStep(false);
     PatchObjectMove(false);
-    PatchDroneLateralMove(false);
-    PatchFloydCameraLateralMove(false);
-    PatchSidekickVelocityLateralMove(false);
-    PatchSidekickLateralMove(false);
     PatchSidekickStrafe(false);
     PatchSidekickPadControlProbe(false);
-    PatchPlayerVelocity(false);
     m_Memory.WriteU32(DroneLateralFlagsAddress, 0);
     m_Memory.WriteF32(DroneLateralSideFactorAddress, 0.0f);
     m_Memory.WriteF32(DroneLateralVelocityAddress, 0.0f);
@@ -8533,14 +6241,7 @@ void CJetForceGeminiRuntime::Deactivate(void)
     m_Memory.WriteF32(DroneVerticalVelocityAddress, 0.0f);
     m_Memory.WriteU32(DroneLateralPreviousObjectAddress, 0);
     PatchSchedulerRelease(false);
-    PatchTripleBuffer(false);
-    PatchWaterWakeRate(false);
     PatchWaterWakeRingRate(false);
-    PatchWaterWakeDrawProbe(false);
-    PatchWaterWakeCulling(false);
-    PatchWaterWakeDrawFallback(false);
-    PatchWaterWakeFrameRate(false);
-    PatchWaterWakeStockDrawProbe(false);
     PatchFramePacing60(false);
     PatchFramePacing(false);
     SetCameraCode(false, false, false, false);
@@ -8597,35 +6298,21 @@ void CJetForceGeminiRuntime::ClearCameraState(void)
     m_FramePacingPatchApplied = false;
     m_FramePacing60PatchApplied = false;
     m_SchedulerReleasePatchApplied = false;
-    m_TripleBufferPatchApplied = false;
-    m_WaterWakeRatePatchApplied = false;
     m_WaterWakeRingRatePatchApplied = false;
-    m_WaterWakeDrawProbeApplied = false;
-    m_WaterWakeCullingPatchApplied = false;
-    m_WaterWakeDrawFallbackPatchApplied = false;
-    m_WaterWakeFrameRatePatchApplied = false;
-    m_WaterWakeStockDrawProbeApplied = false;
-    m_WaterWakeRatePatchStatus = 0;
     m_GameplayReady = false;
     m_SprintActive = false;
     m_BaseViRefreshRate = 0;
     m_ObjectMovePatchApplied = false;
-    m_PlayerVelocityPatchApplied = false;
-    m_SquaddieMovePatchApplied = false;
-    m_SquaddieOverlayBase = 0;
     m_LandingCinematicSkipHookApplied = false;
     m_LandingCinematicSkipStubOriginal.clear();
     m_IntroCinematicSkipHookApplied = false;
     m_IntroCinematicSkipOverlayBase = 0;
     m_IntroCinematicSkipStubOriginal.clear();
-    m_CinematicProbeDown = false;
     m_Fps60ToggleDown = false;
     m_Fps30ToggleDown = false;
     m_SyncAudioEnabledState = -1;
     m_HalveFrameCounter = 0;
     memset(m_HalvedEnemySlots, 0, sizeof(m_HalvedEnemySlots));
-    m_WidescreenHudScopeForceDown = false;
-    m_WidescreenHudScopeForced = false;
     m_InputRateWindowValid = false;
     m_InputRateSamples = 0;
     m_FrameSwaps = 0;
@@ -8642,8 +6329,9 @@ bool CJetForceGeminiRuntime::IsSupportedRom(void)
         return false;
     }
 
-    // Both builds are accepted: every address and every payload now comes from
-    // the table, so nothing here is spelled in US terms any more.
+    // Every build with an address table is accepted (US, Kiosk and PAL): every
+    // address and every payload now comes from the table, so nothing here is
+    // spelled in US terms any more.
     //
     // What makes opening this reasonable rather than reckless is that
     // CGameHackCodePatcher::SetEnabled checks every entry of a table before it
@@ -8775,8 +6463,23 @@ bool CJetForceGeminiRuntime::SetCameraCode(
 
 void CJetForceGeminiRuntime::PatchManualAimCode(bool Enabled)
 {
-    if (Enabled)
+    // Both modules are relocatable: take their live base from the overlay
+    // table each time, and leave a module alone while it is not loaded.
+    auto OverlayBase = [this](uint32_t Module, uint32_t Size, uint32_t & Base) {
+        uint32_t Table = 0;
+        Base = 0;
+        return m_Memory.ReadU32(OverlayTableAddress, Table) && (Table & 3) == 0 &&
+               m_Memory.IsRdramAddress(Table, (Module + 1) * OverlayHeaderSize) &&
+               m_Memory.ReadU32(Table + Module * OverlayHeaderSize, Base) &&
+               Base != 0 && (Base & 3) == 0 && m_Memory.IsRdramAddress(Base, Size);
+    };
+
+    uint32_t TargetBase = 0;
+    if (Enabled && OverlayBase(TargetOverlayModule, TargetOverlayDrawOffset + 0x10, TargetBase))
     {
+        const uint32_t TargetOverlayDraw = TargetBase + TargetOverlayDrawOffset;
+        const uint32_t TargetOverlayCursorX = TargetBase + TargetOverlayCursorXOffset;
+        const uint32_t TargetOverlayCursorY = TargetBase + TargetOverlayCursorYOffset;
         uint32_t Signature[4];
         uint32_t CursorX;
         uint32_t CursorY;
@@ -8806,6 +6509,15 @@ void CJetForceGeminiRuntime::PatchManualAimCode(bool Enabled)
         }
     }
 
+    uint32_t BoyBase = 0;
+    const uint32_t BoyAimEnd =
+        (BoyAimFirstGroupOffset > BoyAimSecondGroupOffset ? BoyAimFirstGroupOffset : BoyAimSecondGroupOffset) +
+        BoyAimGroupSize;
+    if (!OverlayBase(BoyAimOverlayModule, BoyAimEnd, BoyBase))
+    {
+        return;
+    }
+    const uint32_t BoyAimHelper = BoyBase + BoyAimHelperOffset;
     uint32_t Signature[4];
     if (!m_Memory.ReadU32(BoyAimHelper + 0x00, Signature[0]) ||
         !m_Memory.ReadU32(BoyAimHelper + 0x04, Signature[1]) ||
@@ -8817,6 +6529,17 @@ void CJetForceGeminiRuntime::PatchManualAimCode(bool Enabled)
         return;
     }
 
+    GAME_HACK_CODE_PATCH BoyAimPatches[2 * BoyAimGroupPatchCount];
+    const uint32_t Groups[] = { BoyAimFirstGroupOffset, BoyAimSecondGroupOffset };
+    for (size_t Group = 0; Group < 2; Group++)
+    {
+        for (size_t i = 0; i < BoyAimGroupPatchCount; i++)
+        {
+            const BOY_AIM_PATCH & Patch = BoyAimGroupPatches[i];
+            BoyAimPatches[Group * BoyAimGroupPatchCount + i] = {
+                BoyBase + Groups[Group] + Patch.Offset, Patch.Original, Patch.Replacement };
+        }
+    }
     m_CodePatcher.SetEnabled(
         BoyAimPatches, sizeof(BoyAimPatches) / sizeof(BoyAimPatches[0]), Enabled);
 }
@@ -9596,13 +7319,14 @@ void CJetForceGeminiRuntime::MapController(
     const bool DroneLateralMovement = DroneThrusters && Left != Right;
     const bool DroneVerticalMovement = DroneThrusters && CUp != CDown;
     m_DroneLateralActive = DroneLateralMovement || DroneVerticalMovement;
-    m_DroneLateralRight = Right;
     uint32_t DroneLateralFlags = DroneThrusters ? DroneLateralActive | (Right ? DroneLateralRight : 0) : 0;
     // The stub stays armed for the whole drone section rather than only while a
     // strafe key is down, so the lateral velocity it holds can decay through
     // drag after the key is released instead of being frozen mid-drift.
     float DroneLateralSideFactor = 0.0f;
-    const float DroneVerticalThrust = DroneVerticalMovement ? (CUp ? 1.0f : -1.0f) * DroneLateralSideThrust : 0.0f;
+    const bool PalRate = JfgAddresses() == &JfgPalAddresses;
+    const float SideThrust = PalRate ? PalDroneLateralSideThrust : DroneLateralSideThrust;
+    const float DroneVerticalThrust = DroneVerticalMovement ? (CUp ? 1.0f : -1.0f) * SideThrust : 0.0f;
     float DroneLateralRightX = 0.0f;
     float DroneLateralRightZ = 0.0f;
     int16_t DroneCameraYaw = 0;
@@ -9614,7 +7338,7 @@ void CJetForceGeminiRuntime::MapController(
         DroneLateralRightZ = -sinf(Angle);
         if (DroneLateralMovement)
         {
-            DroneLateralSideFactor = (Right ? -1.0f : 1.0f) * DroneLateralSideThrust;
+            DroneLateralSideFactor = (Right ? -1.0f : 1.0f) * SideThrust;
         }
     }
     // The video pass runs independently from the controller poll. Only the
@@ -9625,8 +7349,8 @@ void CJetForceGeminiRuntime::MapController(
         m_Memory.WriteU32(DroneLateralFlagsAddress, DroneLateralFlags);
         m_Memory.WriteF32(DroneLateralSideFactorAddress, DroneLateralSideFactor);
         m_Memory.WriteF32(DroneVerticalThrustAddress, DroneVerticalThrust);
-        m_Memory.WriteF32(DroneLateralDragAddress, DroneLateralDrag);
-        m_Memory.WriteF32(DroneLateralMaxSpeedAddress, DroneLateralMaxSpeed);
+        m_Memory.WriteF32(DroneLateralDragAddress, PalRate ? PalDroneLateralDrag : DroneLateralDrag);
+        m_Memory.WriteF32(DroneLateralMaxSpeedAddress, PalRate ? PalDroneLateralMaxSpeed : DroneLateralMaxSpeed);
         m_Memory.WriteF32(DroneLateralRightXAddress, DroneLateralRightX);
         m_Memory.WriteF32(DroneLateralRightZAddress, DroneLateralRightZ);
         if (!DroneThrusters)
@@ -9638,7 +7362,6 @@ void CJetForceGeminiRuntime::MapController(
         if (!m_DroneLateralActive)
         {
             m_Memory.WriteU32(DroneLateralHookHitsAddress, 0);
-            m_Memory.WriteU32(DroneLateralHookFlagsAddress, 0);
         }
     }
     m_SprintActive = g_Settings->LoadBool(Setting_JfgEnableSprint) && Sprint && PlayerStanding && !AimMode && !DroneMode &&

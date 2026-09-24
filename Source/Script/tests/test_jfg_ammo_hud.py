@@ -26,10 +26,18 @@ def register_word(value):
 
 
 def constant(source, name):
-    match = re.search(r"\b" + re.escape(name) + r"\s*=\s*(0x[0-9a-fA-F]+|\d+)\s*;", source)
+    # Plain constants, and the US-term constants of JetForceGeminiHudBuild.h:
+    # UsAddress/UsWord { us }, UsOffset { module, us }, BuildWord { us, pal }.
+    # The tests model the US build, so each yields its US value.
+    number = r"(?:0x[0-9a-fA-F]+|\d+)"
+    match = re.search(r"(?:JfgHudBuild::(\w+)\s+)?\b" + re.escape(name) + r"\s*=\s*(?:\{\s*(" + number +
+                      r"(?:\s*,\s*" + number + r")*)\s*\}|(" + number + r"))\s*;", source)
     if match is None:
         raise AssertionError("Missing literal C++ constant: " + name)
-    return int(match.group(1), 0)
+    if match.group(3) is not None:
+        return int(match.group(3), 0)
+    values = [int(value, 0) for value in re.split(r"\s*,\s*", match.group(2))]
+    return values[1] if match.group(1) == "UsOffset" else values[0]
 
 
 def array_body(source, name):
@@ -143,7 +151,7 @@ class JfgAmmoHudTests(unittest.TestCase):
         cls.step_patches = {
             int(address, 16): (int(original, 16), int(replacement, 16))
             for address, original, replacement in re.findall(
-                r"\{\s*(0x[\da-fA-F]+),\s*(0x[\da-fA-F]+),\s*(0x[\da-fA-F]+)\s*\}",
+                r"\{\s*(?:JfgHudBuild::Address\()?(0x[\da-fA-F]+)\)?,\s*(0x[\da-fA-F]+),\s*(0x[\da-fA-F]+)\s*\}",
                 array_body(cls.source, "AmmoPatches"))
         }
 
@@ -193,7 +201,8 @@ class JfgAmmoHudTests(unittest.TestCase):
         self.assertEqual(len(addresses), 372)
         self.assertEqual(len(set(addresses)), len(addresses))
         self.assertFalse(set(addresses).intersection(range(0x80067690, 0x80067790, 4)))
-        placements = re.findall(r"!PlaceCode\((WidescreenHud\w+),\s*(WidescreenHud\w+),", self.source)
+        # Listings are placed through HudCode(), which translates them for PAL.
+        placements = re.findall(r"!PlaceCode\((WidescreenHud\w+),\s*HudCode\((WidescreenHud\w+)\)", self.source)
         self.assertIn(("WidescreenHudAmmoStub", "WidescreenHudAmmoCode"), placements)
         self.assertIn(("WidescreenHudReticleStub", "WidescreenHudReticleCode"), placements)
         self.assertIn(("WidescreenHudFloydLineStub", "WidescreenHudFloydLineCode"), placements)
@@ -201,7 +210,7 @@ class JfgAmmoHudTests(unittest.TestCase):
         claimed = {}
         all_placements = [(self.source, address, code) for address, code in placements]
         floyd_source = SOURCE.with_name("JetForceGeminiFloydHud.h").read_text(encoding="utf-8-sig")
-        floyd_placements = re.findall(r"!PlaceCode\(JfgFloydHud::(\w+),\s*JfgFloydHud::(\w+),", self.source)
+        floyd_placements = re.findall(r"!PlaceCode\(JfgFloydHud::(\w+),\s*HudCode\(JfgFloydHud::(\w+)\)", self.source)
         self.assertEqual(set(floyd_placements), {
             ("GuardStub", "GuardCode"), ("InitStub", "InitCode"),
             ("StepStub", "StepCode"), ("StepTailStub", "StepTailCode"),

@@ -21,7 +21,7 @@ def translation_unit():
     mapping = source[source.index("    const bool DroneThrusters ="):source.index("    m_SprintActive =", source.index("    const bool DroneThrusters ="))]
     arrays = "\n".join("const uint32_t " + name + "[] = {" + array_body(source, name) + "};"
                        for name in ("SidekickStrafeHookCode", "SidekickVerticalHookCode"))
-    names = set(re.findall(r"\b(?:Drone\w+|Sidekick\w+)\b", installer + helper + mapping + arrays))
+    names = set(re.findall(r"\b(?:Drone\w+|Sidekick\w+|PalDrone\w+)\b", installer + helper + mapping + arrays))
     # The production reset writes are shared with otherwise unrelated HUD and
     # camera lifecycle work. Execute those exact statements, not a copied reset.
     resets = []
@@ -39,7 +39,7 @@ def translation_unit():
     tables = (HACKS / "JetForceGeminiAddresses.cpp").read_text(encoding="utf-8-sig")
     tables = "\n".join("const JFG_ADDRESSES " + name + " = {" + re.search(
         r"const JFG_ADDRESSES " + name + r"\s*=\s*\{(.*?)\};", tables, re.S).group(1) + "};"
-        for name in ("JfgUsAddresses", "JfgKioskAddresses"))
+        for name in ("JfgUsAddresses", "JfgKioskAddresses", "JfgPalAddresses"))
     assignments = function(source, "void ApplyAddressTable(")
     assignments = "\n".join(line for line in assignments.splitlines()
                             if re.match(r"\s*(\w+) = A\.\1;", line) and line.strip().split()[0] in names)
@@ -61,7 +61,9 @@ public:
 ''' + mapping + "\n}\n" + "\n".join(resets) + "\n};\n"
     return '#include <cstring>\n#include <cmath>\n#include "' + header + '"\n' + mocks + \
         declarations[declarations.index("struct GAME_HACK_CODE_PATCH"):] + globals_ + arrays + funcs + tables + \
-        "\nvoid Select(const JFG_ADDRESSES &A) {\n" + assignments + \
+        "\nconst JFG_ADDRESSES *SelectedAddresses = &JfgUsAddresses;\n" + \
+        "const JFG_ADDRESSES *JfgAddresses() { return SelectedAddresses; }\n" + \
+        "\nvoid Select(const JFG_ADDRESSES &A) {\nSelectedAddresses = &A;\n" + assignments + \
         "\nSidekickStrafeJump = JumpTo(SidekickStrafeStub);\nSidekickStrafeResumeJump = JumpTo(SidekickStrafeDelay + 4);\n}\n" + \
         runtime + patcher[patcher.index("CGameHackCodePatcher::CGameHackCodePatcher("):] + helper + installer + CASES
 

@@ -1,12 +1,16 @@
 #pragma once
+#include "JetForceGeminiHudBuild.h"
+#include "JetForceGeminiHudPalOriginals.h"
 #include <cstdint>
+#include <vector>
 namespace JfgRocketOverlay {
 // Retail US cpuXYPrintf diagnostic, retired at its public entry. The capture
 // packet lives on the guest stack; no guest heap or persistent RAM is reserved.
-constexpr uint32_t Start = 0x800682F0;
-constexpr uint32_t End = 0x800683D4;
-constexpr uint32_t Capture = 0x80068300;
-constexpr uint32_t Submit = 0x80068360;
+// US addresses, translated where they are used (JetForceGeminiHudBuild.h).
+constexpr JfgHudBuild::UsAddress Start = { 0x800682F0 };
+constexpr JfgHudBuild::UsAddress End = { 0x800683D4 };
+constexpr JfgHudBuild::UsAddress Capture = { 0x80068300 };
+constexpr JfgHudBuild::UsAddress Submit = { 0x80068360 };
 // Packet: x0,y0,x1,y1,flags,clip-window,aimX,aimY,accepted (nine words).
 // Capture changes only t0/t1 and restores SP; no FPU/HI/LO/saved GPR changes.
 // The optional plugin acknowledges by writing accepted=1. Otherwise tail-call
@@ -45,4 +49,12 @@ const uint32_t Code[] = {
     0x2484FFFF, 0x8FBF0014, 0x27BD0030, 0x03E00008,
     0x00000000,
 };
+// The retail diagnostic as the ROM in hand holds it.
+inline std::vector<uint32_t> OriginalImage()
+{
+    const bool Pal = JfgHudBuild::Current() == JfgHudBuild::BuildPal;
+    const uint32_t * Words = Pal ? JfgHudPal::RocketOverlayOriginal : Original;
+    return std::vector<uint32_t>(Words, Words + sizeof(Original) / sizeof(Original[0]));
+}
+static_assert(sizeof(JfgHudPal::RocketOverlayOriginal) == sizeof(Original), "PAL rocket image size");
 }

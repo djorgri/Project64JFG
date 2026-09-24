@@ -106,19 +106,19 @@ struct Capture
 
     bool ordered_font_rectangle(const uint32_t *words, unsigned count, uint32_t xscale,
         uint32_t yscale, unsigned crop, double aspect, std::array<uint32_t, 4> &draw,
-        unsigned rasterScale = 1) const
+        unsigned rasterScale = 1, unsigned lines = 240) const
     {
         FontRectangle r;
         const unsigned xa = xscale & 4095, ya = yscale & 4095;
         if (scope != 4 || !target.valid() || !native_font_rectangle(words, count, r) ||
-            !xa || !ya || crop >= 120 || aspect <= 0 ||
+            !xa || !ya || crop >= lines / 2 || aspect <= 0 ||
             (rasterScale != 1 && rasterScale != 2 && rasterScale != 4 && rasterScale != 8)) return false;
         // Same anchor, vertical centre and pixel proportions as before_vi(),
         // but submit the glyph to the scene RDP at its original draw position.
         // Subsequent textured frames, triangles and fades naturally cover it.
         const double size = 4.0 / 3.0;
-        const double viewW = 640 - 2 * std::round(crop * (640.0 / 240.0));
-        const double viewH = 240 - 2 * int(crop);
+        const double viewW = JfgReticleOverlay::view_width(crop, lines);
+        const double viewH = JfgReticleOverlay::view_height(crop, lines);
         const double dx = viewW / viewH / aspect * xa / ya * size;
         const double top = r.y + r.height * (1 - size) * .5;
         // Align to the actual raster grid, retaining half/quarter guest pixels
@@ -151,10 +151,10 @@ struct Capture
 
     bool ordered_font_commands(const uint32_t *words, unsigned count, uint32_t xscale,
         uint32_t yscale, unsigned crop, double aspect, std::vector<uint32_t> &batch,
-        const RDP::Quirks &sceneQuirks = {}, unsigned rasterScale = 1) const
+        const RDP::Quirks &sceneQuirks = {}, unsigned rasterScale = 1, unsigned lines = 240) const
     {
         std::array<uint32_t, 4> draw;
-        if (!ordered_font_rectangle(words, count, xscale, yscale, crop, aspect, draw, rasterScale)) return false;
+        if (!ordered_font_rectangle(words, count, xscale, yscale, crop, aspect, draw, rasterScale, lines)) return false;
         // NativeTexRects is useful for unscaled game sprites, but would snap
         // this resized glyph back to the guest grid even at 2x/4x/8x. Override
         // it in the command stream for this draw only (also safe asynchronously).
@@ -409,8 +409,8 @@ inline RDP::VIOverlay before_vi(const View &view, unsigned scale, double aspect)
         (scale != 1 && scale != 2 && scale != 4 && scale != 8) || aspect <= 0) return out;
     const auto &v = view.vi;
     const unsigned xa = v.xscale & 4095, ya = v.yscale & 4095;
-    const double viewW = 640 - 2 * std::round(v.crop * (640.0 / 240.0));
-    const double viewH = 240 - 2 * int(v.crop);
+    const double viewW = JfgReticleOverlay::view_width(v.crop, v.lines);
+    const double viewH = JfgReticleOverlay::view_height(v.crop, v.lines);
     if (!xa || !ya || viewW <= 0 || viewH <= 0) return out;
     out.origin = view.frame->target.address; out.width = view.frame->target.width;
     out.height = view.frame->target.height; out.scale = scale;
@@ -485,14 +485,16 @@ inline void composite(const View &view, uint32_t *pixels, int width, int height)
     if (!view.frame || !pixels || width <= 0 || height <= 0) return;
     const auto &v = view.vi;
     const unsigned xa = v.xscale & 4095, ya = v.yscale & 4095;
-    const double cropX = std::round(v.crop * (640.0 / 240.0));
-    const double viewW = 640 - 2 * cropX, viewH = 240 - 2 * int(v.crop);
+    const double cropX = std::round(v.crop * (640.0 / v.lines));
+    const double viewW = JfgReticleOverlay::view_width(v.crop, v.lines);
+    const double viewH = JfgReticleOverlay::view_height(v.crop, v.lines);
     if (!xa || !ya || viewW <= 0 || viewH <= 0) return;
     const auto &target = view.frame->target;
     const uint32_t offset = ((v.origin & 0xFFFFFF) - target.address) / 2;
     const double ox = offset % target.width, oy = offset / target.width;
-    const double hx = int((v.hstart >> 16) & 1023) - 108;
-    const double vy = (int((v.vstart >> 16) & 1023) - 34) / 2.0;
+    // VI_H_OFFSET/VI_V_OFFSET of the scanout: 108/34 on NTSC, 128/44 on PAL.
+    const double hx = int((v.hstart >> 16) & 1023) - (v.lines == 288 ? 128 : 108);
+    const double vy = (int((v.vstart >> 16) & 1023) - (v.lines == 288 ? 44 : 34)) / 2.0;
     const double sx = width / viewW, sy = height / viewH;
     auto screenX = [&](double x) { return (hx + ((x - ox) * 1024 - ((v.xscale >> 16) & 4095)) / xa - cropX) * sx; };
     auto screenY = [&](double y) { return (vy + ((y - oy) * 1024 - ((v.yscale >> 16) & 4095)) / ya - v.crop) * sy; };

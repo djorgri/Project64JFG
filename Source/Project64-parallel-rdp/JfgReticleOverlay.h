@@ -7,6 +7,7 @@
 #include <cstring>
 #include <vector>
 #include "../../external/parallel-rdp/parallel-rdp/vi_overlay.hpp"
+#include "JfgBuild.h"
 
 // Host copy of the game's CPU line queue, separate from the emulated image.
 // All access is serialized by the plugin mutex. No guest pointers survive a call.
@@ -31,7 +32,12 @@ struct View
     Frame frame;
     uint32_t origin = 0, xscale = 0, yscale = 0, hstart = 0, vstart = 0;
     unsigned crop = 0;
+    unsigned lines = 240; // VI output lines per field: 240 NTSC, 288 PAL
 };
+// The visible VI area after overscan cropping, in output samples and lines.
+// parallel-rdp crops X in proportion to Y over its 640-sample scanout.
+inline double view_width(unsigned crop, unsigned lines) { return 640 - 2 * std::round(crop * (640.0 / lines)); }
+inline double view_height(unsigned crop, unsigned lines) { return double(lines) - 2 * int(crop); }
 class Queue
 {
 public:
@@ -52,32 +58,34 @@ public:
             uint32_t v; std::memcpy(&v, ram + (a & 0x1FFFFFFF), 4); return v;
         };
         auto set = [ram](uint32_t a, uint32_t v) { std::memcpy(ram + (a & 0x1FFFFFFF), &v, 4); };
-        const unsigned index = word(0x80103B90);
+        const unsigned index = word(JfgBuild::address(0x80103B90));
         if (index > 1) return;
         if (command == 1)
         {
             // Only a live, recognized trampoline can suppress a guest line.
             // Other graphics plugins simply leave the zero acknowledgement alone.
-            const unsigned mode = ram[0xFECA8 ^ 3];
+            const unsigned mode = ram[JfgBuild::byte(0x800FECA8)];
             // The guest mode and installed HUD hooks own activation. The video
             // plugin's aspect override only controls the whole window; it must
             // not silently select the stretched stock reticle as a fallback.
-            const unsigned players = ram[0xA4FD0 ^ 3];
-            const bool solo = players == 1 && word(0x80068334) == 0xAD1D7FF0 &&
-                word(0x8006E1C0) == 0x0801A0D8;
+            const unsigned players = ram[JfgBuild::byte(0x800A4FD0)];
+            const uint32_t submit = word(JfgBuild::address(0x8006E1C0));
+            const bool solo = players == 1 && word(JfgBuild::address(0x80068334)) == 0xAD1D7FF0 &&
+                submit == JfgBuild::word(0x0801A0D8);
             const bool multi = players >= 2 && players <= 4 &&
-                word(0x80068184) == 0xAD1D7FF0 && word(0x800681CC) == 0x4A46524D &&
-                word(0x8006E1C0) == 0x0801A06A;
-            if ((mode != 1 && mode != 3) || (!solo && !multi)) return;
+                word(JfgBuild::address(0x80068184)) == 0xAD1D7FF0 &&
+                word(JfgBuild::address(0x800681CC)) == 0x4A46524D &&
+                submit == JfgBuild::word(0x0801A06A);
+            if (!JfgBuild::wide(uint8_t(mode)) || (!solo && !multi)) return;
             Line l = { int(word(packet)), int(word(packet+4)), int(word(packet+8)), int(word(packet+12)),
                        int(word(packet+24)), int(word(packet+28)), word(packet+16) & 255 };
             if (multi && int32_t(word(packet+20)) != -1) {
                 // frontPlayerScreenLimits uses the number of rendered views,
                 // which can differ from the number of active players.
-                const unsigned views = ram[0xA4FCC ^ 3], player = word(packet+20);
+                const unsigned views = ram[JfgBuild::byte(0x800A4FCC)], player = word(packet+20);
                 if (views < 1 || views > 4 || player >= views) return;
-                const uint32_t bounds = 0x800A508C + (((views-1)*4+player)*4+0x40)*2;
-                uint32_t xb = word(0x800A391C), yb = word(0x800A3920);
+                const uint32_t bounds = JfgBuild::address(0x800A508C) + (((views-1)*4+player)*4+0x40)*2;
+                uint32_t xb = word(JfgBuild::address(0x800A391C)), yb = word(JfgBuild::address(0x800A3920));
                 float xs, ys; std::memcpy(&xs,&xb,4);std::memcpy(&ys,&yb,4);
                 if (!std::isfinite(xs) || !std::isfinite(ys) || xs <= 0 || ys <= 0 || xs > 4 || ys > 4) return;
                 for (unsigned i=0;i<4;++i) {
@@ -95,18 +103,19 @@ public:
                 pending[index].size() >= 148) return;
             if (style >= 4)
             {
-                const uint32_t addresses[] = { 0xA6968, 0xA698C, 0xA69AC, 0xA69CC };
+                const uint32_t addresses[] = { 0x800A6968, 0x800A698C, 0x800A69AC, 0x800A69CC };
                 const unsigned counts[] = { 18, 16, 15, 15 };
                 l.glyph_count = counts[style-4];
+                const uint32_t glyphs = JfgBuild::address(addresses[style-4]) & 0x1FFFFFFF;
                 for (unsigned i=0; i<l.glyph_count*2; ++i)
-                    l.glyph[i] = int8_t(ram[(addresses[style-4]+i)^3]);
+                    l.glyph[i] = int8_t(ram[(glyphs+i)^3]);
             }
             pending[index].push_back(l);
             set(packet+32, 1);
         }
         else if (command == 2)
         {
-            const uint32_t address = word(0x800FECB0), width = word(packet+0xBC), height = word(packet+0xB8);
+            const uint32_t address = word(JfgBuild::address(0x800FECB0)), width = word(packet+0xBC), height = word(packet+0xB8);
             if (!valid(address, 4) || width < 160 || width > 640 || height < 120 || height > 576 ||
                 !valid(address, width * height * 2)) { pending[index ^ 1].clear(); return; }
             // fxOutputLines consumes the opposite queue, then flips the index.
@@ -174,7 +183,7 @@ template<class Plot> void raster(const Line &l, Plot plot)
 inline void before_vi(const View &v, unsigned scale, double aspect, RDP::VIOverlay &out)
 {
     const unsigned xa=v.xscale&4095, ya=v.yscale&4095;
-    const double viewW=640-2*std::round(v.crop*(640.0/240.0)), viewH=240-2*int(v.crop);
+    const double viewW=view_width(v.crop,v.lines), viewH=view_height(v.crop,v.lines);
     if (v.frame.lines.empty() || !v.frame.width || !v.frame.height || !xa || !ya ||
         viewW<=0 || viewH<=0 || aspect<=0 || (scale!=1 && scale!=2 && scale!=4 && scale!=8)) return;
     if (out.pixels.empty()) {
@@ -216,16 +225,17 @@ inline void composite(const View &v, uint32_t *pixels, int width, int height)
 {
     const unsigned xa = v.xscale & 4095, ya = v.yscale & 4095;
     if (!pixels || !xa || !ya || !v.frame.width || width <= 0 || height <= 0) return;
-    const double cropX = std::round(v.crop * (640.0 / 240.0));
-    const double viewW = 640 - 2*cropX, viewH = 240 - 2*int(v.crop);
+    const double cropX = std::round(v.crop * (640.0 / v.lines));
+    const double viewW = view_width(v.crop, v.lines), viewH = view_height(v.crop, v.lines);
     if (viewW <= 0 || viewH <= 0) return;
     const double sx = width/viewW, sy = height/viewH;
     // Uniform scale in the final window gives each source pixel a square footprint.
     const double pixel = sy*1024/ya;
     const uint32_t offset = ((v.origin & 0xFFFFFF)-v.frame.address)/2;
     const double ox = offset % v.frame.width, oy = offset / v.frame.width;
-    const double hx = int((v.hstart >> 16) & 1023)-108;
-    const double vy = (int((v.vstart >> 16) & 1023)-34)/2.0;
+    // VI_H_OFFSET/VI_V_OFFSET of the scanout: 108/34 on NTSC, 128/44 on PAL.
+    const double hx = int((v.hstart >> 16) & 1023)-(v.lines == 288 ? 128 : 108);
+    const double vy = (int((v.vstart >> 16) & 1023)-(v.lines == 288 ? 44 : 34))/2.0;
     for (const auto &l : v.frame.lines)
     {
         const double cx = (hx+((l.cx-ox)*1024-((v.xscale>>16)&4095))/xa-cropX)*sx;

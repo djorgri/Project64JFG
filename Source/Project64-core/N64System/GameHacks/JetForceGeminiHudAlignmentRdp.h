@@ -1,23 +1,24 @@
 #pragma once
 
+#include "JetForceGeminiHudBuild.h"
 #include <cstddef>
 #include <cstdint>
 #include <vector>
 
 namespace JfgHudAlignmentRdp
 {
-constexpr uint32_t CaveStart = 0x80067D20;
-constexpr uint32_t CaveEnd = 0x800680A0;
-constexpr uint32_t Entry = 0x80067D20;
-constexpr uint32_t ParamsStart = 0x80068080;
-constexpr uint32_t DxQAddress = 0x80068080;
-constexpr uint32_t DyQAddress = 0x80068084;
-constexpr uint32_t WidthQAddress = 0x80068088;
-constexpr uint32_t HeightQAddress = 0x8006808C;
-constexpr uint32_t MagicAddress = 0x80068090;
+constexpr JfgHudBuild::UsAddress CaveStart = { 0x80067D20 };
+constexpr JfgHudBuild::UsAddress CaveEnd = { 0x800680A0 };
+constexpr JfgHudBuild::UsAddress Entry = { 0x80067D20 };
+constexpr JfgHudBuild::UsAddress ParamsStart = { 0x80068080 };
+constexpr JfgHudBuild::UsAddress DxQAddress = { 0x80068080 };
+constexpr JfgHudBuild::UsAddress DyQAddress = { 0x80068084 };
+constexpr JfgHudBuild::UsAddress WidthQAddress = { 0x80068088 };
+constexpr JfgHudBuild::UsAddress HeightQAddress = { 0x8006808C };
+constexpr JfgHudBuild::UsAddress MagicAddress = { 0x80068090 };
 constexpr uint32_t MagicValue = 0x4A464752; // JFGR
-constexpr uint32_t BodyCallAddress = 0x80067D54;
-constexpr uint32_t DisplayListCursorAddress = 0x800FF398;
+constexpr JfgHudBuild::UsAddress BodyCallAddress = { 0x80067D54 };
+constexpr JfgHudBuild::UsAddress DisplayListCursorAddress = { 0x800FF398 };
 
 // Wrap only overlay 14's weapon group (+0xC9C -> +0x292C). Matrices and
 // SP triangles receive their shift elsewhere; this pass adjusts only inline
@@ -182,31 +183,38 @@ const uint32_t Code[] =
     0x03E00008, // jr ra
     0x27BD0060, // addiu sp, sp, 0x60
 };
-static_assert(CaveStart + sizeof(Code) <= ParamsStart, "RDP wrapper overlaps parameters");
-static_assert(MagicAddress + sizeof(uint32_t) <= CaveEnd, "RDP parameters exceed cave");
+static_assert(CaveStart.Us + sizeof(Code) <= ParamsStart.Us, "RDP wrapper overlaps parameters");
+static_assert(MagicAddress.Us + sizeof(uint32_t) <= CaveEnd.Us, "RDP parameters exceed cave");
 
 inline bool BuildImage(std::vector<uint32_t> & Image, uint32_t OriginalBodyAddress,
                        int32_t DxQ, int32_t DyQ, uint32_t WidthQ, uint32_t HeightQ)
 {
+    const uint32_t Start = CaveStart, End = CaveEnd;
     if ((OriginalBodyAddress & 3) != 0 || OriginalBodyAddress < 0x80000000 ||
         OriginalBodyAddress >= 0x80800000 ||
-        (OriginalBodyAddress >= CaveStart && OriginalBodyAddress < CaveEnd) ||
+        (OriginalBodyAddress >= Start && OriginalBodyAddress < End) ||
         WidthQ == 0 || WidthQ > 0xFFF || HeightQ == 0 || HeightQ > 0xFFF)
     {
         return false;
     }
-    Image.assign((CaveEnd - CaveStart) / sizeof(uint32_t), 0);
-    for (std::size_t i = 0; i < sizeof(Code) / sizeof(Code[0]); i++)
+    std::vector<uint32_t> Build;
+    if (!JfgHudBuild::Relocate(Code, sizeof(Code) / sizeof(Code[0]), Build))
     {
-        Image[i] = Code[i];
+        return false;
     }
-    Image[(BodyCallAddress - CaveStart) / sizeof(uint32_t)] =
+    // Indices are US offsets into the cave, which moves as one block on PAL.
+    Image.assign((CaveEnd.Us - CaveStart.Us) / sizeof(uint32_t), 0);
+    for (std::size_t i = 0; i < Build.size(); i++)
+    {
+        Image[i] = Build[i];
+    }
+    Image[(BodyCallAddress.Us - CaveStart.Us) / sizeof(uint32_t)] =
         0x0C000000 | ((OriginalBodyAddress >> 2) & 0x03FFFFFF);
-    Image[(DxQAddress - CaveStart) / sizeof(uint32_t)] = (uint32_t)DxQ;
-    Image[(DyQAddress - CaveStart) / sizeof(uint32_t)] = (uint32_t)DyQ;
-    Image[(WidthQAddress - CaveStart) / sizeof(uint32_t)] = WidthQ;
-    Image[(HeightQAddress - CaveStart) / sizeof(uint32_t)] = HeightQ;
-    Image[(MagicAddress - CaveStart) / sizeof(uint32_t)] = MagicValue;
+    Image[(DxQAddress.Us - CaveStart.Us) / sizeof(uint32_t)] = (uint32_t)DxQ;
+    Image[(DyQAddress.Us - CaveStart.Us) / sizeof(uint32_t)] = (uint32_t)DyQ;
+    Image[(WidthQAddress.Us - CaveStart.Us) / sizeof(uint32_t)] = WidthQ;
+    Image[(HeightQAddress.Us - CaveStart.Us) / sizeof(uint32_t)] = HeightQ;
+    Image[(MagicAddress.Us - CaveStart.Us) / sizeof(uint32_t)] = MagicValue;
     return true;
 }
 } // namespace JfgHudAlignmentRdp

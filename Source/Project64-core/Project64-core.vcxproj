@@ -181,6 +181,9 @@
     <ClInclude Include="N64System\GameHacks\JetForceGeminiHudAlignmentRdp.h" />
     <ClInclude Include="N64System\GameHacks\JetForceGeminiHudAlignmentSites.h" />
     <ClInclude Include="N64System\GameHacks\JetForceGeminiAddresses.h" />
+    <ClInclude Include="N64System\GameHacks\JetForceGeminiHudBuild.h" />
+    <ClInclude Include="N64System\GameHacks\JetForceGeminiHudBuildMap.h" />
+    <ClInclude Include="N64System\GameHacks\JetForceGeminiHudPalOriginals.h" />
     <ClInclude Include="N64System\FramePerSecond.h" />
     <ClInclude Include="N64System\Interpreter\InterpreterOps.h" />
     <ClInclude Include="N64System\MemoryHandler\AudioInterfaceHandler.h" />

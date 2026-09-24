@@ -38,7 +38,7 @@ def translation_unit():
     source = (HACKS / "JetForceGemini.cpp").read_text(encoding="utf-8-sig")
     memory_source = (HACKS / "GameHackMemory.cpp").read_text(encoding="utf-8-sig")
     memory_header = (HACKS / "GameHackMemory.h").read_text(encoding="utf-8-sig")
-    constants = source[source.index("const uint32_t WidescreenHudCaveStart"):
+    constants = source[source.index("constexpr JfgHudBuild::UsAddress WidescreenHudCaveStart"):
                        source.index("// These two words were used by the first experimental landing-skip build")]
     # This helper may precede the constants block as the implementation evolves.
     helper = ""
@@ -102,13 +102,27 @@ public:
 };
 const uint32_t OverlayTableAddress = 0x800FEAA0;
 const uint32_t OverlayHeaderSize = 0x20;
-const int JfgUsAddresses = 1;
-const int JfgOtherAddresses = 2;
+''' + '#include "' + (HACKS / "JetForceGeminiHudBuild.h").as_posix() + '"\n' + r'''
+// The HUD tables are spelled in US terms and translated per build; these tests
+// model the US build, and refuse any other table (standing in for the Kiosk).
+const JFG_ADDRESSES JfgUsAddresses = {};
+const JFG_ADDRESSES JfgKioskAddresses = {};
+const JFG_ADDRESSES JfgPalAddresses = {};
 bool SupportedRom = true, ExactUsRomMock = true;
-const int *JfgAddresses() { return ExactUsRomMock ? &JfgUsAddresses : &JfgOtherAddresses; }
+const JFG_ADDRESSES *JfgAddresses() { return ExactUsRomMock ? &JfgUsAddresses : &JfgKioskAddresses; }
 bool IsSupportedRom() { return SupportedRom; }
 uint32_t JumpTo(uint32_t a) { return 0x08000000 | ((a >> 2) & 0x03FFFFFF); }
 uint32_t CallTo(uint32_t a) { return 0x0C000000 | ((a >> 2) & 0x03FFFFFF); }
+'''
+
+# Standalone harnesses that include the HUD headers select the US build: the
+# HUD tables are spelled in US terms and translated per build by
+# JetForceGeminiHudBuild.h, whose build comes from the address table in use.
+US_BUILD = r'''
+const JFG_ADDRESSES JfgUsAddresses = {};
+const JFG_ADDRESSES JfgKioskAddresses = {};
+const JFG_ADDRESSES JfgPalAddresses = {};
+const JFG_ADDRESSES *JfgAddresses() { return &JfgUsAddresses; }
 '''
 
 RUNTIME = r'''

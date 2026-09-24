@@ -746,6 +746,15 @@
     <ClInclude Include="N64System\GameHacks\JetForceGeminiAddresses.h">
       <Filter>Header Files\N64 System\GameHacks</Filter>
     </ClInclude>
+    <ClInclude Include="N64System\GameHacks\JetForceGeminiHudBuild.h">
+      <Filter>Header Files\N64 System\GameHacks</Filter>
+    </ClInclude>
+    <ClInclude Include="N64System\GameHacks\JetForceGeminiHudBuildMap.h">
+      <Filter>Header Files\N64 System\GameHacks</Filter>
+    </ClInclude>
+    <ClInclude Include="N64System\GameHacks\JetForceGeminiHudPalOriginals.h">
+      <Filter>Header Files\N64 System\GameHacks</Filter>
+    </ClInclude>
     <ClInclude Include="N64System\MemoryHandler\RDRAMInterfaceHandler.h">
       <Filter>Header Files\N64 System\MemoryHandler</Filter>
     </ClInclude>

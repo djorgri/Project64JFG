@@ -99,7 +99,7 @@ void AlignmentStock(CGameHackMemory &m) {
         m.WriteU32(Overlay6 + Sites::HealthFunctionOffset + uint32_t(i * 4), Sites::HealthFunctionPrologue[i]);
     for (size_t i = 0; i < sizeof(Sites::WeaponGroupFunctionPrologue) / sizeof(uint32_t); ++i)
         m.WriteU32(Overlay14 + Sites::WeaponGroupFunctionOffset + uint32_t(i * 4), Sites::WeaponGroupFunctionPrologue[i]);
-    static_assert(sizeof(Original::CaveWords) == AlignmentEnd - Code::CaveStart,
+    static_assert(sizeof(Original::CaveWords) == AlignmentEnd - Code::CaveStart.Us,
                   "the fixture must cover the complete production cave");
     for (size_t i = 0; i < sizeof(Original::GuardWords) / sizeof(uint32_t); ++i)
         m.WriteU32(AlignmentGuard + uint32_t(i * 4), Original::GuardWords[i]);

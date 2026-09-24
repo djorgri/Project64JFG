@@ -6,9 +6,10 @@
 //
 // Everything the hacks patch or read lives at a fixed address, and those
 // addresses move between builds. The game *structures* do not: the field
-// offsets the hacks use appear at the same offsets in both images, which is why
+// offsets the hacks use appear at the same offsets in every image, which is why
 // only this table is needed rather than a second implementation. The evidence,
-// the method and the per-entry provenance are in Docs/JFG_KIOSK_PORT.md.
+// the method and the per-entry provenance are in Docs/JFG_KIOSK_PORT.md and
+// Docs/JFG_PAL_PORT.md.
 //
 // A zero means the feature has no target on that build. The Kiosk demo has no
 // landing cinematic, so its skip has nothing to hook; callers must treat zero as
@@ -18,12 +19,8 @@ struct JFG_ADDRESSES
     // Which build this table describes, as the Project64 game identifier.
     const char * RomIdentifier;
 
-    uint32_t WaterWakeLegacyCallSite;
     uint32_t ObjectMoveEntry;
     uint32_t ObjectMoveResume;
-    uint32_t WaterWakeCullingEntry;
-    uint32_t WaterWakeStockDrawEntry;
-    uint32_t WaterWakeDrawFallbackEntry;
     uint32_t CameraClampBranch;
     uint32_t CameraCenterBranch;
     uint32_t CameraOrbitGateBranch;
@@ -36,19 +33,9 @@ struct JFG_ADDRESSES
     uint32_t CameraYawHelperCall;
     uint32_t CameraPitchHelperCall;
     uint32_t CameraTopDownEntry;
-    uint32_t SidekickControlEntry;
-    uint32_t SidekickControlProbeEntry;
-    uint32_t SidekickVelocityLateralEntry;
-    uint32_t SidekickVelocityLateralDelay;
-    uint32_t SidekickVelocityLateralResume;
-    uint32_t SidekickLateralMoveInputLegacyEntry;
     uint32_t SidekickStrafeEntry;
     uint32_t SidekickStrafeDelay;
-    uint32_t SidekickLateralMoveOldTailEntry;
-    uint32_t SidekickLateralMoveEntry;
-    uint32_t SidekickControlEnd;
     uint32_t CameraAngleHelper;
-    uint32_t PlayerVelocityEntry;
     uint32_t ManualAimXVelocityStore;
     uint32_t ManualAimYVelocityStore;
     uint32_t ManualAimCursorXStore;
@@ -61,21 +48,12 @@ struct JFG_ADDRESSES
     uint32_t FramePacingEscalateStore;
     uint32_t FramePacing60SignatureBase;
     uint32_t FramePacing60Branch;
-    uint32_t TripleBufferRequest;
-    uint32_t PlayerVelocityStub;
-    uint32_t FloydMoveHookStub;
     uint32_t SidekickStrafeStub;
     uint32_t SidekickVerticalStub;
-    uint32_t SidekickControlProbeStub;
     uint32_t SidekickPadProbeStub;
     uint32_t ObjectMoveStub;
-    uint32_t FloydCameraLateralStub;
-    uint32_t SidekickLateralMoveStub;
-    uint32_t SidekickVelocityLateralStub;
     uint32_t LandingCinematicSkipStub;
     uint32_t WaterWakeRingRateEntry;
-    uint32_t WaterWakeUpdate;
-    uint32_t WaterWakeFrameRateEntry;
     uint32_t CameraHelperBase;
     uint32_t CameraTopDownHelperBase;
     uint32_t CameraNativeYAddress;
@@ -88,40 +66,24 @@ struct JFG_ADDRESSES
     uint32_t DroneVerticalThrustAddress;
     uint32_t DroneVerticalVelocityAddress;
     uint32_t DroneLateralRightZAddress;
-    uint32_t FloydCameraPreviousXAddress;
-    uint32_t FloydCameraPreviousZAddress;
-    uint32_t FloydCameraPreviousObjectAddress;
     uint32_t LandingCinematicSkipInputAddress;
     uint32_t DroneLateralDragAddress;
     uint32_t DroneLateralForwardSpeedAddress;
     uint32_t DroneLateralRightXAddress;
     uint32_t SidekickPadProbeStateAddress;
-    uint32_t DroneLateralPreviousXAddress;
-    uint32_t DroneLateralPreviousZAddress;
     uint32_t DroneLateralPreviousObjectAddress;
     uint32_t SidekickPadProbeObjectAddress;
     uint32_t EnemyHalveFlagAddress;
     uint32_t DroneLateralFlagsAddress;
     uint32_t DroneLateralHookHitsAddress;
-    uint32_t WaterWakeGateCounter;
-    uint32_t DroneLateralHookFlagsAddress;
-    uint32_t WaterWakeDrawFallbackCalledAddress;
-    uint32_t WaterWakeStockDrawTargetAddress;
-    uint32_t WaterWakeStockDrawCalledAddress;
     uint32_t SidekickPadProbeActorAddress;
-    uint32_t WaterWakeGateStub;
-    uint32_t WaterWakeDrawFallbackStub;
-    uint32_t SquaddieXStub;
-    uint32_t SquaddieZStub;
     uint32_t RobotMissionAddress;
     uint32_t MultiplayerGameAddress;
     uint32_t CooperativeGameAddress;
-    uint32_t WaterWakeGlobalFadeAddress;
     uint32_t WaterWakeObjectListAddress;
     uint32_t WaterWakeObjectCountAddress;
     uint32_t PlayerListAddress;
     uint32_t PlayerCountAddress;
-    uint32_t GeneralRenderListAddress;
     uint32_t DisableJoyAddress;
     uint32_t ControlCameraAddress;
     uint32_t CameraActiveOverrideBase;
@@ -130,9 +92,35 @@ struct JFG_ADDRESSES
     uint32_t LobbyCameraInUseAddress;
     uint32_t StaticCameraInUseAddress;
     uint32_t OverlayTableAddress;
-    uint32_t TripleBufferActive;
     uint32_t CurrentScreenAddress;
     uint32_t AnimseqCameraAddress;
+
+    // Added with the PAL build: addresses the runtime used to spell as US
+    // literals because the Kiosk port did not need them to move.
+    uint32_t IntroCinematicSkipStub;
+    uint32_t CurrentSceneAddress;
+    uint32_t CurrentSetupAddress;
+    uint32_t NextCharacterAddress;
+    uint32_t LoadingAddress;
+    uint32_t MainFrontInitFunction;
+    uint32_t FrontCharSelectSetQuitModeFunction;
+    uint32_t FrontGetModeFunction;
+    uint32_t MainChangeLevelFunction;
+
+    // Offsets inside relocatable overlays. The module is always resolved from
+    // the live overlay table; only the position of the code inside it moves
+    // between builds. Each anchor stands for a group of words whose spacing is
+    // identical in every build, see the users in JetForceGemini.cpp.
+    uint32_t FloydPadControlOffset;             // module 22
+    uint32_t IntroCinematicSkipEntryOffset;     // module 57
+    uint32_t LegacyIntroCinematicSkipEntryOffset;
+    uint32_t LegacyIntroCinematicSkipFmvUpdateOffset;
+    uint32_t TargetOverlayCursorXOffset;        // module 13
+    uint32_t TargetOverlayCursorYOffset;        // module 13
+    uint32_t TargetOverlayDrawOffset;           // module 13
+    uint32_t BoyAimHelperOffset;                // module 16
+    uint32_t BoyAimFirstGroupOffset;            // module 16
+    uint32_t BoyAimSecondGroupOffset;           // module 16
 
     // Instruction words that differ between the builds: relocated call
     // targets, moved globals, and sites where the two compiles simply
@@ -151,10 +139,15 @@ struct JFG_ADDRESSES
     uint32_t SchedulerFrameGateAddWord;
     uint32_t SchedulerSignatureWord0;
     uint32_t SchedulerSignatureWord2;
+    // viFrameSync keeps gVideoDeltaTime's address in $s1 on US and Kiosk and
+    // in $s2 on PAL, so the two stores to it are spelled differently.
+    uint32_t FramePacingEscalateStoreWord;
+    uint32_t FramePacing60StoreWord;
 };
 
 extern const JFG_ADDRESSES JfgUsAddresses;
 extern const JFG_ADDRESSES JfgKioskAddresses;
+extern const JFG_ADDRESSES JfgPalAddresses;
 
 // The table for the ROM currently loaded, or nullptr when it is not one of the
 // builds above. Valid only while a ROM is loaded.

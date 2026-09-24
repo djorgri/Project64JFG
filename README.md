@@ -59,6 +59,7 @@ support and an optional 60 FPS mode.
   enemy-behaviour issues, as well as sound or music stutters; switch to 30 FPS
   for predictable performance
 - Switch between 60 and 30 FPS live in-game with **Numpad +** / **Numpad −**
+  (50 and 25 FPS on the PAL ROM, which runs at 50 Hz)
 - 60 FPS gameplay-speed corrections for enemies (movement and animation),
   Squaddies, race opponents, projectiles, and the water wake
 - Save states remain usable with the gameplay patches enabled
@@ -192,17 +193,18 @@ snappier variant used when nobody orbits.
 
 The game-specific patches activate for these builds:
 
-| | Retail | Kiosk demo |
-| --- | --- | --- |
-| Internal name | `JET FORCE GEMINI` | `J F G DISPLAY` |
-| Cartridge ID | `NJFE` (USA) | — |
-| Revision | 1.0 (version byte `0x00`) | demo |
-| Internal CRC | `8A6009B6` `94ACE150` | `DFD8AB47` `3CDBEB89` |
-| Size | 33,554,432 bytes (32 MiB) | 33,554,432 bytes (32 MiB) |
+| | Retail USA | Retail PAL | Kiosk demo |
+| --- | --- | --- | --- |
+| Internal name | `JET FORCE GEMINI` | `JET FORCE GEMINI` | `J F G DISPLAY` |
+| Cartridge ID | `NJFE` (USA) | `NJFP` (Europe) | — |
+| Revision | 1.0 (version byte `0x00`) | 1.0 (version byte `0x00`) | demo |
+| Internal CRC | `8A6009B6` `94ACE150` | `68D7A1DE` `0079834A` | `DFD8AB47` `3CDBEB89` |
+| Size | 33,554,432 bytes (32 MiB) | 33,554,432 bytes (32 MiB) | 33,554,432 bytes (32 MiB) |
 
-Each build has its own address table, so the same features run on both without a
-separate code path. See [Docs/JFG_KIOSK_PORT.md](./Docs/JFG_KIOSK_PORT.md) for
-how the Kiosk addresses were established.
+Each build has its own address table, so the same features run on all of them
+without a separate code path. See [Docs/JFG_KIOSK_PORT.md](./Docs/JFG_KIOSK_PORT.md)
+and [Docs/JFG_PAL_PORT.md](./Docs/JFG_PAL_PORT.md) for how the Kiosk and PAL
+addresses were established.
 
 <details>
 <summary>Reference hashes</summary>
@@ -220,6 +222,20 @@ USA retail, byte-swapped image (`.n64`, v64 byte order):
 | --- | --- |
 | MD5 | `0ef01afde32e40228c03904e3d884add` |
 | SHA-1 | `aa7edc75952104f0b52bf1300df427835a128b01` |
+
+PAL retail, big-endian image (`.z64`, native byte order):
+
+| Hash | Value |
+| --- | --- |
+| MD5 | `baaf237e71aa7526c9b2f01c08b68a53` |
+| SHA-1 | `50651c4e0c46332f7f0b45870263f0a8b9a49602` |
+
+PAL retail, byte-swapped image (`.n64`, v64 byte order):
+
+| Hash | Value |
+| --- | --- |
+| MD5 | `761a047404c6460a077ff858e0244a8f` |
+| SHA-1 | `3085a20258f3a554839d0007cb231bc9b96875bc` |
 
 Kiosk demo, big-endian image (`.z64`):
 
@@ -257,7 +273,7 @@ other option remain available under
 
 ### Experimental widescreen HUD
 
-For the USA retail ROM, select widescreen in the game's own options, enable
+For the USA or PAL retail ROM, select widescreen in the game's own options, enable
 *Force 16:9 display (stretches image)* in the Parallel-RDP graphics settings,
 and keep *Correct widescreen HUD* checked under *Options → Game-specific hacks*
 (it is on by default).
@@ -277,7 +293,7 @@ for measured results, remaining limitations, and the developer trace script.
 
 ### HUD alignment
 
-For the USA retail ROM in single-player, *Align HUD elements* under
+For the USA or PAL retail ROM in single-player, *Align HUD elements* under
 *Options → Game-specific hacks → Jet Force Gemini* is on by default. It gives the weapon frame
 and health arc a base left margin of 13 logical units and centres the health
 icon's placement point within the arc. In widescreen, a small optical adjustment
@@ -298,10 +314,15 @@ coordinates and validation limits.
 
 ## Known limitations
 
-- Only the USA 1.0 and Kiosk demo builds listed above are supported by the
-  game-specific patches. PAL and Japanese releases are not.
+- Only the USA 1.0, PAL 1.0 and Kiosk demo builds listed above are supported by
+  the game-specific patches. The Japanese release is not.
 - The experimental widescreen HUD correction and HUD alignment are limited to
-  the USA retail build; the Kiosk demo keeps its original HUD.
+  the USA and PAL retail builds; the Kiosk demo keeps its original HUD.
+- The PAL build runs at 50 Hz, so the 60 and 30 FPS modes give 50 and 25 FPS.
+  Its support was established by aligning its code with the USA build,
+  validated against a memory image built from the PAL ROM and confirmed in a
+  first play session; see [Docs/JFG_PAL_PORT.md](./Docs/JFG_PAL_PORT.md) for
+  the areas to recheck in game.
 - In 60 FPS mode the water wake can vanish after it first appears; see the
   investigation notes in the hacking reference.
 - Floyd's lateral thrust takes its heading from a field of the player object
@@ -312,7 +333,7 @@ coordinates and validation limits.
 
 These items are planned work, not promises for a particular release:
 
-- Support the PAL and Japanese releases of Jet Force Gemini.
+- Support the Japanese release of Jet Force Gemini.
 - Continue improving 60 FPS performance and timing accuracy.
 - Add direct Floyd mouse aiming and consolidate the experimental lateral
   movement.

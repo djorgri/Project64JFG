@@ -2,6 +2,7 @@
 #include <cstdint>
 #include <cstring>
 #include <initializer_list>
+#include "JfgBuild.h"
 
 namespace JfgHudRaster
 {
@@ -12,24 +13,27 @@ inline uint32_t ram_word(const uint8_t *ram, uint32_t address)
 {
     uint32_t word; std::memcpy(&word, ram + (address & 0x1FFFFFFF), 4); return word;
 }
+// Addresses below are the US ones; JfgBuild translates them for PAL.
 inline bool multiplayer_ready(const uint8_t *ram, uint32_t size)
 {
+    using JfgBuild::address;
     if (!ram || size < 0x110000) return false;
-    const unsigned mode = ram[0xFECA8 ^ 3], players = ram[0xA4FD0 ^ 3];
-    if ((mode != 1 && mode != 3) || players < 2 || players > 4 ||
-        ram_word(ram, 0x800680B0) != 0x03E00008 ||
-        ram_word(ram, 0x800680D8) != 0xAF3D7FC0 ||
-        ram_word(ram, 0x8006810C) != 0xAF257FC4) return false;
-    const uint32_t table = ram_word(ram, 0x800FEAA0);
+    const unsigned mode = ram[JfgBuild::byte(0x800FECA8)], players = ram[JfgBuild::byte(0x800A4FD0)];
+    if (!JfgBuild::wide(uint8_t(mode)) || players < 2 || players > 4 ||
+        ram_word(ram, address(0x800680B0)) != 0x03E00008 ||
+        ram_word(ram, address(0x800680D8)) != 0xAF3D7FC0 ||
+        ram_word(ram, address(0x8006810C)) != 0xAF257FC4) return false;
+    const uint32_t table = ram_word(ram, address(0x800FEAA0));
     if (table < 0x80000000 || (table & 3) || uint64_t(table & 0x1FFFFFFF) + 62 * 32 > size) return false;
     const uint32_t health = ram_word(ram, table + 6 * 32);
     if (health < 0x80000000 || (health & 7) || uint64_t(health & 0x1FFFFFFF) + 0x10D8 > size ||
-        health != ram_word(ram, 0x800681C0) || ram_word(ram, health) != 0x27BDFEE8 ||
+        health != ram_word(ram, address(0x800681C0)) || ram_word(ram, health) != 0x27BDFEE8 ||
         ram_word(ram, health + 4) != 0xAFBF003C) return false;
     const uint32_t multi = ram_word(ram, table + 61 * 32);
     return multi >= 0x80000000 && !(multi & 7) && uint64_t(multi & 0x1FFFFFFF) + 0x2FA0 <= size &&
-        multi == ram_word(ram, 0x800681C4) && ram_word(ram, multi + 0x43C) == 0x27BDFF38 &&
-        ram_word(ram, multi + 0x440) == 0xAFB50038;
+        multi == ram_word(ram, address(0x800681C4)) &&
+        ram_word(ram, multi + JfgBuild::offset(61, 0x43C)) == 0x27BDFF38 &&
+        ram_word(ram, multi + JfgBuild::offset(61, 0x440)) == 0xAFB50038;
 }
 inline bool multiplayer_matrix(uint8_t *ram, uint32_t size, uint32_t descriptor)
 {
@@ -37,15 +41,18 @@ inline bool multiplayer_matrix(uint8_t *ram, uint32_t size, uint32_t descriptor)
         uint64_t(descriptor & 0x1FFFFFFF) + 0x50 > size) return false;
     const uint32_t destination = ram_word(ram, descriptor + 0x10);
     const uint32_t caller = ram_word(ram, descriptor + 0x14);
-    const uint32_t multi = ram_word(ram, 0x800681C4), health = ram_word(ram, 0x800681C0);
-    bool accepted = caller == health + 0x464;
+    const uint32_t multi = ram_word(ram, JfgBuild::address(0x800681C4));
+    const uint32_t health = ram_word(ram, JfgBuild::address(0x800681C0));
+    // Return addresses of the hooked mathMtxF2L calls (US module offsets).
+    bool accepted = caller == health + JfgBuild::offset(6, 0x464);
     for (unsigned offset : {0x1FA4u, 0x220Cu, 0x24A4u, 0x29B8u, 0x2DB8u})
-        accepted |= caller == multi + offset;
-    if (caller == 0x800418E0) {
+        accepted |= caller == multi + JfgBuild::offset(61, offset);
+    if (caller == JfgBuild::address(0x800418E0)) {
         // camDo2DSprite also renders unrelated objects. Its saved caller is
         // at +0x2c, above our wrapper's 0x20-byte frame.
         const uint32_t parent = ram_word(ram, descriptor + 0x4C);
-        accepted = parent == 0x8005A2F4 || parent == multi + 0x1770 || parent == multi + 0x17DC;
+        accepted = parent == JfgBuild::address(0x8005A2F4) || parent == multi + JfgBuild::offset(61, 0x1770) ||
+            parent == multi + JfgBuild::offset(61, 0x17DC);
     }
     if (!accepted || destination < 0x80000000 || (destination & 7) ||
         uint64_t(destination & 0x1FFFFFFF) + 64 > size) return false;
@@ -82,8 +89,17 @@ struct State
     bool authorized = false;
     bool sceneText = false;
 
-    bool notify(unsigned command, uint8_t *ram, uint32_t size, uint32_t cursorPointer = 0x800FF398)
+    // The HUD display-list cursor, gHudDl (US 0x800FF398).
+    static uint32_t cursor_pointer() { return JfgBuild::address(0x800FF398); }
+
+    bool notify(unsigned command, uint8_t *ram, uint32_t size)
     {
+        return notify(command, ram, size, cursor_pointer());
+    }
+
+    bool notify(unsigned command, uint8_t *ram, uint32_t size, uint32_t cursorPointer)
+    {
+        using JfgBuild::address;
         if (command < 1 || command > 6 || !ram || size < 0x110000 ||
             cursorPointer < 0x80000000 || cursorPointer >= 0x80800000 || (cursorPointer & 3) ||
             uint64_t(cursorPointer & 0x1FFFFFFF) + 4 > size) return false;
@@ -97,20 +113,20 @@ struct State
         const bool begin = (command & 1) != 0;
         if (begin)
         {
-            const auto mode = ram[0xFECA8 ^ 3];
-            const bool hud = word(0x800681EC) == 0xAD007FE0 &&
-                word(0x8006822C) == 0xAD007FE8 && word(0x80068334) == 0xAD1D7FF0;
+            const auto mode = ram[JfgBuild::byte(0x800FECA8)];
+            const bool hud = word(address(0x800681EC)) == 0xAD007FE0 &&
+                word(address(0x8006822C)) == 0xAD007FE8 && word(address(0x80068334)) == 0xAD1D7FF0;
             const bool textOnly = command == 5 &&
-                word(0x800682E8) == 0 && word(0x800682EC) == 0;
+                word(address(0x800682E8)) == 0 && word(address(0x800682EC)) == 0;
             // The core owns font installation after front-end initialization.
             // Check the active aspect again here: an older state can still
             // contain font hooks until the next core update restores them.
             // Only health/weapon capture requires a single player.
-            if ((mode != 1 && mode != 3) || (command != 5 && ram[0xA4FD0 ^ 3] != 1) ||
-                word(0x800681D0) != 0x03E00008 || (!hud && !textOnly) ||
+            if (!JfgBuild::wide(mode) || (command != 5 && ram[JfgBuild::byte(0x800A4FD0)] != 1) ||
+                word(address(0x800681D0)) != 0x03E00008 || (!hud && !textOnly) ||
                 (pending & bit)) return false;
-            if (command == 5 && (word(0x8006FD9C) != 0x0801A098 ||
-                word(0x8006826C) != 0xAF047FD0 || word(0x80068288) != 0xAF387FD4)) return false;
+            if (command == 5 && (word(address(0x8006FD9C)) != JfgBuild::word(0x0801A098) ||
+                word(address(0x8006826C)) != 0xAF047FD0 || word(address(0x80068288)) != 0xAF387FD4)) return false;
         }
         else if (!(pending & bit)) return false;
 
@@ -139,12 +155,13 @@ struct State
         if (command == 9) {
             if ((pending & 16) || !multiplayer_ready(ram, size) || anchor < -1024 || anchor > 1024) return false;
         } else if (!(pending & 16)) return false;
-        const uint32_t cursor = ram_word(ram, 0x800FF398);
+        const uint32_t cursorPointer = cursor_pointer();
+        const uint32_t cursor = ram_word(ram, cursorPointer);
         if (cursor < 0x80000000 || (cursor & 7) || uint64_t(cursor & 0x1FFFFFFF) + 8 > size) return false;
-        const int width = ram[0xFECA8 ^ 3] == 3 ? 448 : 320;
+        const int width = JfgBuild::high_resolution(ram[JfgBuild::byte(0x800FECA8)]) ? 448 : 320;
         const uint32_t words[] = {0xE7000000u | (command == 9 ? uint16_t((anchor + width / 2) * 4) : 0), Marker | command};
         std::memcpy(ram + (cursor & 0x1FFFFFFF), words, 8);
-        const uint32_t next = cursor + 8; std::memcpy(ram + 0xFF398, &next, 4);
+        const uint32_t next = cursor + 8; std::memcpy(ram + (cursorPointer & 0x1FFFFFFF), &next, 4);
         if (command == 9) pending |= 16; else pending &= ~16u;
         authorized = true;
         return true;

@@ -350,6 +350,11 @@ reproduced by running them again. They are not part of the repository.
 Format: `constant  USA_address  Kiosk_address  method  note`. "cave" means
 the hack's scratch area, equivalent padding of 308 bytes.
 
+This is the table as it was established. The entries used only by the dormant
+experiments (water-wake probes, triple buffering, the earlier Floyd movement
+hooks, the Squaddie and squads-step hooks, player velocity) have since been
+removed from `JFG_ADDRESSES`; they are kept here as a record.
+
 ```text
 AnimseqCameraAddress                       801045B8 80105288  symbol            animcamera+0x0
 CameraActiveOverrideBase                   800F6E58 800F7918  symbol            controlchr_gravity+0x94

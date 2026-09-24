@@ -6,28 +6,30 @@ patch set and contains no game data.
 
 ## Scope and target ROMs
 
-The runtime accepts two builds, each with its own address table:
+The runtime accepts three builds, each with its own address table:
 
-| Field | USA retail 1.0 | Kiosk demo |
-| --- | --- | --- |
-| Internal identifier used by the runtime | `8A6009B6-94ACE150-C:45` | `DFD8AB47-3CDBEB89-C:45` |
-| Internal name | `JET FORCE GEMINI` | `J F G DISPLAY` |
-| Cartridge ID | `NJFE` | - |
-| Version byte | `0x00` | demo |
-| CRC1 / CRC2 | `8A6009B6` / `94ACE150` | `DFD8AB47` / `3CDBEB89` |
-| ROM size | 32 MiB | 32 MiB |
+| Field | USA retail 1.0 | PAL retail 1.0 | Kiosk demo |
+| --- | --- | --- | --- |
+| Internal identifier used by the runtime | `8A6009B6-94ACE150-C:45` | `68D7A1DE-0079834A-C:50` | `DFD8AB47-3CDBEB89-C:45` |
+| Internal name | `JET FORCE GEMINI` | `JET FORCE GEMINI` | `J F G DISPLAY` |
+| Cartridge ID | `NJFE` | `NJFP` | - |
+| Version byte | `0x00` | `0x00` | demo |
+| CRC1 / CRC2 | `8A6009B6` / `94ACE150` | `68D7A1DE` / `0079834A` | `DFD8AB47` / `3CDBEB89` |
+| ROM size | 32 MiB | 32 MiB | 32 MiB |
 
 The target check is `CJetForceGeminiRuntime::IsSupportedRom()`, which selects
 the table (`JfgAddresses()` in `JetForceGeminiAddresses.cpp`) and applies it
 to the runtime's address globals. **Every address quoted in this document is
-the USA value**; the Kiosk counterpart is the same field of `JfgKioskAddresses`,
-and [JFG_KIOSK_PORT.md](JFG_KIOSK_PORT.md) records how each one was established.
-The widescreen HUD correction and the HUD alignment are the exception: they
-are gated on the USA table alone until their overlay signatures have been
-confirmed on the Kiosk.
+the USA value**; the Kiosk and PAL counterparts are the same fields of
+`JfgKioskAddresses` and `JfgPalAddresses`, and
+[JFG_KIOSK_PORT.md](JFG_KIOSK_PORT.md) and [JFG_PAL_PORT.md](JFG_PAL_PORT.md)
+record how each one was established. The HUD hacks (widescreen correction,
+alignment, native raster, Floyd outline, multiplayer HUD, rocket reticle) are
+the exception: they stay spelled in USA terms and are translated for PAL by
+`JetForceGeminiHudBuild.h`; the Kiosk demo keeps its original HUD.
 
 Do not reuse any address here for another revision without reversing and
-validating that revision independently. PAL and Japanese releases are not
+validating that revision independently. The Japanese release is not
 supported.
 
 ## Where the implementation lives
@@ -36,8 +38,9 @@ supported.
 | --- | --- |
 | Runtime, patches, MIPS stubs and patch tables | [`Source/Project64-core/N64System/GameHacks/JetForceGemini.cpp`](../Source/Project64-core/N64System/GameHacks/JetForceGemini.cpp) |
 | Runtime interface and lifecycle | [`Source/Project64-core/N64System/GameHacks/JetForceGemini.h`](../Source/Project64-core/N64System/GameHacks/JetForceGemini.h) |
-| Per-build address tables (USA, Kiosk) and their selection | [`JetForceGeminiAddresses.h`](../Source/Project64-core/N64System/GameHacks/JetForceGeminiAddresses.h) / [`.cpp`](../Source/Project64-core/N64System/GameHacks/JetForceGeminiAddresses.cpp) |
+| Per-build address tables (USA, PAL, Kiosk) and their selection | [`JetForceGeminiAddresses.h`](../Source/Project64-core/N64System/GameHacks/JetForceGeminiAddresses.h) / [`.cpp`](../Source/Project64-core/N64System/GameHacks/JetForceGeminiAddresses.cpp) |
 | Widescreen HUD, HUD alignment, HUD raster, Floyd and multiplayer HUD tables | `JetForceGeminiHud*.h`, `JetForceGeminiFloydHud.h`, `JetForceGeminiMultiplayerHud.h`, `JetForceGeminiRocketOverlay.h` in the same directory |
+| USA -> PAL translation of the HUD tables, and the PAL originals of the borrowed diagnostic routines | `JetForceGeminiHudBuildMap.h` (shared with the plugin), `JetForceGeminiHudBuild.h`, `JetForceGeminiHudPalOriginals.h` in the same directory; the plugin selects its build in [`JfgBuild.h`](../Source/Project64-parallel-rdp/JfgBuild.h) |
 | Checked RDRAM access and code patcher | [`Source/Project64-core/N64System/GameHacks/GameHackMemory.h`](../Source/Project64-core/N64System/GameHacks/GameHackMemory.h) |
 | Source routing to N64 ports, exclusive input, port presence | [`Source/Project64-core/Plugins/ControllerPlugin.cpp`](../Source/Project64-core/Plugins/ControllerPlugin.cpp) |
 | Keyboard/mouse and gamepad plugin extension | [`Source/Project64-plugin-spec/Input.h`](../Source/Project64-plugin-spec/Input.h), [`Source/Project64-input/SdlInputBackend.cpp`](../Source/Project64-input/SdlInputBackend.cpp) |
@@ -54,7 +57,8 @@ the implementation still validates the live instructions before modifying them.
 ## Address conventions
 
 - Addresses below are **runtime RDRAM virtual addresses** in the USA 1.0 game,
-  not offsets in a ROM file. The Kiosk values live in `JfgKioskAddresses`.
+  not offsets in a ROM file. The Kiosk and PAL values live in
+  `JfgKioskAddresses` and `JfgPalAddresses`.
 - The main executable is loaded at `0x80000450`. For code in that main image,
   the corresponding big-endian ROM offset is:
 
@@ -126,13 +130,10 @@ major entry points and data used by the current work.
 | 30 FPS fallback | `0x800550E8` | Store that escalates a slow 30 FPS frame to 20 FPS. |
 | 60 FPS branch | `0x800550F8` | Branch around the engine's `gVideoDeltaTime = 1` path. |
 | Scheduler gate | `0x800506D8` | Graphics-task release cadence. |
-| Triple buffer | `0x800551E8`, `0x800FECA6` | Third-framebuffer request and active flag. |
 | Frame counter | `0x800FECB0` | Current framebuffer pointer, used by the input-rate diagnostic. |
 | Generic object move | `0x80009A24` | `objMoveXYZ` hook entry for generic enemy correction and sprint dispatch. |
-| Generic move stub | `0x8009FE00` | MIPS stub for the generic object-move hook. |
-| Squaddie overlay table | `0x800FEAA0` | Module 3's live base; never assume a fixed overlay address. |
-| Squaddie offsets | `+0xAE38` / `+0xAE68` | X/Z shared-heading helper entries inside module 3. |
-| Squaddie stubs | `0x8009FD60` / `0x8009FD80` | MIPS stubs that scale X/Z velocity by 0.5. |
+| Generic move stub | `0x80066E00` | MIPS stub for the generic object-move hook. |
+| Overlay table | `0x800FEAA0` | Live module bases; never assume a fixed overlay address. |
 | Player list | `0x800F2D0C` / `0x800F2D10` | Player-object list and count. |
 | Camera array / selected camera | `0x800FA4D0` / `0x800F6DC0` | Camera state and controlled camera. |
 | Robot mission flag | `0x800A3208` | Detects Floyd flight, which does not change the ordinary camera mode. |
@@ -140,12 +141,16 @@ major entry points and data used by the current work.
 
 ### Reserved scratch area
 
-The current MIPS stubs and their small host-to-game control words use the
-`0x8009FCE0`-`0x8009FEB0` region. In particular:
+The host-to-game control words of the current stubs live in unused data at
+`0x8009FCA0`-`0x8009FCFF` (`+0x270` on PAL):
 
+- `0x8009FCA0`-`0x8009FCD8`: Floyd's thruster state, and the landing-skip input
+  word at `0x8009FCBC`;
 - `0x8009FCE0`-`0x8009FCE8`: active player and movement/sprint flags;
-- `0x8009FD00`, `0x8009FD60`, `0x8009FD80`, `0x8009FE00`: injected code;
-- nearby words are also used by historical water-wake probes.
+- `0x8009FCCC`, `0x8009FCDC`, `0x8009FCFC`: the hover-pad probe's words.
+
+The stubs themselves are written over completed retail diagnostic code between
+`0x80066C00` and `0x80067280`, and the HUD caves follow it.
 
 The camera uses a second, ten-word zero gap at `0x8009F228`-`0x8009F24C` (US;
 `0x8009FAB8` in Kiosk): the per-player native camera height at `F228`-`F234`,
@@ -277,10 +282,9 @@ while strafing. `$at` carries `0x800B0000` across the block for the constant
 read at `0x800300B0`, so the stub keeps its scratch base in `$t9`.
 
 The lateral half uses `0x80066C00`, then jumps to the vertical half at
-`0x80066F00`. Both are installed/restored together and fit their existing
-retired-hook caves (`0xC0` and `0xC4` bytes). The vertical scratch words at
-`0x8009FCD0/FCD4` replace position deltas of retired hooks; they hold thrust
-and velocity. The installer relocates both stubs and their scratch references
+`0x80066F00`. Both are installed/restored together and fit the caves at those
+addresses (`0xC0` and `0xC4` bytes). The vertical scratch words at
+`0x8009FCD0/FCD4` hold thrust and velocity. The installer relocates both stubs and their scratch references
 for the selected address table. Save/load, deactivation, leaving a mission
 and disabling the option clear the added velocity.
 
@@ -316,9 +320,9 @@ The 60 FPS mode combines independently guarded changes:
 
 - neutralize the one-frame-in-two path in `viFrameSync`;
 - release the scheduler's graphics task after the first retrace;
-- request the game's third framebuffer before a level allocates framebuffers;
 - optionally double the emulator VI CPU budget while gameplay is active, independently for 30 FPS and 60 FPS modes;
-- scale generic enemies and the module-3 Squaddie velocity helpers by 0.5.
+- scale generic enemies (`objMoveXYZ`) by 0.5, and halve the named fliers whose
+  own movers bypass it (`HalveNamedEnemyMovement`).
 
 The frame-pacing-only option has a narrower purpose: it prevents the 30 FPS
 mode from falling to 20 FPS after a brief slow frame. It is not a substitute for
@@ -329,8 +333,7 @@ original-hardware timing.
 
 The generic movement hook sits after the caller has prepared the three movement
 deltas, so it scales distance without dropping the game's timer, collision, or
-event updates. Squaddies use a relocatable overlay, hence the live overlay-table
-resolution and the extra surrounding signatures.
+event updates.
 
 ### Sprint
 
@@ -372,9 +375,10 @@ after first appearing. One patch is live: `PatchWaterWakeRingRate()` at
 `WaterWakeRingRateEntry` (`0x8006AAC8`) is applied whenever the 60 FPS target
 is on: it makes `wakeUpdate` append a trail sample on alternate calls only,
 so the ring keeps its stock 30 Hz sampling and occupancy while the walk itself
-still runs every frame. Every other water-wake method below is called with `false`
-and exists to take an old state's hook down; none of these exploratory hooks
-is active in a normal build:
+still runs every frame. The exploratory hooks that preceded it (update-rate
+gate, culling and draw probes, draw fallback, frame-rate probe) have been
+removed from the runtime; they remain in the Git history. The addresses they
+targeted, for reference:
 
 | Area | Address |
 | --- | --- |

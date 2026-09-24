@@ -1,6 +1,7 @@
 """Exercise the production HUD patch lifecycle and ordered RDP scope markers."""
 from pathlib import Path
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -344,10 +345,12 @@ class HudRasterTests(unittest.TestCase):
         memory = (HACKS / "GameHackMemory.h").read_text(encoding="utf-8-sig")
         impl = (HACKS / "GameHackMemory.cpp").read_text(encoding="utf-8-sig")
         patch = (HACKS / "JetForceGeminiHudRaster.h").read_text().replace('#include "GameHackMemory.h"', '')
-        patch = patch.replace('"JetForceGeminiHudRasterOriginal.h"',
-                              '"' + (HACKS / "JetForceGeminiHudRasterOriginal.h").as_posix() + '"')
         multiplayer = (HACKS / "JetForceGeminiMultiplayerHud.h").read_text().replace('#include "JetForceGeminiHudRaster.h"', '')
         patch += '\n' + multiplayer
+        # The headers are pasted into a temporary file: resolve their own includes
+        # (build translation, PAL originals, US originals) from the source tree.
+        patch = re.sub(r'#include "(JetForceGemini\w+\.h)"',
+                       lambda match: '#include "' + (HACKS / match.group(1)).as_posix() + '"', patch)
         host = WORKSPACE / "Source/Project64-parallel-rdp/JfgHudRaster.h"
         source.write_text(MOCKS + memory[memory.index("struct GAME_HACK_CODE_PATCH"):] +
                           impl[impl.index("CGameHackCodePatcher::CGameHackCodePatcher("):] +

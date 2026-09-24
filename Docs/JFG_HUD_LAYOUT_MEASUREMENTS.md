@@ -132,7 +132,8 @@ the whole drawing.
 ## The "Align HUD elements" option
 
 The independent option of the *Game-specific hacks* dialog targets the
-single-player HUD of the USA retail ROM, in modes 0/1/2/3. It works with or
+single-player HUD of the USA retail ROM (and of the PAL one, whose four modes
+draw into the same framebuffers), in modes 0/1/2/3. It works with or
 without *Correct widescreen HUD*; only that second option corrects the
 proportions. The choice made is **the same left margin of 13** for the frame
 and the arc, rather than an alignment of their horizontal centres. Their

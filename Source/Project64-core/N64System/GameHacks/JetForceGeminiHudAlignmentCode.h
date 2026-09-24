@@ -1,33 +1,36 @@
-// Draw-only JFG US HUD alignment. Included by JetForceGemini.cpp.
+// Draw-only JFG HUD alignment, spelled in US terms and translated for PAL by
+// JetForceGeminiHudBuild.h. Included by JetForceGemini.cpp.
 // Keep this segment separate from the widescreen trampolines and HUD wrapper.
 #pragma once
 
+#include "JetForceGeminiHudBuild.h"
 #include <cstdint>
 #include <cstring>
 #include <vector>
 
 namespace JfgHudAlignmentCode
 {
-constexpr uint32_t CaveStart = 0x800679A0;
-constexpr uint32_t CaveEnd = 0x80067D20;
-constexpr uint32_t SpriteWeaponEntry = 0x800679A0;
-constexpr uint32_t SpriteHealthEntry = 0x800679C0;
-constexpr uint32_t SpriteCommonEntry = 0x800679E0;
-constexpr uint32_t SpriteMatrixEntry = 0x80067A30;
-constexpr uint32_t MatrixWeaponEntry = 0x80067B50;
-constexpr uint32_t MatrixHealthEntry = 0x80067B80;
-constexpr uint32_t ActiveKindAddress = 0x80102552;
-constexpr uint32_t WeaponDxNdcAddress = 0x80067D00;
-constexpr uint32_t WeaponDyNdcAddress = 0x80067D04;
-constexpr uint32_t HealthArcDxNdcAddress = 0x80067D08;
-constexpr uint32_t HealthArcDyNdcAddress = 0x80067D0C;
-constexpr uint32_t HealthSpriteDxNdcAddress = 0x80067D10;
-constexpr uint32_t HealthSpriteDyNdcAddress = 0x80067D14;
-constexpr uint32_t HalfWidthAddress = 0x80067D18;
-constexpr uint32_t MatrixDispatchEntry = 0x80067A6C;
-constexpr uint32_t SpriteMatrixHookAddress = 0x800418D8;
-constexpr uint32_t SpriteMatrixHookOriginal = 0x0C012361;
-constexpr uint32_t SpriteMatrixHookDelay = 0x02402025;
+constexpr JfgHudBuild::UsAddress CaveStart = { 0x800679A0 };
+constexpr JfgHudBuild::UsAddress CaveEnd = { 0x80067D20 };
+constexpr JfgHudBuild::UsAddress SpriteWeaponEntry = { 0x800679A0 };
+constexpr JfgHudBuild::UsAddress SpriteHealthEntry = { 0x800679C0 };
+constexpr JfgHudBuild::UsAddress SpriteCommonEntry = { 0x800679E0 };
+constexpr JfgHudBuild::UsAddress SpriteMatrixEntry = { 0x80067A30 };
+constexpr JfgHudBuild::UsAddress MatrixWeaponEntry = { 0x80067B50 };
+constexpr JfgHudBuild::UsAddress MatrixHealthEntry = { 0x80067B80 };
+constexpr JfgHudBuild::UsAddress ActiveKindAddress = { 0x80102552 };
+constexpr JfgHudBuild::UsAddress WeaponDxNdcAddress = { 0x80067D00 };
+constexpr JfgHudBuild::UsAddress WeaponDyNdcAddress = { 0x80067D04 };
+constexpr JfgHudBuild::UsAddress HealthArcDxNdcAddress = { 0x80067D08 };
+constexpr JfgHudBuild::UsAddress HealthArcDyNdcAddress = { 0x80067D0C };
+constexpr JfgHudBuild::UsAddress HealthSpriteDxNdcAddress = { 0x80067D10 };
+constexpr JfgHudBuild::UsAddress HealthSpriteDyNdcAddress = { 0x80067D14 };
+constexpr JfgHudBuild::UsAddress HalfWidthAddress = { 0x80067D18 };
+constexpr JfgHudBuild::UsAddress MatrixDispatchEntry = { 0x80067A6C };
+constexpr JfgHudBuild::UsAddress SpriteMatrixHookAddress = { 0x800418D8 };
+constexpr JfgHudBuild::UsWord SpriteMatrixHookOriginal = { 0x0C012361 };
+// PAL keeps the sprite matrix pointer in $s1 instead of $s2 at this call.
+constexpr JfgHudBuild::BuildWord SpriteMatrixHookDelay = { 0x02402025, 0x02202025 };
 constexpr uint32_t HealthMatrixHookOffset = 0x0000045C;
 constexpr uint32_t HealthMatrixHookDelay = 0x02602025;
 
@@ -192,30 +195,37 @@ const uint32_t MatrixHealthCode[] =
     0x00000000, // nop
 };
 
-static_assert(SpriteWeaponEntry + sizeof(SpriteWeaponCode) <= SpriteHealthEntry, "Sprite entries overlap");
-static_assert(SpriteHealthEntry + sizeof(SpriteHealthCode) <= SpriteCommonEntry, "Sprite entries overlap");
-static_assert(SpriteCommonEntry + sizeof(SpriteCommonCode) <= SpriteMatrixEntry, "Sprite wrapper overlaps matrix code");
-static_assert(SpriteMatrixEntry + sizeof(SpriteMatrixCode) <= MatrixWeaponEntry, "Matrix code overlaps explicit entries");
-static_assert(MatrixWeaponEntry + sizeof(MatrixWeaponCode) <= MatrixHealthEntry, "Explicit matrix entries overlap");
-static_assert(MatrixHealthEntry + sizeof(MatrixHealthCode) <= WeaponDxNdcAddress, "Matrix entries overlap parameters");
-static_assert(HalfWidthAddress + sizeof(uint32_t) <= CaveEnd, "Alignment segment exceeds reserved range");
+static_assert(SpriteWeaponEntry.Us + sizeof(SpriteWeaponCode) <= SpriteHealthEntry.Us, "Sprite entries overlap");
+static_assert(SpriteHealthEntry.Us + sizeof(SpriteHealthCode) <= SpriteCommonEntry.Us, "Sprite entries overlap");
+static_assert(SpriteCommonEntry.Us + sizeof(SpriteCommonCode) <= SpriteMatrixEntry.Us, "Sprite wrapper overlaps matrix code");
+static_assert(SpriteMatrixEntry.Us + sizeof(SpriteMatrixCode) <= MatrixWeaponEntry.Us, "Matrix code overlaps explicit entries");
+static_assert(MatrixWeaponEntry.Us + sizeof(MatrixWeaponCode) <= MatrixHealthEntry.Us, "Explicit matrix entries overlap");
+static_assert(MatrixHealthEntry.Us + sizeof(MatrixHealthCode) <= WeaponDxNdcAddress.Us, "Matrix entries overlap parameters");
+static_assert(HalfWidthAddress.Us + sizeof(uint32_t) <= CaveEnd.Us, "Alignment segment exceeds reserved range");
 
 inline bool BuildImage(std::vector<uint32_t> & Image, float WeaponDxNdc,
                        float WeaponDyNdc, float HealthArcDxNdc,
                        float HealthArcDyNdc, float HealthSpriteDxNdc,
                        float HealthSpriteDyNdc, float HalfWidth)
 {
-    Image.assign((CaveEnd - CaveStart) / sizeof(uint32_t), 0);
-    auto Place = [&](uint32_t Address, const uint32_t * Words, size_t Count) {
-        if ((Address & 3) != 0 || Address < CaveStart || Address > CaveEnd ||
-            Count > (CaveEnd - Address) / sizeof(uint32_t))
+    // The image is laid out in US terms; the whole cave moves as one block on
+    // PAL, so only the listings' own jumps and globals need translating.
+    Image.assign((CaveEnd.Us - CaveStart.Us) / sizeof(uint32_t), 0);
+    auto Place = [&](JfgHudBuild::UsAddress Address, const uint32_t * Words, size_t Count) {
+        if ((Address.Us & 3) != 0 || Address.Us < CaveStart.Us || Address.Us > CaveEnd.Us ||
+            Count > (CaveEnd.Us - Address.Us) / sizeof(uint32_t))
         {
             return false;
         }
-        const size_t Index = (Address - CaveStart) / sizeof(uint32_t);
+        std::vector<uint32_t> Build;
+        if (!JfgHudBuild::Relocate(Words, Count, Build))
+        {
+            return false;
+        }
+        const size_t Index = (Address.Us - CaveStart.Us) / sizeof(uint32_t);
         for (size_t i = 0; i < Count; i++)
         {
-            Image[Index + i] = Words[i];
+            Image[Index + i] = Build[i];
         }
         return true;
     };

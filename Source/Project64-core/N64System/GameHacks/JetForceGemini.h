@@ -187,15 +187,7 @@ private:
     void PatchFramePacing(bool Enabled);
     void PatchFramePacing60(bool Enabled);
     void PatchSchedulerRelease(bool Enabled);
-    void PatchTripleBuffer(bool Enabled);
-    void PatchWaterWakeRate(bool Enabled);
     void PatchWaterWakeRingRate(bool Enabled);
-    void PatchWaterWakeDrawProbe(bool Enabled);
-    void PatchWaterWakeCulling(bool Enabled);
-    void PatchWaterWakeDrawFallback(bool Enabled);
-    void PatchWaterWakeFrameRate(bool Enabled);
-    void PatchWaterWakeStockDrawProbe(bool Enabled);
-    void UpdateWaterWakeDrawTarget(void);
     void ApplyViBudget(bool Boost);
     bool PatchLandingCinematicSkip(bool Enabled);
     bool PatchIntroCinematicSkip(bool Enabled);
@@ -206,27 +198,15 @@ private:
     bool SetWidescreenHudFloyd(uint32_t OverlayBase, bool Enabled);
     bool SetWidescreenHudReticle(bool Enabled);
     bool RemoveWidescreenHudOverlayHooks(void);
-    void DisplayCinematicProbe(void);
     bool CurrentSceneIsCinematicSkippable(void);
     bool ReadObjectName(uint32_t Object, char * Buffer, size_t Size);
     void HalveNamedEnemyMovement(void);
     void RemoveLegacyLandingCinematicSkip(void);
     void RemoveLegacyIntroCinematicSkip(void);
-    bool SetHookEnabled(const GAME_HACK_CODE_PATCH * Patches, size_t Count, bool Enabled);
     bool SetObjectMoveHook(bool Enabled);
-    bool SetPlayerVelocityHook(bool Enabled);
-    bool GetSquaddieOverlayBase(uint32_t & OverlayBase) const;
     void PatchObjectMove(bool HalveEnemies);
-    void PatchPlayerVelocity(bool Enabled);
-    void PatchSquaddieMove(bool Enabled);
-    void PatchSquadsTimeStep(bool Enabled);
-    bool PatchDroneLateralMove(bool Enabled);
-    bool PatchFloydCameraLateralMove(bool Enabled);
-    bool PatchSidekickVelocityLateralMove(bool Enabled);
-    bool PatchSidekickLateralMove(bool Enabled);
     bool PatchSidekickStrafe(bool Enabled);
     bool PatchSidekickPadControlProbe(bool Enabled);
-    void UpdateDroneLateralControllerProbe(void);
     void UpdateInputRate(void);
 
     CGameHackMemory m_Memory;
@@ -267,15 +247,7 @@ private:
     bool m_FramePacingPatchApplied;
     bool m_FramePacing60PatchApplied;
     bool m_SchedulerReleasePatchApplied;
-    bool m_TripleBufferPatchApplied;
-    bool m_WaterWakeRatePatchApplied;
     bool m_WaterWakeRingRatePatchApplied;
-    bool m_WaterWakeDrawProbeApplied;
-    bool m_WaterWakeCullingPatchApplied;
-    bool m_WaterWakeDrawFallbackPatchApplied;
-    bool m_WaterWakeFrameRatePatchApplied;
-    bool m_WaterWakeStockDrawProbeApplied;
-    uint32_t m_WaterWakeRatePatchStatus;
     bool m_GameplayReady;
     bool m_SprintActive;
     bool m_SprintTimeValid;
@@ -291,45 +263,17 @@ private:
     uint32_t m_SprintAnimation;
     float m_SprintPreviousAnimationFrame;
     bool m_DroneLateralActive;
-    bool m_DroneLateralRight;
     bool m_DroneLateralApplied;
     uint32_t m_DroneLateralState;
     uint32_t m_DroneLateralHookHits;
-    uint32_t m_DroneLateralControllerEntry;
-    uint32_t m_DroneLateralControllerWord0;
-    uint32_t m_DroneLateralControllerWord1;
-    uint32_t m_DroneLateralControllerWord2;
-    uint32_t m_DroneLateralControllerWord3;
-    uint32_t m_DroneLateralControllerReturn;
-    uint32_t m_DroneLateralControllerReturnWord0;
-    uint32_t m_DroneLateralControllerReturnWord1;
-    uint32_t m_DroneLateralControllerReturnWord2;
-    uint32_t m_DroneLateralControllerReturnWord3;
-    uint32_t m_DroneLateralControllerReturnWord4;
-    bool m_DroneLateralMoveHookApplied;
-    uint32_t m_DroneLateralMoveHookEntry;
-    std::vector<uint32_t> m_DroneLateralMoveHookStubOriginal;
-    bool m_FloydCameraLateralHookApplied;
-    uint32_t m_FloydCameraLateralHookEntry;
-    std::vector<uint32_t> m_FloydCameraLateralHookStubOriginal;
-    bool m_SidekickVelocityLateralHookApplied;
-    std::vector<uint32_t> m_SidekickVelocityLateralHookStubOriginal;
-    bool m_SidekickLateralMoveHookApplied;
-    std::vector<uint32_t> m_SidekickLateralMoveHookStubOriginal;
     bool m_SidekickStrafeHookApplied;
     std::vector<uint32_t> m_SidekickStrafeHookStubOriginal;
-    std::vector<uint32_t> m_SidekickControlProbeStubOriginal;
     bool m_SidekickPadControlProbeApplied;
     uint32_t m_SidekickPadControlProbeEntry;
     std::vector<uint32_t> m_SidekickPadControlProbeStubOriginal;
     uint32_t m_BaseViRefreshRate;
     bool m_ObjectMovePatchApplied;
     std::vector<uint32_t> m_ObjectMoveStubOriginal;
-    bool m_PlayerVelocityPatchApplied;
-    std::vector<uint32_t> m_PlayerVelocityStubOriginal;
-    bool m_SquaddieMovePatchApplied;
-    uint32_t m_SquaddieOverlayBase;
-    bool m_SquadsTimeStepPatchApplied;
 
 
     bool m_LandingCinematicSkipHookApplied;
@@ -350,7 +294,6 @@ private:
     uint32_t m_HudAlignmentOverlay6Base;
     uint32_t m_HudAlignmentOverlay14Base;
     bool m_HudAlignmentScopeOwned;
-    bool m_CinematicProbeDown;
 
     // Live FPS switch edge state, see Fps60ToggleKey / Fps30ToggleKey
     bool m_Fps60ToggleDown;
@@ -361,8 +304,8 @@ private:
 
     // Per-object tracking for HalveNamedEnemyMovement: the halved world position
     // written last frame, so this frame's game-applied move can be halved by
-    // averaging back toward it. Species whose per-baddy mover the SquaddieControl
-    // step hook never reaches (e.g. OctoGalaxian) are slowed here instead.
+    // averaging back toward it. Species whose per-baddy mover the objMoveXYZ hook
+    // never sees (e.g. OctoGalaxian) are slowed here instead.
     struct HALVED_ENEMY_SLOT
     {
         uint32_t Object;
@@ -372,9 +315,6 @@ private:
     HALVED_ENEMY_SLOT m_HalvedEnemySlots[16];
     uint32_t m_HalveFrameCounter;
 
-    // Diagnostic scope override, see WidescreenHudScopeForceKey
-    bool m_WidescreenHudScopeForceDown;
-    bool m_WidescreenHudScopeForced;
 
     // Input rate diagnostic, see UpdateInputRate
     bool m_InputRateWindowValid;

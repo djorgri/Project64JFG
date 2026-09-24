@@ -14,7 +14,7 @@ import unittest
 import test_jfg_hud_alignment as opcodes
 from test_jfg_ammo_hud import constant, load_word, store_word
 from test_jfg_banner_hud import bits_float, float_bits
-from test_jfg_widescreen_lifecycle import compiler_command
+from test_jfg_widescreen_lifecycle import US_BUILD, compiler_command
 
 
 WORKSPACE = Path(__file__).resolve().parents[3]
@@ -31,7 +31,7 @@ class JfgHudAlignmentGeometryTests(unittest.TestCase):
         directory = Path(cls.temporary.name).resolve()
         assert directory.is_relative_to(build.resolve())
         source = directory / "geometry.cpp"
-        source.write_text('#include "' + HEADER.as_posix() + '"\n' + r'''
+        source.write_text('#include "' + HEADER.as_posix() + '"\n' + US_BUILD + r'''
 #include <iostream>
 #include <iomanip>
 int main() {

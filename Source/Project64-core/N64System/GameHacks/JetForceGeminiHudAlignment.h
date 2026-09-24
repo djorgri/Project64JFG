@@ -1,29 +1,48 @@
-// Independent placement correction for the retail US single-player HUD.
+// Independent placement correction for the retail single-player HUD (US, and
+// PAL through JetForceGeminiHudBuild.h).
 #pragma once
 
 #include "JetForceGeminiHudAlignmentCode.h"
 #include "JetForceGeminiHudAlignmentOriginal.h"
 #include "JetForceGeminiHudAlignmentRdp.h"
 #include "JetForceGeminiHudAlignmentSites.h"
+#include "JetForceGeminiHudPalOriginals.h"
 #include <cmath>
 
 namespace JfgHudAlignment
 {
-constexpr uint32_t CaveStart = 0x800679A0;
-constexpr uint32_t CaveEnd = 0x800680A0;
-constexpr uint32_t GuardAddress = 0x80067994;
-constexpr uint32_t PlayerCountAddress = 0x800A4FD0;
+constexpr JfgHudBuild::UsAddress CaveStart = { 0x800679A0 };
+constexpr JfgHudBuild::UsAddress CaveEnd = { 0x800680A0 };
+constexpr JfgHudBuild::UsAddress GuardAddress = { 0x80067994 };
+constexpr JfgHudBuild::UsAddress PlayerCountAddress = { 0x800A4FD0 };
 constexpr uint32_t GuardRetired[] = { 0x03E00008, 0x00000000 };
 
 // This is the register-display part of the game's fault handler, not its
 // exception logger or boot initializer. Retire its public entry before using
 // the body, and restore the complete retail body before restoring that entry.
 // Keeping the original words also makes old patched save states reversible.
-static_assert(CaveEnd - CaveStart == sizeof(JfgHudAlignmentOriginal::CaveWords),
+static_assert(CaveEnd.Us - CaveStart.Us == sizeof(JfgHudAlignmentOriginal::CaveWords),
               "The complete original diagnostic body must be available");
-static_assert(JfgHudAlignmentCode::CaveEnd == JfgHudAlignmentRdp::CaveStart,
+static_assert(sizeof(JfgHudPal::HudAlignmentCaveWords) == sizeof(JfgHudAlignmentOriginal::CaveWords) &&
+              sizeof(JfgHudPal::HudAlignmentGuardWords) == sizeof(JfgHudAlignmentOriginal::GuardWords),
+              "The PAL diagnostic body must pair with the US one");
+static_assert(JfgHudAlignmentCode::CaveEnd.Us == JfgHudAlignmentRdp::CaveStart.Us,
               "Alignment code segments must be adjacent and disjoint");
-static_assert(JfgHudAlignmentRdp::CaveEnd == CaveEnd, "Unexpected alignment cave end");
+static_assert(JfgHudAlignmentRdp::CaveEnd.Us == CaveEnd.Us, "Unexpected alignment cave end");
+
+// The retail words of the borrowed body and of its guarded entry, for the
+// running build.
+inline const uint32_t * OriginalCaveWords(void)
+{
+    return JfgHudBuild::Current() == JfgHudBuild::BuildPal ? JfgHudPal::HudAlignmentCaveWords
+                                                           : JfgHudAlignmentOriginal::CaveWords;
+}
+
+inline const uint32_t * OriginalGuardWords(void)
+{
+    return JfgHudBuild::Current() == JfgHudBuild::BuildPal ? JfgHudPal::HudAlignmentGuardWords
+                                                           : JfgHudAlignmentOriginal::GuardWords;
+}
 
 struct Layout
 {
@@ -33,6 +52,9 @@ struct Layout
     float HealthSpriteDx, HealthSpriteDy;
 };
 
+// ResolutionIndex is the build-independent mode 0..3 (JfgHudBuild::VideoMode).
+// PAL's modes draw into the same 320x240 and 448x336 framebuffers as NTSC;
+// only the VI's vertical scale differs, so the framebuffer layout is shared.
 inline Layout CalculateLayout(uint8_t ResolutionIndex, bool WidescreenCorrected)
 {
     const bool Wide = ResolutionIndex == 1 || ResolutionIndex == 3;
@@ -102,7 +124,8 @@ inline bool BuildImage(std::vector<uint32_t> & Image, uint32_t Overlay14Base,
             Values.HealthSpriteDx * NdcScale, -Values.HealthSpriteDy * NdcScale,
             (float)Values.Width / 2.0f) ||
         !JfgHudAlignmentRdp::BuildImage(
-            Rectangles, Overlay14Base + JfgHudAlignmentSites::WeaponGroupFunctionOffset,
+            Rectangles, Overlay14Base + JfgHudBuild::Offset(JfgHudAlignmentSites::WeaponModule,
+                                                            JfgHudAlignmentSites::WeaponGroupFunctionOffset),
             (int32_t)std::round(Values.WeaponDx * 4.0f),
             (int32_t)std::round(Values.WeaponDy * 4.0f),
             Values.Width * 4, Values.Height * 4))
@@ -111,7 +134,7 @@ inline bool BuildImage(std::vector<uint32_t> & Image, uint32_t Overlay14Base,
     }
     Image = Matrices;
     Image.insert(Image.end(), Rectangles.begin(), Rectangles.end());
-    return Image.size() * sizeof(uint32_t) == CaveEnd - CaveStart;
+    return Image.size() * sizeof(uint32_t) == CaveEnd.Us - CaveStart.Us;
 }
 
 inline bool IsParameterAddress(uint32_t Address)

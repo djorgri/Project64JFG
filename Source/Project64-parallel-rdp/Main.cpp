@@ -877,6 +877,7 @@ void queue_async_scanout(const RDP::ScanoutOptions &options)
 		r.hstart = *g_gfx.VI_H_START_REG;
 		r.vstart = *g_gfx.VI_V_START_REG;
 		r.crop = options.crop_overscan_pixels;
+		r.lines = JfgBuild::vi_lines(g_gfx.VI_V_SYNC_REG ? *g_gfx.VI_V_SYNC_REG : 0);
 		hud.vi = r;
 		hud.vi.frame = {};
 		hud.frame = g_hud_bindings.find(r.origin);
@@ -1016,6 +1017,7 @@ EXPORT int CALL InitiateGFX(GFX_INFO info)
 	std::lock_guard<std::mutex> lock(g_mutex);
 	destroy_renderer();
 	g_gfx = info;
+	JfgBuild::detect(g_gfx.HEADER);
 	load_settings_once();
 	apply_display_settings();
 	g_trace_count = 0;
@@ -1108,7 +1110,8 @@ EXPORT void CALL ProcessRDPList()
                 g_hud_capture.ordered_font_commands(words, unsigned(word_count),
                     *g_gfx.VI_X_SCALE_REG, *g_gfx.VI_Y_SCALE_REG, g_settings.overscan_crop,
                     g_settings.force_widescreen ? 16.0 / 9.0 : 4.0 / 3.0, g_pending_rdp_command_batch,
-                    sceneQuirks, unsigned(g_settings.upscaling))))
+                    sceneQuirks, unsigned(g_settings.upscaling),
+                    JfgBuild::vi_lines(g_gfx.VI_V_SYNC_REG ? *g_gfx.VI_V_SYNC_REG : 0))))
             {
                 g_pending_rdp_command_batch.push_back(word_count);
                 std::array<uint32_t, 4> ordered_number;
@@ -1184,6 +1187,8 @@ EXPORT void CALL RomClosed()
 
 EXPORT void CALL RomOpen()
 {
+	std::lock_guard<std::mutex> lock(g_mutex);
+	JfgBuild::detect(g_gfx.HEADER);
 }
 
 EXPORT void CALL ShowCFB()

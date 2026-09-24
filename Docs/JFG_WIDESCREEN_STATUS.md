@@ -20,8 +20,10 @@ the 320 x 240 logical frame.
 
 ## Enabling the prototype
 
-1. Use the USA retail ROM supported by the project. The HUD patch explicitly
-   excludes the Kiosk build, even though other adaptations handle it.
+1. Use the USA or PAL retail ROM supported by the project. The HUD patch is
+   written against the USA build and translated for PAL
+   ([JFG_PAL_PORT.md](JFG_PAL_PORT.md)); it explicitly excludes the Kiosk
+   build, even though other adaptations handle it.
 2. Select the widescreen mode in the game's own options.
 3. In the **Project64 Parallel RDP** plugin settings, enable **Force 16:9
    display (stretches image)** to present the image in 16:9.
@@ -37,7 +39,9 @@ keyboard/mouse controls and is **enabled by default**.
 
 The check uses the **active video mode** byte at `0x800FECA8`, written by
 `viChangeMode`: `0` and `2` are 4:3, `1` and `3` the low- and high-resolution
-widescreen modes of the USA ROM. The menu preference is not used as a
+widescreen modes of the USA ROM. The PAL build adds 8 on a PAL console (modes
+`8` to `11`, byte at `0x800FE708`); `JfgHudBuild::VideoMode` folds them back
+to `0` to `3`. The menu preference is not used as a
 substitute for the active mode. The aspect forced in the graphics plugin plays
 no part in this decision.
 
@@ -52,8 +56,7 @@ triggers their recovery and removal, even in 4:3 or with the box unticked.
 The overlays currently loaded are checked, including when they have moved.
 An invalid reticle signature no longer prevents the independent cleanup of the
 banner and gauges; the code caves stay available for as long as a recognised
-call could still lead into them. The forced-scope diagnostic is no longer
-re-armed during a removal. The four old digit corrections, abandoned while the
+call could still lead into them. The four old digit corrections, abandoned while the
 ammunition counter was being tracked down, are also removed when they remain
 alone in a state, without a recognised HUD installation.
 
@@ -99,8 +102,8 @@ The correction prototype places nineteen stubs: two to open and close the
 scope, ten for HUD rendering, one for the reticle segments and two to identify
 and anchor the gauge drawing, plus a wrapper and three helpers for Floyd. All
 ten HUD corrections check the widescreen bit; eight also check the scope. The
-reticle stub checks the widescreen mode and the absence of a HUD scope, to
-avoid a double correction when the O diagnostic forces that scope. The two
+reticle stub checks the widescreen mode and the absence of a HUD scope, so a
+line drawn inside the scope is never corrected twice. The two
 textured font stubs are deliberately global while the widescreen mode is
 active. The missing guard mentioned in the report was therefore not found in
 these current paths. The shot-bar helper only runs after the mode and scope
@@ -279,8 +282,7 @@ signatures were verified in the user state `Save/reticle.pj.zip`.
 
 For the visual test, load that state with the box ticked, move the aim
 horizontally and vertically, then compare with the box unticked. Check the
-symmetry, the aimed point, weapon changes and the high resolution. Do not use
-the O diagnostic for this comparison.
+symmetry, the aimed point, weapon changes and the high resolution.
 
 The [`jfg-reticle-trace.js`](../Source/Script/jfg-reticle-trace.js) script,
 run manually with the Interpreter core, compares the coordinates at the stub's
@@ -468,12 +470,6 @@ interpreter during the scene concerned.
 
 ## Defects and limits noticed while reading
 
-- **O diagnostic key:** it forces the scope counter to `0x20`. On the second
-  press only the boolean is cleared; the byte is not reset to zero. The
-  normal entries and exits balance out and can leave it non-zero. The "scope
-  restored" message therefore does not prove a return to normal behaviour.
-  For a reliable comparison, start from a fresh session without using O. This
-  key requires the keyboard/mouse controls.
 - **Drawing outside the scope:** the deferred paths, or those executed outside
   `frontSingleInstruments`, do not automatically benefit from the correction.
   Moreover, `DisableJoy != 0` removes the hooks: the rendering of dialogues,
@@ -496,7 +492,7 @@ its visual result in high resolution is still to be validated.
 ## Comparisons to perform in game
 
 Keep the same scene, the same weapon and the same plugin settings for each
-comparison. Start at 30 fps, in low resolution, without the O diagnostic.
+comparison. Start at 30 fps, in low resolution.
 
 1. Compare the 4:3 reference, the native widescreen without HUD correction,
    then the native widescreen with the correction.

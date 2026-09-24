@@ -1,6 +1,9 @@
 #pragma once
 
+#include "JetForceGeminiHudBuild.h"
+#include "JetForceGeminiHudPalOriginals.h"
 #include <cstdint>
+#include <vector>
 
 namespace JfgFloydHud
 {
@@ -9,24 +12,38 @@ namespace JfgFloydHud
 // widescreen compression. The private 0x40 tag selects an integer DDA while
 // retaining the original inclusive row count and saturating green blend.
 // Untagged lines and calls outside fxOutputLines retain their original raster.
-const uint32_t InitStub = 0x800678CC;
-const uint32_t StepStub = 0x80067928;
-const uint32_t StepTailStub = 0x80067340;
-const uint32_t InitEntry = 0x8006DC90;
+// US addresses, translated where they are used (JetForceGeminiHudBuild.h).
+constexpr JfgHudBuild::UsAddress InitStub = { 0x800678CC };
+constexpr JfgHudBuild::UsAddress StepStub = { 0x80067928 };
+constexpr JfgHudBuild::UsAddress StepTailStub = { 0x80067340 };
+constexpr JfgHudBuild::UsAddress InitEntry = { 0x8006DC90 };
 const uint32_t InitOriginal = 0x000B2840;
 const uint32_t InitDelayOriginal = 0x94F80000;
-const uint32_t InitJump = 0x08019E33;
-const uint32_t StepEntry = 0x8006DD04;
+constexpr JfgHudBuild::UsAddress StepEntry = { 0x8006DD04 };
 const uint32_t StepOriginal = 0x1540FFE3;
 const uint32_t StepDelayOriginal = 0x254AFFFF;
-const uint32_t StepBranch = 0x1540E708;
-const uint32_t GuardStub = 0x800678C4;
+constexpr JfgHudBuild::UsAddress GuardStub = { 0x800678C4 };
 const uint32_t GuardCode[] = { 0x03E00008, 0x00000000 };
+
+// j InitStub (0x08019E33 on US).
+inline uint32_t InitJump()
+{
+    return 0x08000000 | (((uint32_t)InitStub >> 2) & 0x03FFFFFF);
+}
+
+// bne t2, zero, StepStub from StepEntry (0x1540E708 on US). The step helper
+// and the renderer move by different amounts between builds, so the branch
+// displacement is computed, not copied.
+inline uint32_t StepBranch()
+{
+    const uint32_t Displacement = ((uint32_t)StepStub - ((uint32_t)StepEntry + 4)) >> 2;
+    return 0x15400000 | (Displacement & 0xFFFF);
+}
 
 // US ROM words from diCpuTraceMallocFault, including its unreachable padding
 // and epilogue. A recognized patched save state must restore this image rather
 // than preserve our helpers as the supposedly original diagnostic body.
-const uint32_t OriginalDiagnosticCode[] =
+constexpr uint32_t OriginalDiagnosticCode[] =
 {
     0x27BDFDB8, 0xAFBF0014, 0xAFA40248, 0xAFA5024C,
     0xAFA60250, 0x24050230, 0x0C0260D8, 0x27A40018,
@@ -44,19 +61,6 @@ struct WordPatch
     uint32_t Address;
     uint32_t Original;
     uint32_t Replacement;
-};
-
-// Retire the malloc-fault diagnostic before its body is used as code storage.
-// Retain the untouched loop delay as a signature so the branch cannot be
-// installed over a foreign renderer with a different counter update.
-const WordPatch FixedPatches[] =
-{
-    { 0x800678C4, 0x27BDFDB8, 0x03E00008 },
-    { 0x800678C8, 0xAFBF0014, 0x00000000 },
-    { 0x8006DC90, 0x000B2840, 0x08019E33 },
-    { 0x8006DC94, 0x94F80000, 0x94F80000 },
-    { 0x8006DD04, 0x1540FFE3, 0x1540E708 },
-    { 0x8006DD08, 0x254AFFFF, 0x254AFFFF },
 };
 
 // At entry t2 = abs(dy), because the stock inclusive count was decremented
@@ -117,8 +121,62 @@ const uint32_t StepTailCode[] =
     0x00000000, // nop
 };
 
-static_assert(InitStub + sizeof(InitCode) == StepStub, "Floyd line helpers overlap");
-static_assert(GuardStub + sizeof(OriginalDiagnosticCode) == 0x80067950, "Floyd diagnostic image has the wrong extent");
-static_assert(StepStub + sizeof(StepCode) == 0x80067950, "Floyd line helper leaves its cave");
-static_assert(StepTailStub + sizeof(StepTailCode) <= 0x80067360, "Floyd line tail leaves its cave");
+static_assert(InitStub.Us + sizeof(InitCode) == StepStub.Us, "Floyd line helpers overlap");
+static_assert(GuardStub.Us + sizeof(OriginalDiagnosticCode) == 0x80067950, "Floyd diagnostic image has the wrong extent");
+static_assert(StepStub.Us + sizeof(StepCode) == 0x80067950, "Floyd line helper leaves its cave");
+static_assert(StepTailStub.Us + sizeof(StepTailCode) <= 0x80067360, "Floyd line tail leaves its cave");
+static_assert(sizeof(JfgHudPal::FloydHudOriginalDiagnosticCode) == sizeof(OriginalDiagnosticCode),
+              "PAL diagnostic image size");
+
+// The retail diagnostic as the ROM in hand holds it.
+inline std::vector<uint32_t> OriginalDiagnosticImage()
+{
+    const bool Pal = JfgHudBuild::Current() == JfgHudBuild::BuildPal;
+    const uint32_t * Words = Pal ? JfgHudPal::FloydHudOriginalDiagnosticCode : OriginalDiagnosticCode;
+    return std::vector<uint32_t>(Words, Words + sizeof(OriginalDiagnosticCode) / sizeof(uint32_t));
+}
+
+// Retire the malloc-fault diagnostic before its body is used as code storage.
+// Retain the untouched loop delay as a signature so the branch cannot be
+// installed over a foreign renderer with a different counter update.
+// US words; FixedPatchesForBuild() derives the ones for the ROM in hand.
+constexpr WordPatch FixedPatches[] =
+{
+    { 0x800678C4, 0x27BDFDB8, 0x03E00008 },
+    { 0x800678C8, 0xAFBF0014, 0x00000000 },
+    { 0x8006DC90, 0x000B2840, 0x08019E33 },
+    { 0x8006DC94, 0x94F80000, 0x94F80000 },
+    { 0x8006DD04, 0x1540FFE3, 0x1540E708 },
+    { 0x8006DD08, 0x254AFFFF, 0x254AFFFF },
+};
+static_assert(FixedPatches[0].Address == GuardStub.Us && FixedPatches[0].Original == OriginalDiagnosticCode[0] &&
+              FixedPatches[1].Original == OriginalDiagnosticCode[1], "Guard patch must match the diagnostic");
+static_assert(FixedPatches[2].Address == InitEntry.Us && FixedPatches[2].Original == InitOriginal &&
+              FixedPatches[2].Replacement == (0x08000000 | ((InitStub.Us >> 2) & 0x03FFFFFF)) &&
+              FixedPatches[3].Original == InitDelayOriginal, "Init hook must jump to InitStub");
+static_assert(FixedPatches[4].Address == StepEntry.Us && FixedPatches[4].Original == StepOriginal &&
+              FixedPatches[4].Replacement == (0x15400000 | (((StepStub.Us - (StepEntry.Us + 4)) >> 2) & 0xFFFF)) &&
+              FixedPatches[5].Original == StepDelayOriginal, "Step hook must branch to StepStub");
+
+// FixedPatches for the ROM in hand. On PAL the addresses are translated, the
+// guard keeps the PAL diagnostic's own words, and the jump and branch are
+// recomputed for helpers that moved by a different amount than the renderer.
+inline std::vector<WordPatch> FixedPatchesForBuild()
+{
+    std::vector<WordPatch> Patches(FixedPatches, FixedPatches + sizeof(FixedPatches) / sizeof(FixedPatches[0]));
+    if (JfgHudBuild::Current() != JfgHudBuild::BuildPal)
+    {
+        return Patches;
+    }
+    const std::vector<uint32_t> Diagnostic = OriginalDiagnosticImage();
+    for (WordPatch & Patch : Patches)
+    {
+        Patch.Address = JfgHudBuild::Address(Patch.Address);
+    }
+    Patches[0].Original = Diagnostic[0];
+    Patches[1].Original = Diagnostic[1];
+    Patches[2].Replacement = InitJump();
+    Patches[4].Replacement = StepBranch();
+    return Patches;
+}
 }
