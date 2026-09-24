@@ -35,6 +35,9 @@ support and an optional 60 FPS mode.
 - Raw mouse input while captured, bypassing Windows pointer acceleration
 - Context-aware controls for normal play, manual aim, crouch, prone, boss aiming,
   and Floyd sections
+- Optional **Snap camera when aiming**: aiming from the free camera swings the
+  view behind the player, as the game does where the camera is not free,
+  instead of turning the player to the view
 - Optional 1.25x sprint with synchronised animation and footsteps
 - Boss encounters turn the view from the reticle, the way the stock game does
   from the stick, rather than swinging the rail the player runs along

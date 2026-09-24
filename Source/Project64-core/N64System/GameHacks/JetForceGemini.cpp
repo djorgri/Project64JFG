@@ -7057,6 +7057,7 @@ void CJetForceGeminiRuntime::EvaluateOrbitCamera(
         m_Memory.ReadU32(DisableJoyAddress, Eval.JoyDisabled) &&
         m_Memory.ReadU8(Eval.PlayerData + PlayerCameraModeOffset, Eval.CameraMode);
     Eval.PreserveConstrainedCameras = g_Settings->LoadBool(Setting_JfgPreserveCameraInGameLimits);
+    Eval.SnapCameraOnAim = g_Settings->LoadBool(Setting_JfgSnapCameraOnAim);
     const bool FreeCameraInJump = g_Settings->LoadBool(Setting_JfgFreeCameraInJump);
     Eval.JumpCameraMode = Eval.BasicStateAvailable && Eval.CameraMode == PlayerCameraModeJump;
     Eval.FreeJumpCameraAllowed = Eval.JumpCameraMode && FreeCameraInJump;
@@ -7115,7 +7116,12 @@ bool CJetForceGeminiRuntime::ApplyOrbitCamera(
         {
             if (Orbit.OverrideActive)
             {
-                if (AimMode)
+                // The game's aim camera sits behind the player. By default the
+                // player is turned to the orbit first, so the view keeps its
+                // direction; with the snap option the player keeps its heading
+                // and the view swings behind it, as it does wherever the
+                // camera is not free.
+                if (AimMode && !Eval.SnapCameraOnAim)
                 {
                     AlignPlayerYawToOrbitCamera(Orbit, Eval.PlayerObject, Eval.PlayerData);
                 }

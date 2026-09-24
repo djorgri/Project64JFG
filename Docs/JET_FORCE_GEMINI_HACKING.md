@@ -197,6 +197,11 @@ restores the reticle cursor windows, the angle helper calls and the overlay
 `BoyAimPatches` to their original words, `ApplyManualAimMouse()` is skipped,
 and the right stick is written straight to the N64 stick so
 `controlGetManualAim` places the reticle and turns the view itself.
+When aiming starts from the free orbit, `ApplyOrbitCamera()` normally turns
+the player to the orbit yaw first (`AlignPlayerYawToOrbitCamera()`), so the
+game's aim camera, which sits behind the player, keeps the view's direction.
+`Setting_JfgSnapCameraOnAim` skips that step: the player keeps its heading and
+the aim camera swings behind it, as it does wherever the camera is not free.
 
 `controlGetManualAim` is shared by every player, and its two reticle cursor
 stores used to be replaced by `sh $zero` outright, which also took the reticle

@@ -362,6 +362,7 @@ enum SettingID
     Setting_JfgGamepad2Port,
     Setting_JfgGamepadCameraSpeed,
     Setting_JfgGamepadStockAim,
+    Setting_JfgSnapCameraOnAim,
 
     FirstUISettings = MaxPluginSetting + 1,
     LastUISettings = FirstUISettings + MaxPluginSetting,

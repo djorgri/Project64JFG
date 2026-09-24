@@ -161,6 +161,9 @@ void CSettings::AddHowToHandleSetting(const char * BaseDirectory)
     // Aiming from the trigger leaves the game's own reticle and view turn in
     // place, with the right stick on the N64 stick; see MapController.
     AddHandler(Setting_JfgGamepadStockAim, new CSettingTypeApplication("Game Specific Hacks", "JFG Gamepad Stock Aim", true));
+    // Aiming from the free camera swings the view behind the player instead of
+    // turning the player to the view; see ApplyOrbitCamera.
+    AddHandler(Setting_JfgSnapCameraOnAim, new CSettingTypeApplication("Game Specific Hacks", "JFG Snap Camera On Aim", false));
 
     AddHandler(Default_RDRamSizeUnknown, new CSettingTypeApplication("Defaults", "Unknown RDRAM Size", 0x800000u));
     AddHandler(Default_RDRamSizeKnown, new CSettingTypeApplication("Defaults", "Known RDRAM Size", 0x400000u));

@@ -59,6 +59,8 @@ void initialize_tooltips(HWND dialog)
         L"Keeps the game's normal camera pitch and yaw limits while using mouse look.");
     add_tooltip(tooltip, dialog, IDC_GSH_FREE_CAMERA_JUMP,
         L"Allows mouse camera control while jumping. This is experimental.");
+    add_tooltip(tooltip, dialog, IDC_GSH_SNAP_CAMERA_AIM,
+        L"When you aim with the free camera, swings the view behind the player, facing where the player faces, as the game does where the camera is not free. Unchecked, the view keeps its direction and the player turns to face it.");
     add_tooltip(tooltip, dialog, IDC_GSH_PRONE_CBUTTONS,
         L"While prone, maps the strafe keys A/D (Q/D on AZERTY) to N64 C-Left/C-Right instead of the joystick, as crouching always does.");
     add_tooltip(tooltip, dialog, IDC_GSH_DRONE_INVERT_Y,
@@ -149,6 +151,7 @@ void CGameSpecificHacksDialog::LoadSettings(void)
                    g_Settings->LoadBool(Setting_JfgDroneLateralMovement) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(IDC_GSH_PRESERVE_CAMERA, g_Settings->LoadBool(Setting_JfgPreserveCameraInGameLimits) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(IDC_GSH_FREE_CAMERA_JUMP, g_Settings->LoadBool(Setting_JfgFreeCameraInJump) ? BST_CHECKED : BST_UNCHECKED);
+    CheckDlgButton(IDC_GSH_SNAP_CAMERA_AIM, g_Settings->LoadBool(Setting_JfgSnapCameraOnAim) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(IDC_GSH_PRONE_CBUTTONS, g_Settings->LoadBool(Setting_JfgCrouchProneStickStrafe) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(IDC_GSH_DRONE_INVERT_Y, g_Settings->LoadBool(Setting_JfgDroneInvertY) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(IDC_GSH_DRONE_DIRECT, g_Settings->LoadBool(Setting_JfgDroneCameraDirect) ? BST_CHECKED : BST_UNCHECKED);
@@ -199,6 +202,7 @@ void CGameSpecificHacksDialog::UpdateControlState(void)
         IDC_GSH_LATERAL_MOVEMENT,
         IDC_GSH_PRESERVE_CAMERA,
         IDC_GSH_FREE_CAMERA_JUMP,
+        IDC_GSH_SNAP_CAMERA_AIM,
         IDC_GSH_PRONE_CBUTTONS,
         IDC_GSH_DRONE_INVERT_Y,
         IDC_GSH_FAST_CUTSCENES,
@@ -243,6 +247,7 @@ LRESULT CGameSpecificHacksDialog::OnCheckBoxClicked(WORD /*wNotifyCode*/, WORD w
     case IDC_GSH_LATERAL_MOVEMENT: SaveCheckBox(wID, Setting_JfgDroneLateralMovement); break;
     case IDC_GSH_PRESERVE_CAMERA: SaveCheckBox(wID, Setting_JfgPreserveCameraInGameLimits); break;
     case IDC_GSH_FREE_CAMERA_JUMP: SaveCheckBox(wID, Setting_JfgFreeCameraInJump); break;
+    case IDC_GSH_SNAP_CAMERA_AIM: SaveCheckBox(wID, Setting_JfgSnapCameraOnAim); break;
     case IDC_GSH_PRONE_CBUTTONS: SaveCheckBox(wID, Setting_JfgCrouchProneStickStrafe); break;
     case IDC_GSH_DRONE_INVERT_Y: SaveCheckBox(wID, Setting_JfgDroneInvertY); break;
     case IDC_GSH_DRONE_DIRECT: SaveCheckBox(wID, Setting_JfgDroneCameraDirect); break;

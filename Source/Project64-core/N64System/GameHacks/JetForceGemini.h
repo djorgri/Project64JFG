@@ -135,6 +135,7 @@ private:
         bool FreeJumpCameraAllowed;
         bool FreeCameraBlockedByJump;
         bool PreserveConstrainedCameras;
+        bool SnapCameraOnAim;
         bool FreeCameraStateAllowed;
         bool EnableFreeOrbit;
     };
