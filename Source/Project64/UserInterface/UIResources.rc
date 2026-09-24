@@ -375,7 +375,7 @@ STYLE DS_SETFONT | DS_MODALFRAME | DS_FIXEDSYS | DS_CENTER | WS_POPUP | WS_CAPTI
 CAPTION "Project64JFG"
 FONT 8, "MS Shell Dlg", 0, 0, 0x1
 BEGIN
-    LTEXT           "Version: 0.9.4",IDC_VERSION,10,12,300,20,SS_NOTIFY
+    LTEXT           "Version: 0.9.5",IDC_VERSION,10,12,300,20,SS_NOTIFY
     LTEXT           "About Project64JFG",IDC_ABOUT_PROJECT,10,40,300,42
     LTEXT           "Credits and support",IDC_THANKS_CORE,10,90,300,11
     LTEXT           "The original Project64 developers and contributors deserve the credit for the emulator.",IDC_CORE_THANK_LIST,10,106,300,34

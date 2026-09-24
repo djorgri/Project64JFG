@@ -25,7 +25,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 #define VERSION_MAJOR               0
 #define VERSION_MINOR               9
-#define VERSION_REVISION            4
+#define VERSION_REVISION            5
 #define VERSION_BUILD               0
 #define VERSION_PREFIX              ""
 #define VERSION_BUILD_YEAR          2026
@@ -37,7 +37,7 @@ Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 
 #define VER_FILE_DESCRIPTION_STR    "N-Rage for Project64"
 #define VER_FILE_VERSION            VERSION_MAJOR, VERSION_MINOR, VERSION_REVISION, VERSION_BUILD
-#define VER_FILE_VERSION_STR        "0.9.4"
+#define VER_FILE_VERSION_STR        "0.9.5"
 
 #define VER_PRODUCTNAME_STR         "N-Rage"
 #define VER_PRODUCT_VERSION         VER_FILE_VERSION
