@@ -1,12 +1,14 @@
 #pragma once
 
-// The US -> PAL translation behind the Jet Force Gemini HUD hacks, shared by
-// the core (JetForceGeminiHudBuild.h, which adds the running build) and the
-// Parallel-RDP plugin's HUD capture. Self-contained C++14: no core headers.
+// The US -> PAL and US -> JP translations behind the Jet Force Gemini HUD
+// hacks, shared by the core (JetForceGeminiHudBuild.h, which adds the running
+// build) and the Parallel-RDP plugin's HUD capture. Self-contained C++14: no
+// core headers.
 //
 // Every function takes the build explicitly. On the US build each is the
-// identity; anything with no PAL counterpart translates to zero (addresses) or
-// InvalidOffset (module offsets), which every caller treats as unavailable.
+// identity; anything with no counterpart on the build translates to zero
+// (addresses) or InvalidOffset (module offsets), which every caller treats as
+// unavailable.
 
 #include <cstddef>
 #include <cstdint>
@@ -19,6 +21,7 @@ enum BuildId
     BuildNone,
     BuildUs,
     BuildPal,
+    BuildJp,
 };
 
 // Identifies a build from the CRC pair of its ROM header (offsets 0x10/0x14).
@@ -31,6 +34,10 @@ inline BuildId BuildFromRomCrc(uint32_t Crc1, uint32_t Crc2)
     if (Crc1 == 0x68D7A1DE && Crc2 == 0x0079834A)
     {
         return BuildPal; // NJFP
+    }
+    if (Crc1 == 0xF163A242 && Crc2 == 0xF2449B3B)
+    {
+        return BuildJp; // NJFJ, "STAR TWINS"
     }
     return BuildNone;
 }
@@ -73,6 +80,38 @@ const RANGE PalMainRanges[] =
     { 0x80102DC0, 0x80103B95, -0x5A8 }, // bss: CPU line queue index
 };
 
+// US [Start, End) -> JP ("STAR TWINS"), for the main segment. The JP compile
+// is the US source with Japanese text: the HUD's functions keep their US code
+// (camDo2DSprite has no PAL-style Y-scale call) except fontPrintWindowXY,
+// which JP rewrote for two-byte characters. Only its hook sites are mapped,
+// each to its JP counterpart; the words there differ (another frame size and
+// other temporaries), see the users.
+const RANGE JpMainRanges[] =
+{
+    { 0x80040D64, 0x80040E64, -0x104 }, // camStandardOrtho
+    { 0x800416CC, 0x800419AC, -0x104 }, // camDo2DSprite
+    { 0x80042134, 0x800421F0, -0x104 }, // camCopyOrthoMatrix
+    { 0x80048D84, 0x80048E20, -0x1D0 }, // mathMtxF2L
+    { 0x800498E8, 0x80049978, -0x1C0 }, // matrixTranslate
+    { 0x8004EDBC, 0x8004F700, -0x0F0 }, // rcpTileWrite, rcpTileWriteX
+    { 0x80054EA0, 0x80054EF0, -0x158 }, // viGetCurrentSize
+    { 0x80058EF0, 0x80059814, -0x1A8 }, // frontPrintNum, frontDrawRectangles
+    { 0x8005A0D0, 0x8005A51C, -0x1A8 }, // frontDrawObj
+    { 0x80066B80, 0x800683D4, 0x040 }, // diagnostic block holding every HUD cave
+    { 0x8006D390, 0x8006D600, 0x084 }, // fxDrawLine, fxDrawLineInWindow
+    { 0x8006DAE8, 0x8006E0C4, 0x084 }, // PlotAddRG
+    { 0x8006E188, 0x8006EDF0, 0x084 }, // fxOutputLines
+    { 0x8006FD9C, 0x8006FDA8, 0x088 }, // fontPrintWindowXY: the two saves after the frame, and the resume
+    { 0x80070500, 0x80070508, 0x0BC }, // fontPrintWindowXY: glyph Y packing
+    { 0x80070550, 0x8007055C, 0x0BC }, // fontPrintWindowXY: texture step
+    { 0x800706CC, 0x800706D4, 0x0C0 }, // fontPrintWindowXY: return
+    { 0x800A0800, 0x800A32A8, -0x140 }, // data: camCopyOrthoMatrix constants
+    { 0x800A3530, 0x800AAA21, -0x0F0 }, // data: video mode scales, players, front end, glyphs
+    { 0x800FDFE0, 0x800FFE41, -0x0E0 }, // bss: overlay table, resolution index, currentScreen, frontgfx, HUD textures, objects
+    { 0x80100840, 0x80102D41, -0x0E0 }, // bss: cpuTraceTrackBufStatus padding (HUD scope bytes)
+    { 0x80102DC0, 0x80103B95, -0x0E8 }, // bss: CPU line queue index
+};
+
 struct OVERLAY_RANGE
 {
     uint32_t Module;
@@ -104,8 +143,52 @@ const OVERLAY_RANGE PalOverlayRanges[] =
     { 63, 0x0768, 0x0A50, 0xC4 },
 };
 
+// US module offset [Start, End) -> JP module offset, for the same modules.
+// Modules 12 and 13 are unchanged. 6 (health), 14 (instruments), 61 and 63
+// carry the Japanese layout and text, so their ranges follow the aligned code
+// and cover only the functions the HUD reaches. In the tribal counter, which
+// JP reschedules, single words map to the JP instruction with the same role.
+const OVERLAY_RANGE JpOverlayRanges[] =
+{
+    { 6, 0x0000, 0x0068, 0 },      // instDrawHealth prologue
+    { 6, 0x03C4, 0x0468, 0xAC },   // its matrix call
+    { 6, 0x0C34, 0x15EC, 0xAC },   // its sprite call and return, radar point
+    { 12, 0x0000, 0x1BE0, 0 },
+    { 13, 0x0000, 0x17D0, 0 },
+    { 14, 0x0000, 0x0F8C, 0 },     // Floyd, scope entry, weapon group call, fuel gauge
+    { 14, 0x0F94, 0x0FF8, -0x8 },  // fuel label (JP drops a font call before it)
+    { 14, 0x0FF8, 0x1DC8, 0 },     // fuel counter, scope exit, selector, pickup backing, pickup text X
+    { 14, 0x1DD4, 0x1DD8, 0 },
+    { 14, 0x1E0C, 0x1F74, 0x14 },  // pickup scissor and text flags
+    { 14, 0x1F94, 0x220C, 0x18 },  // tribal counter backing, scissor constant
+    { 14, 0x2210, 0x221C, 0x18 },  // tribal counter scissor, JP's registers
+    { 14, 0x2268, 0x2460, 0x18 },  // tribal counter scissor left
+    { 14, 0x2484, 0x2488, 0x18 },  // tribal counter: count offset constant (JP 175, US 180)
+    { 14, 0x2490, 0x24C8, 0x18 },  // tribal counter: count X, first icon
+    { 14, 0x24F8, 0x2500, 0x18 },  // tribal counter: second icon, rescheduled
+    { 14, 0x2520, 0x258C, 0x18 },  // tribal counter: third icon
+    { 14, 0x2598, 0x259C, 0x30 },  // tribal counter: first count X
+    { 14, 0x25BC, 0x25E8, 0x1C },  // tribal counter: stride
+    { 14, 0x25EC, 0x25F0, 0x24 },  // tribal counter: second count X
+    { 14, 0x2600, 0x261C, 0x20 },  // tribal counter: stride
+    { 14, 0x2620, 0x2624, 0x28 },  // tribal counter: third count X
+    { 14, 0x2634, 0x267C, 0x24 },  // weapon frame
+    { 14, 0x28F0, 0x2E18, 0x24 },  // weapon group, shot gauge call
+    { 14, 0x3E70, 0x4858, -0x130 }, // data: shot gauge rectangles
+    { 61, 0x0000, 0x097C, 0 },
+    { 61, 0x0DEC, 0x2FA0, 0x14 },  // multiplayer instruments and radar
+    { 63, 0x0134, 0x0450, 0x24 },  // title logo prologue
+    { 63, 0x0954, 0x0A50, 0x24 },  // title logo scale and branch
+};
+
 // An offset no module is large enough to hold: base + this is never RDRAM.
 const uint32_t InvalidOffset = 0x7FF00000;
+
+template <typename T, size_t N>
+inline size_t RangeCount(const T (&)[N])
+{
+    return N;
+}
 
 inline uint32_t AddressFor(BuildId Build, uint32_t Us)
 {
@@ -113,14 +196,13 @@ inline uint32_t AddressFor(BuildId Build, uint32_t Us)
     {
         return Us;
     }
-    if (Build == BuildPal)
+    const RANGE * Ranges = Build == BuildPal ? PalMainRanges : Build == BuildJp ? JpMainRanges : nullptr;
+    const size_t Size = Build == BuildPal ? RangeCount(PalMainRanges) : Build == BuildJp ? RangeCount(JpMainRanges) : 0;
+    for (size_t i = 0; i < Size; i++)
     {
-        for (const RANGE & Range : PalMainRanges)
+        if (Us >= Ranges[i].Start && Us < Ranges[i].End)
         {
-            if (Us >= Range.Start && Us < Range.End)
-            {
-                return (uint32_t)((int32_t)Us + Range.Delta);
-            }
+            return (uint32_t)((int32_t)Us + Ranges[i].Delta);
         }
     }
     return 0;
@@ -132,14 +214,13 @@ inline uint32_t OffsetFor(BuildId Build, uint32_t Module, uint32_t Us)
     {
         return Us;
     }
-    if (Build == BuildPal)
+    const OVERLAY_RANGE * Ranges = Build == BuildPal ? PalOverlayRanges : Build == BuildJp ? JpOverlayRanges : nullptr;
+    const size_t Size = Build == BuildPal ? RangeCount(PalOverlayRanges) : Build == BuildJp ? RangeCount(JpOverlayRanges) : 0;
+    for (size_t i = 0; i < Size; i++)
     {
-        for (const OVERLAY_RANGE & Range : PalOverlayRanges)
+        if (Ranges[i].Module == Module && Us >= Ranges[i].Start && Us < Ranges[i].End)
         {
-            if (Range.Module == Module && Us >= Range.Start && Us < Range.End)
-            {
-                return (uint32_t)((int32_t)Us + Range.Delta);
-            }
+            return (uint32_t)((int32_t)Us + Ranges[i].Delta);
         }
     }
     return InvalidOffset;
@@ -177,7 +258,7 @@ inline bool RelocateFor(BuildId Build, const uint32_t * Us, size_t Count, std::v
     {
         return true;
     }
-    if (Build != BuildPal)
+    if (Build != BuildPal && Build != BuildJp)
     {
         return false;
     }
@@ -270,9 +351,9 @@ inline bool RelocateFor(BuildId Build, const uint32_t * Us, size_t Count, std::v
 }
 
 // The game's resolution index is 0..3 on NTSC (low, widescreen, medium,
-// high-resolution widescreen). viChangeMode adds 8 on a PAL console, so the PAL
-// build runs the same four modes as 8..11. Returns 0..3, or 0xFF for any other
-// value (boot and reset modes).
+// high-resolution widescreen), US and JP alike. viChangeMode adds 8 on a PAL
+// console, so the PAL build runs the same four modes as 8..11. Returns 0..3, or
+// 0xFF for any other value (boot and reset modes).
 inline uint8_t VideoModeFor(BuildId Build, uint8_t Raw)
 {
     if (Build == BuildPal)

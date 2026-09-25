@@ -1,6 +1,7 @@
 #pragma once
 
 #include "JetForceGeminiHudBuild.h"
+#include "JetForceGeminiHudJpOriginals.h"
 #include "JetForceGeminiHudPalOriginals.h"
 #include <cstdint>
 #include <vector>
@@ -127,12 +128,14 @@ static_assert(StepStub.Us + sizeof(StepCode) == 0x80067950, "Floyd line helper l
 static_assert(StepTailStub.Us + sizeof(StepTailCode) <= 0x80067360, "Floyd line tail leaves its cave");
 static_assert(sizeof(JfgHudPal::FloydHudOriginalDiagnosticCode) == sizeof(OriginalDiagnosticCode),
               "PAL diagnostic image size");
+static_assert(sizeof(JfgHudJp::FloydHudOriginalDiagnosticCode) == sizeof(OriginalDiagnosticCode),
+              "JP diagnostic image size");
 
 // The retail diagnostic as the ROM in hand holds it.
 inline std::vector<uint32_t> OriginalDiagnosticImage()
 {
-    const bool Pal = JfgHudBuild::Current() == JfgHudBuild::BuildPal;
-    const uint32_t * Words = Pal ? JfgHudPal::FloydHudOriginalDiagnosticCode : OriginalDiagnosticCode;
+    const uint32_t * Words = JfgHudBuild::ForBuild<const uint32_t *>(
+        OriginalDiagnosticCode, JfgHudPal::FloydHudOriginalDiagnosticCode, JfgHudJp::FloydHudOriginalDiagnosticCode);
     return std::vector<uint32_t>(Words, Words + sizeof(OriginalDiagnosticCode) / sizeof(uint32_t));
 }
 
@@ -158,13 +161,14 @@ static_assert(FixedPatches[4].Address == StepEntry.Us && FixedPatches[4].Origina
               FixedPatches[4].Replacement == (0x15400000 | (((StepStub.Us - (StepEntry.Us + 4)) >> 2) & 0xFFFF)) &&
               FixedPatches[5].Original == StepDelayOriginal, "Step hook must branch to StepStub");
 
-// FixedPatches for the ROM in hand. On PAL the addresses are translated, the
-// guard keeps the PAL diagnostic's own words, and the jump and branch are
-// recomputed for helpers that moved by a different amount than the renderer.
+// FixedPatches for the ROM in hand. On PAL and JP the addresses are
+// translated, the guard keeps the build's own diagnostic words, and the jump
+// and branch are recomputed for helpers that moved by a different amount than
+// the renderer.
 inline std::vector<WordPatch> FixedPatchesForBuild()
 {
     std::vector<WordPatch> Patches(FixedPatches, FixedPatches + sizeof(FixedPatches) / sizeof(FixedPatches[0]));
-    if (JfgHudBuild::Current() != JfgHudBuild::BuildPal)
+    if (JfgHudBuild::Current() == JfgHudBuild::BuildUs)
     {
         return Patches;
     }

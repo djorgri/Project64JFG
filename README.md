@@ -196,18 +196,19 @@ snappier variant used when nobody orbits.
 
 The game-specific patches activate for these builds:
 
-| | Retail USA | Retail PAL | Kiosk demo |
-| --- | --- | --- | --- |
-| Internal name | `JET FORCE GEMINI` | `JET FORCE GEMINI` | `J F G DISPLAY` |
-| Cartridge ID | `NJFE` (USA) | `NJFP` (Europe) | — |
-| Revision | 1.0 (version byte `0x00`) | 1.0 (version byte `0x00`) | demo |
-| Internal CRC | `8A6009B6` `94ACE150` | `68D7A1DE` `0079834A` | `DFD8AB47` `3CDBEB89` |
-| Size | 33,554,432 bytes (32 MiB) | 33,554,432 bytes (32 MiB) | 33,554,432 bytes (32 MiB) |
+| | Retail USA | Retail PAL | Retail Japan | Kiosk demo |
+| --- | --- | --- | --- | --- |
+| Internal name | `JET FORCE GEMINI` | `JET FORCE GEMINI` | `STAR TWINS` | `J F G DISPLAY` |
+| Cartridge ID | `NJFE` (USA) | `NJFP` (Europe) | `NJFJ` (Japan) | — |
+| Revision | 1.0 (version byte `0x00`) | 1.0 (version byte `0x00`) | 1.0 (version byte `0x00`) | demo |
+| Internal CRC | `8A6009B6` `94ACE150` | `68D7A1DE` `0079834A` | `F163A242` `F2449B3B` | `DFD8AB47` `3CDBEB89` |
+| Size | 33,554,432 bytes (32 MiB) | 33,554,432 bytes (32 MiB) | 33,554,432 bytes (32 MiB) | 33,554,432 bytes (32 MiB) |
 
 Each build has its own address table, so the same features run on all of them
-without a separate code path. See [Docs/JFG_KIOSK_PORT.md](./Docs/JFG_KIOSK_PORT.md)
-and [Docs/JFG_PAL_PORT.md](./Docs/JFG_PAL_PORT.md) for how the Kiosk and PAL
-addresses were established.
+without a separate code path. See [Docs/JFG_KIOSK_PORT.md](./Docs/JFG_KIOSK_PORT.md),
+[Docs/JFG_PAL_PORT.md](./Docs/JFG_PAL_PORT.md) and
+[Docs/JFG_JP_PORT.md](./Docs/JFG_JP_PORT.md) for how the Kiosk, PAL and
+Japanese addresses were established.
 
 <details>
 <summary>Reference hashes</summary>
@@ -239,6 +240,20 @@ PAL retail, byte-swapped image (`.n64`, v64 byte order):
 | --- | --- |
 | MD5 | `761a047404c6460a077ff858e0244a8f` |
 | SHA-1 | `3085a20258f3a554839d0007cb231bc9b96875bc` |
+
+Japanese retail (*Star Twins*), big-endian image (`.z64`, native byte order):
+
+| Hash | Value |
+| --- | --- |
+| MD5 | `ca28a3645fc7ad969ebd75c5d6506e7a` |
+| SHA-1 | `15099233760b36e7afad7da36b9464da1512c4b1` |
+
+Japanese retail, byte-swapped image (`.n64`, v64 byte order):
+
+| Hash | Value |
+| --- | --- |
+| MD5 | `28bd618b8e7cb56789626b758745467d` |
+| SHA-1 | `8f1a670d89c1252326d0979126deff532452f333` |
 
 Kiosk demo, big-endian image (`.z64`):
 
@@ -276,7 +291,7 @@ other option remain available under
 
 ### Experimental widescreen HUD
 
-For the USA or PAL retail ROM, select widescreen in the game's own options, enable
+For the USA, PAL or Japanese retail ROM, select widescreen in the game's own options, enable
 *Force 16:9 display (stretches image)* in the Parallel-RDP graphics settings,
 and keep *Correct widescreen HUD* checked under *Options → Game-specific hacks*
 (it is on by default).
@@ -296,7 +311,7 @@ for measured results, remaining limitations, and the developer trace script.
 
 ### HUD alignment
 
-For the USA or PAL retail ROM in single-player, *Align HUD elements* under
+For the USA, PAL or Japanese retail ROM in single-player, *Align HUD elements* under
 *Options → Game-specific hacks → Jet Force Gemini* is on by default. It gives the weapon frame
 and health arc a base left margin of 13 logical units and centres the health
 icon's placement point within the arc. In widescreen, a small optical adjustment
@@ -317,15 +332,20 @@ coordinates and validation limits.
 
 ## Known limitations
 
-- Only the USA 1.0, PAL 1.0 and Kiosk demo builds listed above are supported by
-  the game-specific patches. The Japanese release is not.
+- Only the USA 1.0, PAL 1.0, Japanese 1.0 and Kiosk demo builds listed above
+  are supported by the game-specific patches.
 - The experimental widescreen HUD correction and HUD alignment are limited to
-  the USA and PAL retail builds; the Kiosk demo keeps its original HUD.
+  the USA, PAL and Japanese retail builds; the Kiosk demo keeps its original
+  HUD.
 - The PAL build runs at 50 Hz, so the 60 and 30 FPS modes give 50 and 25 FPS.
   Its support was established by aligning its code with the USA build,
   validated against a memory image built from the PAL ROM and confirmed in a
   first play session; see [Docs/JFG_PAL_PORT.md](./Docs/JFG_PAL_PORT.md) for
   the areas to recheck in game.
+- The Japanese build (*Star Twins*) was established the same way and validated
+  against memory images built from its ROM, but has not yet been played with
+  the patches; see [Docs/JFG_JP_PORT.md](./Docs/JFG_JP_PORT.md) for what to
+  check in game first.
 - In 60 FPS mode the water wake can vanish after it first appears; see the
   investigation notes in the hacking reference.
 - Floyd's lateral thrust takes its heading from a field of the player object

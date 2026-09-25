@@ -1,5 +1,6 @@
 #pragma once
 #include "JetForceGeminiHudBuild.h"
+#include "JetForceGeminiHudJpOriginals.h"
 #include "JetForceGeminiHudPalOriginals.h"
 #include <cstdint>
 #include <vector>
@@ -52,9 +53,10 @@ const uint32_t Code[] = {
 // The retail diagnostic as the ROM in hand holds it.
 inline std::vector<uint32_t> OriginalImage()
 {
-    const bool Pal = JfgHudBuild::Current() == JfgHudBuild::BuildPal;
-    const uint32_t * Words = Pal ? JfgHudPal::RocketOverlayOriginal : Original;
+    const uint32_t * Words =
+        JfgHudBuild::ForBuild<const uint32_t *>(Original, JfgHudPal::RocketOverlayOriginal, JfgHudJp::RocketOverlayOriginal);
     return std::vector<uint32_t>(Words, Words + sizeof(Original) / sizeof(Original[0]));
 }
 static_assert(sizeof(JfgHudPal::RocketOverlayOriginal) == sizeof(Original), "PAL rocket image size");
+static_assert(sizeof(JfgHudJp::RocketOverlayOriginal) == sizeof(Original), "JP rocket image size");
 }

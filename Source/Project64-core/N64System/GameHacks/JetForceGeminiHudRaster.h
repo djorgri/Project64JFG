@@ -2,12 +2,13 @@
 
 #include "GameHackMemory.h"
 #include "JetForceGeminiHudBuild.h"
+#include "JetForceGeminiHudJpOriginals.h"
 #include "JetForceGeminiHudPalOriginals.h"
 #include "JetForceGeminiHudRasterOriginal.h"
 #include <vector>
 
 // Optional isolated native rendering of the retail health, weapon and font
-// renderers (US, and PAL through JetForceGeminiHudBuild.h). MMIO notifications
+// renderers (US, and PAL and JP through JetForceGeminiHudBuild.h). MMIO notifications
 // append ordinary PipeSync markers through the supporting graphics plugin; with
 // another plugin the original draw is intact.
 namespace JfgHudRaster
@@ -20,13 +21,41 @@ constexpr JfgHudBuild::UsAddress TextEnter = { UsStart + 0x90 }, TextExit = { Us
 constexpr JfgHudBuild::UsOffset HealthReturn = { 6, 0xC6C };
 constexpr JfgHudBuild::UsOffset WeaponEntry = { 14, 0x2940 }, WeaponReturn = { 14, 0x2CB8 };
 static_assert(sizeof(JfgHudPal::HudRasterOriginal) == sizeof(Original), "PAL image must pair with the US one");
+static_assert(sizeof(JfgHudJp::HudRasterOriginal) == sizeof(Original), "JP image must pair with the US one");
 
 inline std::vector<uint32_t> OriginalImage(void)
 {
-    const uint32_t * Words = JfgHudBuild::Current() == JfgHudBuild::BuildPal ? JfgHudPal::HudRasterOriginal : Original;
+    const uint32_t * Words =
+        JfgHudBuild::ForBuild<const uint32_t *>(Original, JfgHudPal::HudRasterOriginal, JfgHudJp::HudRasterOriginal);
     return std::vector<uint32_t>(Words, Words + sizeof(Original) / 4);
 }
+
 inline uint32_t Jump(uint32_t address) { return 0x08000000 | ((address >> 2) & 0x03FFFFFF); }
+
+// fontPrintWindowXY's two stores after its frame is allocated, and its return.
+// JP rewrote the renderer for two-byte text: a 0x88-byte frame, other saved
+// registers there, and the Gfx** argument kept in $s3 and homed at sp+0x88
+// only once the text is under way. The JP entry stub homes it itself in the
+// jump's delay slot (the renderer stores the same value there later), so the
+// exit reads it the same way on every build. Both stubs keep the US shape: the
+// plugin checks the notification stores at their US positions.
+inline std::vector<uint32_t> TextEnterCode(void)
+{
+    const uint32_t resume = Jump(JfgHudBuild::Address(0x8006FDA4));
+    if (JfgHudBuild::Current() == JfgHudBuild::BuildJp)
+    {
+        return { 0xAFB40028, 0xAFB30024, 0x3C18B3FF, 0xAF047FD0, resume, 0xAFA40088 };
+    }
+    return { 0xAFB30020, 0xAFB00014, 0x3C18B3FF, 0xAF047FD0, resume, 0 };
+}
+inline std::vector<uint32_t> TextExitCode(void)
+{
+    if (JfgHudBuild::Current() == JfgHudBuild::BuildJp)
+    {
+        return { 0x8FB80088, 0x3C19B3FF, 0xAF387FD4, 0x03E00008, 0x27BD0088 };
+    }
+    return { 0x8FB80080, 0x3C19B3FF, 0xAF387FD4, 0x03E00008, 0x27BD0080 };
+}
 
 inline uint32_t Module(CGameHackMemory &memory, unsigned index, uint32_t length)
 {
@@ -60,14 +89,16 @@ inline bool TextReady(CGameHackMemory &memory)
 
 inline bool UpdateTitleLogo(CGameHackMemory &memory, CGameHackCodePatcher &patcher, bool enabled)
 {
-    // PAL's title module is larger (0xD30 bytes of text), and tests the same
-    // flag in $t9 rather than $t2 at the branch.
-    const uint32_t title = Module(memory, 63, JfgHudBuild::BuildWord{ 0xC60, 0xD30 });
+    // PAL's and JP's title modules are larger (0xD30 and 0xC90 bytes of text),
+    // and both test the same flag in $t9 rather than $t2 at the branch. JP's
+    // frame is 8 bytes smaller.
+    const uint32_t title = Module(memory, 63, JfgHudBuild::BuildWord{ 0xC60, 0xD30, 0xC90 });
     if (!title) return true; // Never write back into a discarded allocation.
     auto at = [title](uint32_t offset) { return title + JfgHudBuild::Offset(63, offset); };
     const uint32_t tileWrite = JfgHudBuild::Word(0x0C013B6F), tileWriteX = JfgHudBuild::Word(0x0C013C0B);
     const GAME_HACK_CODE_PATCH signature[] = {
-        { at(0x140), 0x27BDFF30, 0x27BDFF30 },
+        { at(0x140), JfgHudBuild::BuildWord{ 0x27BDFF30, 0x27BDFF30, 0x27BDFF38 },
+          JfgHudBuild::BuildWord{ 0x27BDFF30, 0x27BDFF30, 0x27BDFF38 } },
         { at(0x144), 0xAFBF0044, 0xAFBF0044 },
         { at(0x964), 0x3C013F40, 0x3C013F40 }, // scale X = .75
         { at(0x974), 0, 0 },
@@ -77,7 +108,7 @@ inline bool UpdateTitleLogo(CGameHackMemory &memory, CGameHackCodePatcher &patch
         // Select the existing scaled logo path only. Its anchor (160, Y),
         // texture list and fade are shared with the stock path. This keeps
         // drawing in the guest RDP, before VI filtering, with no extra layer.
-        { at(0x970), JfgHudBuild::BuildWord{ 0x1540000C, 0x1720000C }, 0x1000000C },
+        { at(0x970), JfgHudBuild::BuildWord{ 0x1540000C, 0x1720000C, 0x1720000C }, 0x1000000C },
     };
     const auto result = patcher.SetEnabled(signature, sizeof(signature) / sizeof(signature[0]), enabled);
     return result != CGameHackCodePatcher::Result_SignatureMismatch &&
@@ -109,15 +140,11 @@ inline std::vector<uint32_t> Image(uint32_t health, uint32_t weapon, bool text =
     if (text)
     {
         // font's shared renderer takes a Gfx** in a0 (not necessarily the
-        // global HUD cursor). Its saved argument at sp+0x80 survives all exits.
-        const uint32_t enterText[] = {
-            0xAFB30020, 0xAFB00014, 0x3C18B3FF, 0xAF047FD0, Jump(JfgHudBuild::Address(0x8006FDA4)), 0,
-        };
-        const uint32_t exitText[] = {
-            0x8FB80080, 0x3C19B3FF, 0xAF387FD4, 0x03E00008, 0x27BD0080,
-        };
-        place(TextEnter, enterText, sizeof(enterText) / 4);
-        place(TextExit, exitText, sizeof(exitText) / 4);
+        // global HUD cursor). Its saved argument at sp+0x80 (sp+0x88 on JP)
+        // survives all exits.
+        const std::vector<uint32_t> enterText = TextEnterCode(), exitText = TextExitCode();
+        place(TextEnter, enterText.data(), enterText.size());
+        place(TextExit, exitText.data(), exitText.size());
     }
     image[image.size() - 2] = health;
     image[image.size() - 1] = weapon;
@@ -139,10 +166,11 @@ inline std::vector<GAME_HACK_CODE_PATCH> Hooks(uint32_t health, uint32_t weapon,
     if (!health || !weapon) hooks.clear(); // Menus use only the fixed font hooks.
     if (text)
     {
-        hooks.push_back({ JfgHudBuild::Address(0x8006FD9C), 0xAFB30020, Jump(TextEnter) });
-        hooks.push_back({ JfgHudBuild::Address(0x8006FDA0), 0xAFB00014, 0 });
-        hooks.push_back({ JfgHudBuild::Address(0x800706CC), 0x03E00008, Jump(TextExit) });
-        hooks.push_back({ JfgHudBuild::Address(0x800706D0), 0x27BD0080, 0 });
+        const std::vector<uint32_t> enterText = TextEnterCode(), exitText = TextExitCode();
+        hooks.push_back({ JfgHudBuild::Address(0x8006FD9C), enterText[0], Jump(TextEnter) });
+        hooks.push_back({ JfgHudBuild::Address(0x8006FDA0), enterText[1], 0 });
+        hooks.push_back({ JfgHudBuild::Address(0x800706CC), exitText[3], Jump(TextExit) });
+        hooks.push_back({ JfgHudBuild::Address(0x800706D0), exitText[4], 0 });
     }
     return hooks;
 }

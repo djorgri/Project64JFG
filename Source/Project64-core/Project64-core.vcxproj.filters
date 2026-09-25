@@ -752,6 +752,9 @@
     <ClInclude Include="N64System\GameHacks\JetForceGeminiHudBuildMap.h">
       <Filter>Header Files\N64 System\GameHacks</Filter>
     </ClInclude>
+    <ClInclude Include="N64System\GameHacks\JetForceGeminiHudJpOriginals.h">
+      <Filter>Header Files\N64 System\GameHacks</Filter>
+    </ClInclude>
     <ClInclude Include="N64System\GameHacks\JetForceGeminiHudPalOriginals.h">
       <Filter>Header Files\N64 System\GameHacks</Filter>
     </ClInclude>

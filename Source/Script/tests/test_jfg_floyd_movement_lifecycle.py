@@ -39,7 +39,7 @@ def translation_unit():
     tables = (HACKS / "JetForceGeminiAddresses.cpp").read_text(encoding="utf-8-sig")
     tables = "\n".join("const JFG_ADDRESSES " + name + " = {" + re.search(
         r"const JFG_ADDRESSES " + name + r"\s*=\s*\{(.*?)\};", tables, re.S).group(1) + "};"
-        for name in ("JfgUsAddresses", "JfgKioskAddresses", "JfgPalAddresses"))
+        for name in ("JfgUsAddresses", "JfgKioskAddresses", "JfgPalAddresses", "JfgJpAddresses"))
     assignments = function(source, "void ApplyAddressTable(")
     assignments = "\n".join(line for line in assignments.splitlines()
                             if re.match(r"\s*(\w+) = A\.\1;", line) and line.strip().split()[0] in names)

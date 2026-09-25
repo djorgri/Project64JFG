@@ -38,13 +38,14 @@ bool ISViewerHandler::Read32(uint32_t Address, uint32_t & Value)
 
 bool ISViewerHandler::Write32(uint32_t Address, uint32_t Value, uint32_t Mask)
 {
-    // Private bridge used only by the signature-checked JFG trampolines (US and
-    // PAL builds). Keep the ordinary ISViewer text protocol and all other ROMs
-    // unchanged.
+    // Private bridge used only by the signature-checked JFG trampolines (US,
+    // PAL and JP builds). Keep the ordinary ISViewer text protocol and all
+    // other ROMs unchanged.
     const auto rom = reinterpret_cast<const uint32_t *>(m_Rom.GetRomAddress());
     const bool JfgRom = m_Rom.GetRomSize() >= 0x40 &&
         ((rom[4] == 0x8A6009B6 && rom[5] == 0x94ACE150) || // NJFE
-         (rom[4] == 0x68D7A1DE && rom[5] == 0x0079834A));  // NJFP
+         (rom[4] == 0x68D7A1DE && rom[5] == 0x0079834A) || // NJFP
+         (rom[4] == 0xF163A242 && rom[5] == 0xF2449B3B));  // NJFJ
     if (Address >= 0x13FF7FC0 && Address <= 0x13FF7FCC && !(Address & 3) &&
         Mask == 0xFFFFFFFF && JfgRom)
     {

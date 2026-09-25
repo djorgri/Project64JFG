@@ -183,6 +183,7 @@
     <ClInclude Include="N64System\GameHacks\JetForceGeminiAddresses.h" />
     <ClInclude Include="N64System\GameHacks\JetForceGeminiHudBuild.h" />
     <ClInclude Include="N64System\GameHacks\JetForceGeminiHudBuildMap.h" />
+    <ClInclude Include="N64System\GameHacks\JetForceGeminiHudJpOriginals.h" />
     <ClInclude Include="N64System\GameHacks\JetForceGeminiHudPalOriginals.h" />
     <ClInclude Include="N64System\FramePerSecond.h" />
     <ClInclude Include="N64System\Interpreter\InterpreterOps.h" />

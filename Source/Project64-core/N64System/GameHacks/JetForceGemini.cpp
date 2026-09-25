@@ -731,6 +731,28 @@ const WIDESCREEN_HUD_BANNER_WORD_PATCH WidescreenHudBannerPatches[] =
     { 0x1F64, 0x240E0008, 0x240E000C, 0x240E000C }, // shadow, same alignment
 };
 
+// JP starts its (Japanese) message at capX - 42 rather than capX - 32 and
+// builds the scissor's right edge in f6/f8/f10/f16. Centring the text puts it
+// at the same point as on the US build, so the words are the US ones where the
+// code is, and the scissor sum follows the JP registers. Offsets are US ones.
+const WIDESCREEN_HUD_BANNER_WORD_PATCH WidescreenHudBannerPatchesJp[] =
+{
+    { 0x1DB8, 0x3C0142F4, 0x3C013F40, 0x3C013F40 }, // f4: 122 -> .75
+    { 0x1DC0, 0x3C0142A0, 0x3C014238, 0x3C0142BE }, // f8: 80 -> 46 / 95
+    { 0x1DD4, 0x46049181, 0x46049182, 0x46049182 }, // mul.s f6, f18, f4
+    { 0x1E20, 0x3C01ED14, 0x3C01ED10, 0x3C01ED1C },
+    { 0x1E28, 0x34218000, 0x34216000, 0x3421A000 },
+    { 0x1E48, 0x3C014320, 0x3C014040, 0x3C014040 }, // f8: 160 -> 3
+    { 0x1E50, 0x00000000, 0x3C0143F8, 0x3C01442D }, // at: 496 / 692
+    { 0x1E54, 0x46083280, 0x46083282, 0x46083282 }, // mul.s f10, f6, f8
+    { 0x1E58, 0x46005402, 0x44818000, 0x44818000 }, // mtc1 at, f16
+    { 0x1E60, 0x00000000, 0x46105400, 0x46105400 }, // add.s f16, f10, f16
+    { 0x1EFC, 0x24180008, 0x2418000C, 0x2418000C },
+    { 0x1F64, 0x240E0008, 0x240E000C, 0x240E000C },
+};
+static_assert(sizeof(WidescreenHudBannerPatchesJp) == sizeof(WidescreenHudBannerPatches),
+              "JP banner table must pair with the US one");
+
 // The tribal counter slides out of the weapon frame too: a matrix-backed bar
 // whose right end follows front-end object 6 (its cap, open at X = 69), three
 // object 13 icons at capX - 140 + 48k, and three counts printed at screen
@@ -754,6 +776,28 @@ const WIDESCREEN_HUD_BANNER_WORD_PATCH WidescreenHudTribalPatches[] =
     { 0x2608, 0x26100030, 0x26100024, 0x26100024 },
     { 0x2620, 0x02002825, 0x2605FFDE, 0x2605000F },
 };
+
+// JP lays the counter out for its own text: icons at capX - 152 + 52k, counts
+// printed at s0 + 10 with s0 = trunc(capX + 23), and the scissor built from
+// the same 5 and 160 in other registers. The same mapping gives counts at
+// s0 = trunc(.75 * (capX + 91)) - 39 / + 10 and a stride of 39. Offsets stay in
+// US terms; JpOverlayRanges maps each to the JP instruction with the same role.
+const WIDESCREEN_HUD_BANNER_WORD_PATCH WidescreenHudTribalPatchesJp[] =
+{
+    { 0x2208, 0x3C0140A0, 0x3C013F40, 0x3C013F40 }, // f8: 5 -> .75
+    { 0x2210, 0x3C014320, 0x3C0142F0, 0x3C014329 }, // f16: 160 -> 120 / 169
+    { 0x2218, 0x46083281, 0x46083282, 0x46083282 }, // mul.s f10, f6, f8
+    { 0x2334, 0x240E0045, 0x240E0038, 0x240E0069 }, // scissor left: 69 -> 56 / 105
+    { 0x2484, 0x3C01432F, 0x3C013F40, 0x3C013F40 }, // f4: 175 -> .75
+    { 0x2494, 0x46040180, 0x46043182, 0x46043182 }, // mul.s f6, f6, f4 ; f6 = capX + 91
+    { 0x2598, 0x2605000A, 0x2605FFD9, 0x2605000A }, // addiu a1, s0, -39 / 10
+    { 0x25D4, 0x26100034, 0x26100027, 0x26100027 }, // addiu s0, s0, 39
+    { 0x25EC, 0x2605000A, 0x2605FFD9, 0x2605000A },
+    { 0x2608, 0x26100034, 0x26100027, 0x26100027 },
+    { 0x2620, 0x2605000A, 0x2605FFD9, 0x2605000A },
+};
+static_assert(sizeof(WidescreenHudTribalPatchesJp) == sizeof(WidescreenHudTribalPatches),
+              "JP tribal table must pair with the US one");
 
 // Fuel's matrix-backed frame receives the left HUD bias (-48 / -68) before
 // the .75 X scale. Its rectangles use the screen centre instead, while the
@@ -780,12 +824,26 @@ const WIDESCREEN_HUD_BANNER_WORD_PATCH WidescreenHudFuelPatchesPal[] =
 static_assert(sizeof(WidescreenHudFuelPatchesPal) == sizeof(WidescreenHudFuelPatches),
               "PAL fuel table must pair with the US one");
 
+// JP draws the label one pixel up and left of its stored position, so the
+// label X goes to $t6 (stored for the counter) and $a1 is derived from it; the
+// same edit moves both. The other three words are the US ones.
+const WIDESCREEN_HUD_BANNER_WORD_PATCH WidescreenHudFuelPatchesJp[] =
+{
+    { 0x0F58, 0x240D0042, 0x240D0012, 0x240DFFFE },
+    { 0x0F6C, 0x2406FFD3, 0x2406FFA3, 0x2406FF8F },
+    { 0x0FE0, 0x25AE0005, 0x25AEFFEC, 0x25AEFFDD }, // addiu t6, t5, ...
+    { 0x1030, 0x24840080, 0x24840060, 0x24840060 },
+};
+static_assert(sizeof(WidescreenHudFuelPatchesJp) == sizeof(WidescreenHudFuelPatches),
+              "JP fuel table must pair with the US one");
+
 constexpr JfgHudBuild::UsAddress WidescreenHudCamCopyEntry = { 0x80042158 };
-constexpr JfgHudBuild::BuildWord WidescreenHudCamCopyOriginal = { 0xC4243128, 0xC4243398 }; // lwc1 f4, 0x3128(at)
+constexpr JfgHudBuild::BuildWord WidescreenHudCamCopyOriginal = { 0xC4243128, 0xC4243398, 0xC4242FE8 }; // lwc1 f4, 0x3128(at)
 constexpr JfgHudBuild::UsAddress WidescreenHudFontYEntry = { 0x80070500 };
-const uint32_t WidescreenHudFontYOriginal = 0x31AE0FFF; // andi t6, t5, 0x0FFF
+// JP's rewritten font renderer packs the same command with other temporaries.
+constexpr JfgHudBuild::BuildWord WidescreenHudFontYOriginal = { 0x31AE0FFF, 0x31AE0FFF, 0x318F0FFF }; // andi t6, t5, 0x0FFF
 constexpr JfgHudBuild::UsAddress WidescreenHudFontDtdyEntry = { 0x80070550 };
-const uint32_t WidescreenHudFontDtdyOriginal = 0x3C0E0400; // lui t6, 0x0400
+constexpr JfgHudBuild::BuildWord WidescreenHudFontDtdyOriginal = { 0x3C0E0400, 0x3C0E0400, 0x3C0F0400 }; // lui t6, 0x0400
 constexpr JfgHudBuild::UsAddress WidescreenHudSpriteScaleEntry = { 0x80041850 };
 const uint32_t WidescreenHudSpriteScaleOriginal = 0x44050000; // mfc1 a1, f0
 constexpr JfgHudBuild::UsAddress WidescreenHudSpriteScaleAltEntry = { 0x8004189C };
@@ -795,7 +853,7 @@ constexpr JfgHudBuild::UsAddress WidescreenHudMatrixTranslateEntry = { 0x800498E
 const uint32_t WidescreenHudMatrixTranslateOriginal = 0xC4E00000; // lwc1 f0, 0(a3)
 constexpr JfgHudBuild::UsAddress WidescreenHudLineEntry = { 0x8006D390 };
 const uint32_t WidescreenHudLineOriginal = 0x3C0E8010; // lui t6, 0x8010
-constexpr JfgHudBuild::BuildWord WidescreenHudLineDelayOriginal = { 0x8DCE3B90, 0x8DCE35E8 }; // lw t6, 0x3B90(t6)
+constexpr JfgHudBuild::BuildWord WidescreenHudLineDelayOriginal = { 0x8DCE3B90, 0x8DCE35E8, 0x8DCE3AA8 }; // lw t6, 0x3B90(t6)
 constexpr JfgHudBuild::UsAddress WidescreenHudRectangleEntry = { 0x80059790 };
 const uint32_t WidescreenHudRectangleOriginal = 0x8E020000; // lw v0, 0(s0)
 const uint32_t WidescreenHudRectangleDelayOriginal = 0x0018CB80; // sll t9, t8, 14
@@ -1353,14 +1411,32 @@ struct HUD_CODE_OVERRIDE
 const HUD_CODE_OVERRIDE HudCodeOverrides[] =
 {
     // The displaced camCopyOrthoMatrix load: its upper half is the game's own
-    // lui, so the low half is spelled out (0x800A3128 on US, 0x800A3398 on PAL).
-    { WidescreenHudCamCopyCode, 0, { 0xC4243128, 0xC4243398 } },
+    // lui, so the low half is spelled out (0x800A3128 on US, 0x800A3398 on PAL,
+    // 0x800A2FE8 on JP).
+    { WidescreenHudCamCopyCode, 0, { 0xC4243128, 0xC4243398, 0xC4242FE8 } },
     // "sltiu t7, t9, 4": gameplay video modes are 0..3 on NTSC, 8..11 on PAL.
-    { WidescreenHudFloydLineCode, 4, { 0x2F2F0004, 0x2F2F000C } },
+    { WidescreenHudFloydLineCode, 4, { 0x2F2F0004, 0x2F2F000C, 0x2F2F0004 } },
     // fxOutputLines' displaced low half of the line queue index (0x80103B90 on
-    // US, 0x801035E8 on PAL), replayed after the game's lui moved into the
-    // entry's delay slot.
-    { JfgRocketOverlay::Code, 31, { 0x24A53B90, 0x24A535E8 } },
+    // US, 0x801035E8 on PAL, 0x80103AA8 on JP), replayed after the game's lui
+    // moved into the entry's delay slot.
+    { JfgRocketOverlay::Code, 31, { 0x24A53B90, 0x24A535E8, 0x24A53AA8 } },
+    // JP's fontPrintWindowXY packs the glyph rectangle with other temporaries:
+    // lower Y in $t4 and upper Y in $t2 (US $t5, $t3), the assembled word in
+    // $t6 and the masked Y in $t7 (US the other way round). The stub keeps its
+    // shape; only the registers follow.
+    { WidescreenHudFontYCode, 0, { 0x03007825, 0x03007825, 0x03007025 } }, // or t6, t8, zero
+    { WidescreenHudFontYCode, 6, { 0x01AB7023, 0x01AB7023, 0x018A7823 } }, // subu t7, t4, t2
+    { WidescreenHudFontYCode, 7, { 0x000EC080, 0x000EC080, 0x000FC080 } }, // sll t8, t7, 2
+    { WidescreenHudFontYCode, 8, { 0x030EC021, 0x030EC021, 0x030FC021 } }, // addu t8, t8, t7
+    { WidescreenHudFontYCode, 10, { 0x01785823, 0x01785823, 0x01585023 } }, // subu t2, t2, t8
+    { WidescreenHudFontYCode, 11, { 0x01B86821, 0x01B86821, 0x01986021 } }, // addu t4, t4, t8
+    { WidescreenHudFontYCode, 12, { 0x01E0C025, 0x01E0C025, 0x01C0C025 } }, // rebuild: or t8, t6, zero
+    { WidescreenHudFontYCode, 13, { 0x31AE0FFF, 0x31AE0FFF, 0x318F0FFF } }, // stock: andi t7, t4, 0x0FFF
+    // Its texture step is built in $t7 rather than $t6.
+    { WidescreenHudFontDtdyCode, 0, { 0x3C0E0400, 0x3C0E0400, 0x3C0F0400 } }, // lui t7, 0x0400
+    { WidescreenHudFontDtdyCode, 1, { 0x35CE0400, 0x35CE0400, 0x35EF0400 } }, // ori t7, t7, 0x0400
+    { WidescreenHudFontDtdyCode, 7, { 0x3C0E0400, 0x3C0E0400, 0x3C0F0400 } }, // lui t7, 0x0400
+    { WidescreenHudFontDtdyCode, 8, { 0x35CE0300, 0x35CE0300, 0x35EF0300 } }, // ori t7, t7, 0x0300
 };
 
 // A HUD listing for the ROM in hand: relocated, with the overrides above put
@@ -4090,16 +4166,20 @@ bool CJetForceGeminiRuntime::SetWidescreenHudBanner(uint32_t OverlayBase, bool E
         Writes.push_back(Write);
     };
     // Both layouts live in overlay 14 and share its signature-checked lifetime.
-    for (const WIDESCREEN_HUD_BANNER_WORD_PATCH & Patch : WidescreenHudBannerPatches)
+    const WIDESCREEN_HUD_BANNER_WORD_PATCH * BannerPatches =
+        JfgHudBuild::Current() == JfgHudBuild::BuildJp ? WidescreenHudBannerPatchesJp : WidescreenHudBannerPatches;
+    for (size_t i = 0; i < sizeof(WidescreenHudBannerPatches) / sizeof(WidescreenHudBannerPatches[0]); i++)
     {
-        AddWrite(Patch);
+        AddWrite(BannerPatches[i]);
     }
-    for (const WIDESCREEN_HUD_BANNER_WORD_PATCH & Patch : WidescreenHudTribalPatches)
+    const WIDESCREEN_HUD_BANNER_WORD_PATCH * TribalPatches =
+        JfgHudBuild::Current() == JfgHudBuild::BuildJp ? WidescreenHudTribalPatchesJp : WidescreenHudTribalPatches;
+    for (size_t i = 0; i < sizeof(WidescreenHudTribalPatches) / sizeof(WidescreenHudTribalPatches[0]); i++)
     {
-        AddWrite(Patch);
+        AddWrite(TribalPatches[i]);
     }
     const WIDESCREEN_HUD_BANNER_WORD_PATCH * FuelPatches =
-        JfgHudBuild::Current() == JfgHudBuild::BuildPal ? WidescreenHudFuelPatchesPal : WidescreenHudFuelPatches;
+        JfgHudBuild::ForBuild(WidescreenHudFuelPatches, WidescreenHudFuelPatchesPal, WidescreenHudFuelPatchesJp);
     for (size_t i = 0; i < sizeof(WidescreenHudFuelPatches) / sizeof(WidescreenHudFuelPatches[0]); i++)
     {
         AddWrite(FuelPatches[i]);
@@ -4677,8 +4757,9 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
     }
     // fxOutputLines has obtained the dimensions but has not flipped its queue.
     // The lui a1 of its line-queue index moves into the entry's delay slot and
-    // the stub replays the displaced low half (0x3B90 on US, 0x35E8 on PAL).
-    const JfgHudBuild::BuildWord RocketLineIndexLow = { 0x24A53B90, 0x24A535E8 };
+    // the stub replays the displaced low half (0x3B90 on US, 0x35E8 on PAL,
+    // 0x3AA8 on JP).
+    const JfgHudBuild::BuildWord RocketLineIndexLow = { 0x24A53B90, 0x24A535E8, 0x24A53AA8 };
     FixedPatches.push_back({ JfgHudBuild::Address(0x8006E1C4), RocketLineIndexLow, 0x3C058010 });
     FixedPatches.push_back({ JfgHudBuild::Address(0x8006E1C0), 0x3C058010, JumpTo(JfgRocketOverlay::Submit) });
 
@@ -4776,10 +4857,13 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
                 m_WidescreenHudCaveOriginal.clear();
                 return false;
             }
+            // Bounded by the image size rather than JfgRocketOverlay::End: an
+            // end address is past the translated block on PAL and JP.
             const uint32_t Address = WidescreenHudCaveWordAddress(i);
-            if (Address >= JfgRocketOverlay::Start && Address < JfgRocketOverlay::End)
+            const uint32_t RocketStart = JfgRocketOverlay::Start;
+            if (Address >= RocketStart && Address - RocketStart < RocketOriginal.size() * sizeof(uint32_t))
                 m_WidescreenHudCaveOriginal[i] = RocketOriginal[
-                    (Address - JfgRocketOverlay::Start) / 4];
+                    (Address - RocketStart) / 4];
             if (SavedFloydDiagnostic && Address >= JfgFloydHud::GuardStub &&
                 Address < JfgFloydHud::GuardStub + FloydDiagnostic.size() * sizeof(uint32_t))
             {

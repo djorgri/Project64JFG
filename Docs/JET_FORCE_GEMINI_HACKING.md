@@ -6,31 +6,31 @@ patch set and contains no game data.
 
 ## Scope and target ROMs
 
-The runtime accepts three builds, each with its own address table:
+The runtime accepts four builds, each with its own address table:
 
-| Field | USA retail 1.0 | PAL retail 1.0 | Kiosk demo |
-| --- | --- | --- | --- |
-| Internal identifier used by the runtime | `8A6009B6-94ACE150-C:45` | `68D7A1DE-0079834A-C:50` | `DFD8AB47-3CDBEB89-C:45` |
-| Internal name | `JET FORCE GEMINI` | `JET FORCE GEMINI` | `J F G DISPLAY` |
-| Cartridge ID | `NJFE` | `NJFP` | - |
-| Version byte | `0x00` | `0x00` | demo |
-| CRC1 / CRC2 | `8A6009B6` / `94ACE150` | `68D7A1DE` / `0079834A` | `DFD8AB47` / `3CDBEB89` |
-| ROM size | 32 MiB | 32 MiB | 32 MiB |
+| Field | USA retail 1.0 | PAL retail 1.0 | Japanese retail 1.0 | Kiosk demo |
+| --- | --- | --- | --- | --- |
+| Internal identifier used by the runtime | `8A6009B6-94ACE150-C:45` | `68D7A1DE-0079834A-C:50` | `F163A242-F2449B3B-C:4A` | `DFD8AB47-3CDBEB89-C:45` |
+| Internal name | `JET FORCE GEMINI` | `JET FORCE GEMINI` | `STAR TWINS` | `J F G DISPLAY` |
+| Cartridge ID | `NJFE` | `NJFP` | `NJFJ` | - |
+| Version byte | `0x00` | `0x00` | `0x00` | demo |
+| CRC1 / CRC2 | `8A6009B6` / `94ACE150` | `68D7A1DE` / `0079834A` | `F163A242` / `F2449B3B` | `DFD8AB47` / `3CDBEB89` |
+| ROM size | 32 MiB | 32 MiB | 32 MiB | 32 MiB |
 
 The target check is `CJetForceGeminiRuntime::IsSupportedRom()`, which selects
 the table (`JfgAddresses()` in `JetForceGeminiAddresses.cpp`) and applies it
 to the runtime's address globals. **Every address quoted in this document is
-the USA value**; the Kiosk and PAL counterparts are the same fields of
-`JfgKioskAddresses` and `JfgPalAddresses`, and
-[JFG_KIOSK_PORT.md](JFG_KIOSK_PORT.md) and [JFG_PAL_PORT.md](JFG_PAL_PORT.md)
-record how each one was established. The HUD hacks (widescreen correction,
-alignment, native raster, Floyd outline, multiplayer HUD, rocket reticle) are
-the exception: they stay spelled in USA terms and are translated for PAL by
-`JetForceGeminiHudBuild.h`; the Kiosk demo keeps its original HUD.
+the USA value**; the Kiosk, PAL and Japanese counterparts are the same fields
+of `JfgKioskAddresses`, `JfgPalAddresses` and `JfgJpAddresses`, and
+[JFG_KIOSK_PORT.md](JFG_KIOSK_PORT.md), [JFG_PAL_PORT.md](JFG_PAL_PORT.md) and
+[JFG_JP_PORT.md](JFG_JP_PORT.md) record how each one was established. The HUD
+hacks (widescreen correction, alignment, native raster, Floyd outline,
+multiplayer HUD, rocket reticle) are the exception: they stay spelled in USA
+terms and are translated for PAL and JP by `JetForceGeminiHudBuild.h`; the
+Kiosk demo keeps its original HUD.
 
 Do not reuse any address here for another revision without reversing and
-validating that revision independently. The Japanese release is not
-supported.
+validating that revision independently.
 
 ## Where the implementation lives
 
@@ -38,9 +38,9 @@ supported.
 | --- | --- |
 | Runtime, patches, MIPS stubs and patch tables | [`Source/Project64-core/N64System/GameHacks/JetForceGemini.cpp`](../Source/Project64-core/N64System/GameHacks/JetForceGemini.cpp) |
 | Runtime interface and lifecycle | [`Source/Project64-core/N64System/GameHacks/JetForceGemini.h`](../Source/Project64-core/N64System/GameHacks/JetForceGemini.h) |
-| Per-build address tables (USA, PAL, Kiosk) and their selection | [`JetForceGeminiAddresses.h`](../Source/Project64-core/N64System/GameHacks/JetForceGeminiAddresses.h) / [`.cpp`](../Source/Project64-core/N64System/GameHacks/JetForceGeminiAddresses.cpp) |
+| Per-build address tables (USA, PAL, JP, Kiosk) and their selection | [`JetForceGeminiAddresses.h`](../Source/Project64-core/N64System/GameHacks/JetForceGeminiAddresses.h) / [`.cpp`](../Source/Project64-core/N64System/GameHacks/JetForceGeminiAddresses.cpp) |
 | Widescreen HUD, HUD alignment, HUD raster, Floyd and multiplayer HUD tables | `JetForceGeminiHud*.h`, `JetForceGeminiFloydHud.h`, `JetForceGeminiMultiplayerHud.h`, `JetForceGeminiRocketOverlay.h` in the same directory |
-| USA -> PAL translation of the HUD tables, and the PAL originals of the borrowed diagnostic routines | `JetForceGeminiHudBuildMap.h` (shared with the plugin), `JetForceGeminiHudBuild.h`, `JetForceGeminiHudPalOriginals.h` in the same directory; the plugin selects its build in [`JfgBuild.h`](../Source/Project64-parallel-rdp/JfgBuild.h) |
+| USA -> PAL and USA -> JP translation of the HUD tables, and the PAL and JP originals of the borrowed diagnostic routines | `JetForceGeminiHudBuildMap.h` (shared with the plugin), `JetForceGeminiHudBuild.h`, `JetForceGeminiHudPalOriginals.h`, `JetForceGeminiHudJpOriginals.h` in the same directory; the plugin selects its build in [`JfgBuild.h`](../Source/Project64-parallel-rdp/JfgBuild.h) |
 | Checked RDRAM access and code patcher | [`Source/Project64-core/N64System/GameHacks/GameHackMemory.h`](../Source/Project64-core/N64System/GameHacks/GameHackMemory.h) |
 | Source routing to N64 ports, exclusive input, port presence | [`Source/Project64-core/Plugins/ControllerPlugin.cpp`](../Source/Project64-core/Plugins/ControllerPlugin.cpp) |
 | Keyboard/mouse and gamepad plugin extension | [`Source/Project64-plugin-spec/Input.h`](../Source/Project64-plugin-spec/Input.h), [`Source/Project64-input/SdlInputBackend.cpp`](../Source/Project64-input/SdlInputBackend.cpp) |

@@ -29,8 +29,9 @@ constexpr JfgHudBuild::UsAddress HalfWidthAddress = { 0x80067D18 };
 constexpr JfgHudBuild::UsAddress MatrixDispatchEntry = { 0x80067A6C };
 constexpr JfgHudBuild::UsAddress SpriteMatrixHookAddress = { 0x800418D8 };
 constexpr JfgHudBuild::UsWord SpriteMatrixHookOriginal = { 0x0C012361 };
-// PAL keeps the sprite matrix pointer in $s1 instead of $s2 at this call.
-constexpr JfgHudBuild::BuildWord SpriteMatrixHookDelay = { 0x02402025, 0x02202025 };
+// PAL keeps the sprite matrix pointer in $s1 instead of $s2 at this call; JP
+// compiles camDo2DSprite like the US build.
+constexpr JfgHudBuild::BuildWord SpriteMatrixHookDelay = { 0x02402025, 0x02202025, 0x02402025 };
 constexpr uint32_t HealthMatrixHookOffset = 0x0000045C;
 constexpr uint32_t HealthMatrixHookDelay = 0x02602025;
 

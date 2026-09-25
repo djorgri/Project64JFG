@@ -6,7 +6,7 @@ namespace JfgMultiplayerHud
 {
 // Dormant diagnostic glyph writer. Its only retail caller is the diagnostic
 // string writer already retired by HudRaster. Keep its public entry harmless.
-// Addresses and module offsets are US ones, translated for PAL on use
+// Addresses and module offsets are US ones, translated for PAL and JP on use
 // (JetForceGeminiHudBuild.h).
 constexpr uint32_t UsStart = 0x800680B0;
 constexpr JfgHudBuild::UsAddress Start = { UsStart }, End = { 0x800681D0 };
@@ -39,17 +39,19 @@ constexpr uint32_t Original[] = {
     0x8FBF001C, 0x8FB00018, 0x03E00008, 0x27BD0048,
 };
 static_assert(sizeof(JfgHudPal::MultiplayerHudOriginal) == sizeof(Original), "PAL image must pair with the US one");
+static_assert(sizeof(JfgHudJp::MultiplayerHudOriginal) == sizeof(Original), "JP image must pair with the US one");
 inline std::vector<uint32_t> OriginalImage()
 {
-    const uint32_t *words = JfgHudBuild::Current() == JfgHudBuild::BuildPal ? JfgHudPal::MultiplayerHudOriginal : Original;
+    const uint32_t *words =
+        JfgHudBuild::ForBuild<const uint32_t *>(Original, JfgHudPal::MultiplayerHudOriginal, JfgHudJp::MultiplayerHudOriginal);
     return std::vector<uint32_t>(words, words + 72);
 }
 inline uint32_t Call(uint32_t address) { return JfgHudRaster::Jump(address) | 0x04000000; }
 inline uint32_t At(uint32_t base, uint32_t module, uint32_t offset) { return base + JfgHudBuild::Offset(module, offset); }
 // mathMtxF2L, and fxOutputLines' queue load displaced by the reticle submit
-// hook: its upper half is set by the game's own lui, so PAL spells it out.
+// hook: its upper half is set by the game's own lui, so each build spells it out.
 inline uint32_t MatrixF2L() { return JfgHudBuild::Address(0x80048D84); }
-inline uint32_t LineQueueLow() { return JfgHudBuild::BuildWord{ 0x24A53B90, 0x24A535E8 }; }
+inline uint32_t LineQueueLow() { return JfgHudBuild::BuildWord{ 0x24A53B90, 0x24A535E8, 0x24A53AA8 }; }
 inline std::vector<uint32_t> Image(uint32_t health, uint32_t multi, uint32_t reticle = 0, bool capture = true)
 {
     std::vector<uint32_t> image = OriginalImage();

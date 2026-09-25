@@ -1,11 +1,12 @@
 // Independent placement correction for the retail single-player HUD (US, and
-// PAL through JetForceGeminiHudBuild.h).
+// PAL and JP through JetForceGeminiHudBuild.h).
 #pragma once
 
 #include "JetForceGeminiHudAlignmentCode.h"
 #include "JetForceGeminiHudAlignmentOriginal.h"
 #include "JetForceGeminiHudAlignmentRdp.h"
 #include "JetForceGeminiHudAlignmentSites.h"
+#include "JetForceGeminiHudJpOriginals.h"
 #include "JetForceGeminiHudPalOriginals.h"
 #include <cmath>
 
@@ -26,6 +27,9 @@ static_assert(CaveEnd.Us - CaveStart.Us == sizeof(JfgHudAlignmentOriginal::CaveW
 static_assert(sizeof(JfgHudPal::HudAlignmentCaveWords) == sizeof(JfgHudAlignmentOriginal::CaveWords) &&
               sizeof(JfgHudPal::HudAlignmentGuardWords) == sizeof(JfgHudAlignmentOriginal::GuardWords),
               "The PAL diagnostic body must pair with the US one");
+static_assert(sizeof(JfgHudJp::HudAlignmentCaveWords) == sizeof(JfgHudAlignmentOriginal::CaveWords) &&
+              sizeof(JfgHudJp::HudAlignmentGuardWords) == sizeof(JfgHudAlignmentOriginal::GuardWords),
+              "The JP diagnostic body must pair with the US one");
 static_assert(JfgHudAlignmentCode::CaveEnd.Us == JfgHudAlignmentRdp::CaveStart.Us,
               "Alignment code segments must be adjacent and disjoint");
 static_assert(JfgHudAlignmentRdp::CaveEnd.Us == CaveEnd.Us, "Unexpected alignment cave end");
@@ -34,14 +38,14 @@ static_assert(JfgHudAlignmentRdp::CaveEnd.Us == CaveEnd.Us, "Unexpected alignmen
 // running build.
 inline const uint32_t * OriginalCaveWords(void)
 {
-    return JfgHudBuild::Current() == JfgHudBuild::BuildPal ? JfgHudPal::HudAlignmentCaveWords
-                                                           : JfgHudAlignmentOriginal::CaveWords;
+    return JfgHudBuild::ForBuild<const uint32_t *>(
+        JfgHudAlignmentOriginal::CaveWords, JfgHudPal::HudAlignmentCaveWords, JfgHudJp::HudAlignmentCaveWords);
 }
 
 inline const uint32_t * OriginalGuardWords(void)
 {
-    return JfgHudBuild::Current() == JfgHudBuild::BuildPal ? JfgHudPal::HudAlignmentGuardWords
-                                                           : JfgHudAlignmentOriginal::GuardWords;
+    return JfgHudBuild::ForBuild<const uint32_t *>(
+        JfgHudAlignmentOriginal::GuardWords, JfgHudPal::HudAlignmentGuardWords, JfgHudJp::HudAlignmentGuardWords);
 }
 
 struct Layout

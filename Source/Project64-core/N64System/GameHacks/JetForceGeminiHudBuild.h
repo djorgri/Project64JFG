@@ -7,13 +7,14 @@
 // against the US executable and are spelled in US terms throughout: fixed
 // addresses of game code and globals, offsets inside overlays, and MIPS
 // listings whose jumps and lui/low pairs encode US addresses. Rather than a
-// second copy of every listing, the PAL build runs the same tables through the
-// translation below:
+// second copy of every listing, the PAL and JP builds run the same tables
+// through the translation below:
 //
 // - Address() maps a US main-segment address by range. Only the functions and
-//   globals the HUD reaches are covered, each range checked against the PAL
-//   image word for word (Docs/JFG_PAL_PORT.md); anything else translates to
-//   zero, which every caller treats as unavailable.
+//   globals the HUD reaches are covered, each range checked against the PAL or
+//   JP image word for word (Docs/JFG_PAL_PORT.md, Docs/JFG_JP_PORT.md);
+//   anything else translates to zero, which every caller treats as
+//   unavailable.
 // - Offset() does the same for an offset inside a relocatable overlay.
 // - Relocate() rewrites a listing: jump targets, and every lui/low pair it can
 //   follow linearly. A low half whose lui lives in game code (a displaced
@@ -45,6 +46,10 @@ inline BuildId Current(void)
     if (Addresses == &JfgPalAddresses)
     {
         return BuildPal;
+    }
+    if (Addresses == &JfgJpAddresses)
+    {
+        return BuildJp;
     }
     return BuildNone;
 }
@@ -111,16 +116,31 @@ struct UsWord
     }
 };
 
-// A word the two builds spell differently for a reason no translation covers:
-// a displaced instruction whose upper half is set in game code, or a site where
-// the PAL compile chose another register.
+// A word the builds spell differently for a reason no translation covers: a
+// displaced instruction whose upper half is set in game code, or a site where
+// the PAL or JP compile chose another register. All three are always given.
 struct BuildWord
 {
     uint32_t Us;
     uint32_t Pal;
+    uint32_t Jp;
+    constexpr BuildWord(uint32_t UsWord, uint32_t PalWord, uint32_t JpWord) :
+        Us(UsWord), Pal(PalWord), Jp(JpWord)
+    {
+    }
     operator uint32_t() const
     {
-        return Current() == BuildPal ? Pal : Us;
+        const BuildId Build = Current();
+        return Build == BuildPal ? Pal : Build == BuildJp ? Jp : Us;
     }
 };
+
+// The running build's copy of something spelled once per build, such as the
+// retail words of a borrowed diagnostic routine.
+template <typename T>
+inline T ForBuild(T Us, T Pal, T Jp)
+{
+    const BuildId Build = Current();
+    return Build == BuildPal ? Pal : Build == BuildJp ? Jp : Us;
+}
 } // namespace JfgHudBuild

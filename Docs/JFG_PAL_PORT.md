@@ -181,6 +181,13 @@ free-camera entries of `CameraCodePatches` (`CameraLookHelperCall + 0x0C` and
 replacement, so switching the free camera off leaves their alternative words in
 place. It is unrelated to the port and has been left as it is.
 
+The Japanese port's harness (Docs/JFG_JP_PORT.md) later found a PAL bug these
+checks missed: the widescreen cave capture bounded the rocket reticle's image
+with its translated end address, which no range covers, so the retail words of
+that range were taken from memory as it stood. That is wrong only when a save
+state carries the installed overlay; the capture is now bounded by the image
+size.
+
 ## In-game checks
 
 A first play session on the PAL ROM (24 September 2026) found everything

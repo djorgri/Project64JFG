@@ -9,8 +9,9 @@
 // symbol, code sites by matching the instruction shape with register allocation
 // canonicalised, and the scratch areas by locating the equivalent padding.
 // Docs/JFG_KIOSK_PORT.md records how each one was established and what
-// confirms it. The PAL build has no symbol map; its table was derived by
-// aligning its code with the US image, see Docs/JFG_PAL_PORT.md.
+// confirms it. The PAL and JP builds have no symbol map; their tables were
+// derived by aligning their code with the US image, see Docs/JFG_PAL_PORT.md
+// and Docs/JFG_JP_PORT.md.
 //
 // The order of the fields is the US address order. It has no meaning to the
 // code, but it keeps the two tables readable side by side and makes an
@@ -371,6 +372,133 @@ const JFG_ADDRESSES JfgPalAddresses =
     /* FramePacing60StoreWord              */ 0xA24F0000,
 };
 
+// The Japanese release, "STAR TWINS" / NJFJ, an NTSC build. Its main image is
+// the US code with small shifts (-0x1D0 to +0xC0 in text, -0x140 in data,
+// -0xF0 to -0xE0 in bss) and Japanese text; every entry below was mapped from
+// its US counterpart by aligning the two images and then checked word for word
+// against the JP image. The scheduler compiles like the Kiosk's. See
+// Docs/JFG_JP_PORT.md for the method and the verification.
+const JFG_ADDRESSES JfgJpAddresses =
+{
+    "F163A242-F2449B3B-C:4A",
+
+    /* ObjectMoveEntry                     */ 0x80009A24,
+    /* ObjectMoveResume                    */ 0x80009A28,
+    /* CameraClampBranch                   */ 0x8002D088,
+    /* CameraCenterBranch                  */ 0x8002D0B4,
+    /* CameraOrbitGateBranch               */ 0x8002DE28,
+    /* CameraOrbitCenterBranch             */ 0x8002DE38,
+    /* CameraOrbitBranch                   */ 0x8002DEF4,
+    /* CameraPositionXBaseCall             */ 0x8002E008,
+    /* CameraPositionZBaseCall             */ 0x8002E040,
+    /* CameraHeightBlendBase               */ 0x8002E47C,
+    /* CameraLookHelperCall                */ 0x8002E774,
+    /* CameraYawHelperCall                 */ 0x8002E994,
+    /* CameraPitchHelperCall               */ 0x8002E9BC,
+    /* CameraTopDownEntry                  */ 0x8002EACC,
+    /* SidekickStrafeEntry                 */ 0x8002FFC0,
+    /* SidekickStrafeDelay                 */ 0x8002FFC4,
+    /* CameraAngleHelper                   */ 0x80033F0C,
+    /* ManualAimXVelocityStore             */ 0x8003AE7C,
+    /* ManualAimYVelocityStore             */ 0x8003AE94,
+    /* ManualAimCursorXStore               */ 0x8003AF7C,
+    /* ManualAimCursorYStore               */ 0x8003AFC0,
+    /* LandingCinematicSkipEntry           */ 0x80045EF8,
+    /* LegacyLandingCinematicSkipEntry     */ 0x80045F20,
+    /* SchedulerSignatureBase              */ 0x80050620,
+    /* SchedulerFrameGateAdd               */ 0x80050628,
+    /* FramePacingSignatureBase            */ 0x80054F84,
+    /* FramePacingEscalateStore            */ 0x80054F90,
+    /* FramePacing60SignatureBase          */ 0x80054F98,
+    /* FramePacing60Branch                 */ 0x80054FA0,
+    // The diagnostic block the stubs borrow is the US one 0x40 bytes further
+    // on, with the same five helpers reachable only from diCpuTraceInit, so
+    // the US layout carries over unchanged.
+    /* SidekickStrafeStub                  */ 0x80066C40,
+    /* SidekickVerticalStub                */ 0x80066F40,
+    /* SidekickPadProbeStub                */ 0x80066DC0,
+    /* ObjectMoveStub                      */ 0x80066E40,
+    /* LandingCinematicSkipStub            */ 0x80067040,
+    /* WaterWakeRingRateEntry              */ 0x8006AB08,
+    // The two camera gaps, the scratch padding and the data globals moved by
+    // -0x140 with the start of the data segment; the gaps are zero over the
+    // same extents as on the US build.
+    /* CameraHelperBase                    */ 0x8009678C,
+    /* CameraTopDownHelperBase             */ 0x80098BC8,
+    /* CameraNativeYAddress                */ 0x8009F104,
+    /* CameraHeightOffsetAddress           */ 0x8009F108,
+    /* CameraTopDownCounterAddress         */ 0x8009F10C,
+    /* SidekickControlObjectAddress        */ 0x8009FB60,
+    /* DroneLateralMaxSpeedAddress         */ 0x8009FB64,
+    /* DroneLateralSideFactorAddress       */ 0x8009FB68,
+    /* DroneLateralVelocityAddress         */ 0x8009FB6C,
+    /* DroneVerticalThrustAddress          */ 0x8009FB90,
+    /* DroneVerticalVelocityAddress        */ 0x8009FB94,
+    /* DroneLateralRightZAddress           */ 0x8009FB70,
+    /* LandingCinematicSkipInputAddress    */ 0x8009FB7C,
+    /* DroneLateralDragAddress             */ 0x8009FB80,
+    /* DroneLateralForwardSpeedAddress     */ 0x8009FB84,
+    /* DroneLateralRightXAddress           */ 0x8009FB88,
+    /* SidekickPadProbeStateAddress        */ 0x8009FB8C,
+    /* DroneLateralPreviousObjectAddress   */ 0x8009FB98,
+    /* SidekickPadProbeObjectAddress       */ 0x8009FB9C,
+    /* EnemyHalveFlagAddress               */ 0x8009FBA0,
+    /* DroneLateralFlagsAddress            */ 0x8009FBA4,
+    /* DroneLateralHookHitsAddress         */ 0x8009FBA8,
+    /* SidekickPadProbeActorAddress        */ 0x8009FBBC,
+    /* RobotMissionAddress                 */ 0x800A30C8,
+    /* MultiplayerGameAddress              */ 0x800A4ED4,
+    /* CooperativeGameAddress              */ 0x800A4ED8,
+    /* WaterWakeObjectListAddress          */ 0x800F2BB4,
+    /* WaterWakeObjectCountAddress         */ 0x800F2BB8,
+    /* PlayerListAddress                   */ 0x800F2C1C,
+    /* PlayerCountAddress                  */ 0x800F2C20,
+    /* DisableJoyAddress                   */ 0x800F6CCC,
+    /* ControlCameraAddress                */ 0x800F6CD0,
+    /* CameraActiveOverrideBase            */ 0x800F6D68,
+    /* CameraArrayAddress                  */ 0x800FA3E0,
+    /* CameraFovAddress                    */ 0x800FAF88,
+    /* LobbyCameraInUseAddress             */ 0x800FAF90,
+    /* StaticCameraInUseAddress            */ 0x800FAF94,
+    /* OverlayTableAddress                 */ 0x800FE9C0,
+    /* CurrentScreenAddress                */ 0x800FEBD0,
+    /* AnimseqCameraAddress                */ 0x801044C8,
+
+    /* IntroCinematicSkipStub              */ 0x80067240,
+    /* CurrentSceneAddress                 */ 0x800A30FC,
+    /* CurrentSetupAddress                 */ 0x800A3108,
+    /* NextCharacterAddress                */ 0x800A3120,
+    /* LoadingAddress                      */ 0x800A3154,
+    /* MainFrontInitFunction               */ 0x80047560,
+    /* FrontCharSelectSetQuitModeFunction  */ 0x8005A940,
+    /* FrontGetModeFunction                */ 0x800588B4,
+    /* MainChangeLevelFunction             */ 0x80046588,
+
+    /* FloydPadControlOffset               */ 0x000002A4,
+    /* IntroCinematicSkipEntryOffset       */ 0x000000D0,
+    /* LegacyIntroCinematicSkipEntryOffset */ 0x000000C0,
+    /* LegacyIntroCinematicSkipFmvUpdateOffset */ 0x0000037C,
+    /* TargetOverlayCursorXOffset          */ 0x0000041C,
+    /* TargetOverlayCursorYOffset          */ 0x00000444,
+    /* TargetOverlayDrawOffset             */ 0x000004A8,
+    /* BoyAimHelperOffset                  */ 0x00003EDC,
+    /* BoyAimFirstGroupOffset              */ 0x000042C4,
+    /* BoyAimSecondGroupOffset             */ 0x00004884,
+
+    /* CameraHelperCallWord                */ 0x0C00CFC3,
+    /* FramePacing60SignatureWord0         */ 0x8DCEEBEC,
+    /* FramePacingSignatureWord1           */ 0x2442EBCB,
+    /* ManualAimCursorXGuardWord           */ 0x15E10002,
+    /* ManualAimCursorYGuardWord           */ 0x15610002,
+    /* ManualAimCursorXStoreWord           */ 0xA7190000,
+    /* ManualAimCursorYStoreWord           */ 0xA58D0000,
+    /* SchedulerFrameGateAddWord           */ 0x254B0001,
+    /* SchedulerSignatureWord0             */ 0x8E4A0300,
+    /* SchedulerSignatureWord2             */ 0x2D610002,
+    /* FramePacingEscalateStoreWord        */ 0xA22D0000,
+    /* FramePacing60StoreWord              */ 0xA22F0000,
+};
+
 namespace
 {
 // Every entry point of the runtime funnels through IsSupportedRom(), so this is
@@ -410,6 +538,10 @@ const JFG_ADDRESSES * JfgAddresses(void)
         else if (Rom == JfgPalAddresses.RomIdentifier)
         {
             ResolvedAddresses = &JfgPalAddresses;
+        }
+        else if (Rom == JfgJpAddresses.RomIdentifier)
+        {
+            ResolvedAddresses = &JfgJpAddresses;
         }
         ResolvedAddressesValid = true;
     }

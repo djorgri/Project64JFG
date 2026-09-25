@@ -108,6 +108,7 @@ const uint32_t OverlayHeaderSize = 0x20;
 const JFG_ADDRESSES JfgUsAddresses = {};
 const JFG_ADDRESSES JfgKioskAddresses = {};
 const JFG_ADDRESSES JfgPalAddresses = {};
+const JFG_ADDRESSES JfgJpAddresses = {};
 bool SupportedRom = true, ExactUsRomMock = true;
 const JFG_ADDRESSES *JfgAddresses() { return ExactUsRomMock ? &JfgUsAddresses : &JfgKioskAddresses; }
 bool IsSupportedRom() { return SupportedRom; }
@@ -122,6 +123,7 @@ US_BUILD = r'''
 const JFG_ADDRESSES JfgUsAddresses = {};
 const JFG_ADDRESSES JfgKioskAddresses = {};
 const JFG_ADDRESSES JfgPalAddresses = {};
+const JFG_ADDRESSES JfgJpAddresses = {};
 const JFG_ADDRESSES *JfgAddresses() { return &JfgUsAddresses; }
 '''
 

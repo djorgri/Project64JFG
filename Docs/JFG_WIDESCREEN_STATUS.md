@@ -20,10 +20,11 @@ the 320 x 240 logical frame.
 
 ## Enabling the prototype
 
-1. Use the USA or PAL retail ROM supported by the project. The HUD patch is
-   written against the USA build and translated for PAL
-   ([JFG_PAL_PORT.md](JFG_PAL_PORT.md)); it explicitly excludes the Kiosk
-   build, even though other adaptations handle it.
+1. Use the USA, PAL or Japanese retail ROM supported by the project. The HUD
+   patch is written against the USA build and translated for PAL and JP
+   ([JFG_PAL_PORT.md](JFG_PAL_PORT.md), [JFG_JP_PORT.md](JFG_JP_PORT.md)); it
+   explicitly excludes the Kiosk build, even though other adaptations handle
+   it.
 2. Select the widescreen mode in the game's own options.
 3. In the **Project64 Parallel RDP** plugin settings, enable **Force 16:9
    display (stretches image)** to present the image in 16:9.
@@ -39,9 +40,9 @@ keyboard/mouse controls and is **enabled by default**.
 
 The check uses the **active video mode** byte at `0x800FECA8`, written by
 `viChangeMode`: `0` and `2` are 4:3, `1` and `3` the low- and high-resolution
-widescreen modes of the USA ROM. The PAL build adds 8 on a PAL console (modes
-`8` to `11`, byte at `0x800FE708`); `JfgHudBuild::VideoMode` folds them back
-to `0` to `3`. The menu preference is not used as a
+widescreen modes of the USA ROM, and of the Japanese one (byte at
+`0x800FEBC8`). The PAL build adds 8 on a PAL console (modes `8` to `11`, byte
+at `0x800FE708`); `JfgHudBuild::VideoMode` folds them back to `0` to `3`. The menu preference is not used as a
 substitute for the active mode. The aspect forced in the graphics plugin plays
 no part in this decision.
 

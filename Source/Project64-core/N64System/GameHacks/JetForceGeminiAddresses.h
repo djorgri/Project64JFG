@@ -8,8 +8,8 @@
 // addresses move between builds. The game *structures* do not: the field
 // offsets the hacks use appear at the same offsets in every image, which is why
 // only this table is needed rather than a second implementation. The evidence,
-// the method and the per-entry provenance are in Docs/JFG_KIOSK_PORT.md and
-// Docs/JFG_PAL_PORT.md.
+// the method and the per-entry provenance are in Docs/JFG_KIOSK_PORT.md,
+// Docs/JFG_PAL_PORT.md and Docs/JFG_JP_PORT.md.
 //
 // A zero means the feature has no target on that build. The Kiosk demo has no
 // landing cinematic, so its skip has nothing to hook; callers must treat zero as
@@ -148,6 +148,7 @@ struct JFG_ADDRESSES
 extern const JFG_ADDRESSES JfgUsAddresses;
 extern const JFG_ADDRESSES JfgKioskAddresses;
 extern const JFG_ADDRESSES JfgPalAddresses;
+extern const JFG_ADDRESSES JfgJpAddresses;
 
 // The table for the ROM currently loaded, or nullptr when it is not one of the
 // builds above. Valid only while a ROM is loaded.
