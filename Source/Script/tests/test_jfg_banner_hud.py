@@ -125,11 +125,15 @@ class JfgBannerHudTests(unittest.TestCase):
 
     def test_cap_keeps_left_anchor_through_entire_slide_and_other_sprites_keep_thresholds(self):
         program = {self.sprite_stub + index * 4: word for index, word in enumerate(self.sprite_words)}
-        self.assertEqual(len(self.sprite_words), 30)
+        self.assertEqual(len(self.sprite_words), 31)
+        # Objects 5 (pickup cap), 6 (tribal counter cap) and 13 (its icons) keep
+        # the left anchor; their neighbours still use the position thresholds.
+        anchored = (0x800FF820, 0x800FF840, 0x800FF920)
         for scope in (0, 1):
             for resolution in range(4):
-                for object_address in (0x800FF820, 0x800FF7D0, 0x800FF870):
-                    for x in range(-78, 123):  # Includes the exact -31 and +32 boundaries.
+                for object_address in anchored + (0x800FF7D0, 0x800FF800, 0x800FF860, 0x800FF870,
+                                                  0x800FF900, 0x800FF940):
+                    for x in range(-91, 123):  # Includes the exact -31 and +32 boundaries.
                         with self.subTest(scope=scope, resolution=resolution, object=hex(object_address), x=x):
                             registers = [0] + [0x1122334400000000 | (i * 0x10203) for i in range(1, 32)]
                             registers[3] = register_word(object_address)
@@ -140,7 +144,7 @@ class JfgBannerHudTests(unittest.TestCase):
                             machine.run(self.sprite_stub, 0x80041724)
                             bias = 68 if resolution & 2 else 48
                             active = scope and resolution & 1
-                            left = object_address == 0x800FF820 or x < -31
+                            left = object_address in anchored or x < -31
                             expected = x - bias if active and left else x + bias if active and x >= 32 else x
                             self.assertEqual(machine.registers[24], register_word(expected))
                             for register in set(range(32)) - {14, 15, 24, 25}:
@@ -148,7 +152,8 @@ class JfgBannerHudTests(unittest.TestCase):
                             self.assertEqual(machine.memory, memory)
                             self.assertEqual(machine.fpr, fpr)
                             self.assertEqual(machine.fcsr, 0x01800004)
-                            self.assertTrue(all(self.sprite_stub <= pc < self.sprite_stub + 120 for pc in machine.visited))
+                            self.assertTrue(all(self.sprite_stub <= pc < self.sprite_stub + 4 * len(self.sprite_words)
+                                                for pc in machine.visited))
 
     def make_banner(self, cap_x, y, initial_fcsr):
         registers = [0] + [register_word(0x1000 + index) for index in range(1, 32)]

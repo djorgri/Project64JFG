@@ -731,6 +731,30 @@ const WIDESCREEN_HUD_BANNER_WORD_PATCH WidescreenHudBannerPatches[] =
     { 0x1F64, 0x240E0008, 0x240E000C, 0x240E000C }, // shadow, same alignment
 };
 
+// The tribal counter slides out of the weapon frame too: a matrix-backed bar
+// whose right end follows front-end object 6 (its cap, open at X = 69), three
+// object 13 icons at capX - 140 + 48k, and three counts printed at screen
+// capX + 40 + 48k inside a scissor [69, capX + 155]. The sprite position stub
+// keeps objects 6 and 13 on the left anchor; move the counts and the scissor
+// with the same screen mapping, x' = .75 * x + 4 (+53 in high resolution).
+// Counts: s0 = trunc(.75 * (capX + 91)) keeps the stock truncation of a
+// positive value, then each print adds -34 / +15 and the stride becomes 36.
+const WIDESCREEN_HUD_BANNER_WORD_PATCH WidescreenHudTribalPatches[] =
+{
+    // scissor right = .75 * capX + 120 / 169, truncated to whole pixels as stock
+    { 0x2208, 0x3C0140A0, 0x3C013F40, 0x3C013F40 }, // f16: 5 -> .75
+    { 0x2210, 0x3C014320, 0x3C0142F0, 0x3C014329 }, // f4: 160 -> 120 / 169
+    { 0x2218, 0x46105481, 0x46105482, 0x46105482 }, // mul.s f18, f10, f16
+    { 0x2334, 0x240E0045, 0x240E0038, 0x240E0069 }, // scissor left: 69 -> 56 / 105
+    { 0x2484, 0x3C014334, 0x3C013F40, 0x3C013F40 }, // f8: 180 -> .75
+    { 0x2494, 0x46080280, 0x46085282, 0x46085282 }, // mul.s f10, f10, f8 ; f10 = capX + 91
+    { 0x2598, 0x02002825, 0x2605FFDE, 0x2605000F }, // addiu a1, s0, -34 / 15
+    { 0x25D4, 0x26100030, 0x26100024, 0x26100024 }, // addiu s0, s0, 36
+    { 0x25EC, 0x02002825, 0x2605FFDE, 0x2605000F },
+    { 0x2608, 0x26100030, 0x26100024, 0x26100024 },
+    { 0x2620, 0x02002825, 0x2605FFDE, 0x2605000F },
+};
+
 // Fuel's matrix-backed frame receives the left HUD bias (-48 / -68) before
 // the .75 X scale. Its rectangles use the screen centre instead, while the
 // font and deferred digital counter take unscaled screen coordinates. Align
@@ -1026,38 +1050,55 @@ const uint32_t WidescreenHudSpriteScaleAltCode[] =
 // but bias clearly left/right anchored sprites before the 0.75 matrix scale so
 // the resulting local compression preserves their edge margin. The pre-scale
 // bias is 48 pixels in low resolution (36 after scaling), and 68 in high res.
+// The two banners that slide out of the weapon frame keep its left anchor for
+// their whole travel: front-end object 5 (pickup cap), 6 (tribal counter cap)
+// and 13 (the tribal counter's three icons). The instrument scope opens after
+// overlay 14 draws its region statistics, so their object 13 is unaffected.
 const uint32_t WidescreenHudSpritePositionCode[] =
 {
     0x44183000, // mfc1  t8, f6 ; displaced converted X position
     0x3C0E8010, // lui   t6, 0x8010
     0x91CF2553, // lbu   t7, 0x2553(t6) ; scope depth
-    0x11E00018, // beq   t7, zero, resume
-    0x00000000, // nop
+    0x11E00019, // beq   t7, zero, resume
     0x91CFECA8, // lbu   t7, -0x1358(t6) ; sResolutionIndex
     0x31F90001, // andi  t9, t7, 1
-    0x13200014, // beq   t9, zero, resume
+    0x13200016, // beq   t9, zero, resume
     0x31F90002, // andi  t9, t7, 2 ; high-resolution bit
-    0x3C0E8010, // lui   t6, 0x8010
-    0x25CEF820, // addiu t6, t6, -0x7E0 ; front-end object 5, pickup banner cap
-    0x106E000C, // beq   v1, t6, left_anchor ; anchored to the bar throughout its slide
+    0x25CEF820, // addiu t6, t6, -0x7E0 ; front-end object 5
+    0x006E7823, // subu  t7, v1, t6
+    0x11E0000E, // beq   t7, zero, left_anchor ; object 5, pickup banner cap
+    0x25EFFFE0, // addiu t7, t7, -0x20
+    0x11E0000C, // beq   t7, zero, left_anchor ; object 6, tribal counter cap
+    0x25EFFF20, // addiu t7, t7, -0xE0
+    0x11E0000A, // beq   t7, zero, left_anchor ; object 13, tribal counter icons
     0x2B0EFFE1, // slti  t6, t8, -31
-    0x15C0000A, // bne   t6, zero, left_anchor
-    0x00000000, // nop
+    0x15C00008, // bne   t6, zero, left_anchor
     0x2B0E0020, // slti  t6, t8, 32
-    0x15C0000B, // bne   t6, zero, resume ; centred sprite
+    0x15C0000A, // bne   t6, zero, resume ; centred sprite
     0x00000000, // nop
     0x17200002, // bne   t9, zero, right_set
     0x240E0044, // addiu t6, zero, 68
     0x240E0030, // right_low: addiu t6, zero, 48
-    0x030EC021, // right_set: addu t8, t8, t6
-    0x10000005, // b     resume
-    0x00000000, // nop
+    0x10000005, // right_set: b resume
+    0x030EC021, // addu  t8, t8, t6
     0x17200002, // left_anchor: bne t9, zero, left_set
     0x240EFFBC, // addiu t6, zero, -68
     0x240EFFD0, // left_low: addiu t6, zero, -48
     0x030EC021, // left_set: addu t8, t8, t6
     0x080105C9, // resume: j 0x80041724 (0x41720 ran in hook delay slot)
     0x00000000, // nop
+};
+
+// Recognition only: the 0.9.5 stub, which kept only object 5 on the left
+// anchor. A state saved with it must still let the current stub replace it.
+const uint32_t WidescreenHudSpritePositionPreviousCode[] =
+{
+    0x44183000, 0x3C0E8010, 0x91CF2553, 0x11E00018, 0x00000000,
+    0x91CFECA8, 0x31F90001, 0x13200014, 0x31F90002, 0x3C0E8010,
+    0x25CEF820, 0x106E000C, 0x2B0EFFE1, 0x15C0000A, 0x00000000,
+    0x2B0E0020, 0x15C0000B, 0x00000000, 0x17200002, 0x240E0044,
+    0x240E0030, 0x030EC021, 0x10000005, 0x00000000, 0x17200002,
+    0x240EFFBC, 0x240EFFD0, 0x030EC021, 0x080105C9, 0x00000000,
 };
 
 // Recognition only: an older experimental state can replace the current cave
@@ -4053,6 +4094,10 @@ bool CJetForceGeminiRuntime::SetWidescreenHudBanner(uint32_t OverlayBase, bool E
     {
         AddWrite(Patch);
     }
+    for (const WIDESCREEN_HUD_BANNER_WORD_PATCH & Patch : WidescreenHudTribalPatches)
+    {
+        AddWrite(Patch);
+    }
     const WIDESCREEN_HUD_BANNER_WORD_PATCH * FuelPatches =
         JfgHudBuild::Current() == JfgHudBuild::BuildPal ? WidescreenHudFuelPatchesPal : WidescreenHudFuelPatches;
     for (size_t i = 0; i < sizeof(WidescreenHudFuelPatches) / sizeof(WidescreenHudFuelPatches[0]); i++)
@@ -4838,7 +4883,12 @@ bool CJetForceGeminiRuntime::PatchWidescreenHud(bool Enabled)
             return false;
         }
 
-        const std::vector<uint32_t> SpritePositionLegacy = HudCode(WidescreenHudSpritePositionLegacyCode);
+        // Either earlier sprite stub may be in a loaded state's cave.
+        const std::vector<uint32_t> SpritePositionLegacyListing = HudCode(WidescreenHudSpritePositionLegacyCode);
+        const std::vector<uint32_t> SpritePositionPrevious = HudCode(WidescreenHudSpritePositionPreviousCode);
+        const std::vector<uint32_t> & SpritePositionLegacy =
+            CaveCodeMatches(WidescreenHudSpritePositionStub, SpritePositionPrevious) ? SpritePositionPrevious
+                                                                                   : SpritePositionLegacyListing;
         const std::vector<uint32_t> RectangleLegacy = HudCode(WidescreenHudRectangleLegacyCode);
         const std::vector<uint32_t> ReticleLegacy = HudCode(WidescreenHudReticleLegacyCode);
         const bool LegacySpritePosition = CaveCodeMatches(WidescreenHudSpritePositionStub, SpritePositionLegacy);

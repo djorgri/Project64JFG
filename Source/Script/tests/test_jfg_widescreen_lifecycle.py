@@ -159,6 +159,7 @@ void Require(bool value, const std::string &message) {
 std::vector<WIDESCREEN_HUD_BANNER_WORD_PATCH> LayoutFixture() {
     std::vector<WIDESCREEN_HUD_BANNER_WORD_PATCH> patches;
     for (const auto &p : WidescreenHudBannerPatches) patches.push_back(p);
+    for (const auto &p : WidescreenHudTribalPatches) patches.push_back(p);
     for (const auto &p : WidescreenHudFuelPatches) patches.push_back(p);
     return patches;
 }

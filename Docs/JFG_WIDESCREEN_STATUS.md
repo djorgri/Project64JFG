@@ -121,6 +121,7 @@ guards of the rectangle stub.
 | Floyd's icon outline | Same right anchor as the icon; diagonals adapted to the 16:9 ratio while keeping the native two-pixel green stroke. |
 | Ammunition counter digits | `frontPrintNum`: horizontal compression of the glyphs and their spacing, anchoring on the left panel and adapted texture step; first rendering validated in the interpreter. |
 | Pickup banner | Cap attached to the left for the whole animation, text centred at full opening and clipping aligned with the banner; full display validated visually by the user. |
+| Tribal counter banner | Cap and the three icons attached to the left for the whole slide, counts and clipping moved with the same screen mapping; full display validated visually by the user in low resolution. |
 | Reticle segments | Horizontal compression around the aimed point, before clipping and CPU drawing; symmetric rounding and 3D shapes intact. Rendering validated by the user during the 8 September trial. |
 
 The installer checks the original instructions and the bounds of the stub
@@ -351,6 +352,48 @@ reads registers and memory. It must be started before the state is loaded.
 For the visual validation, reload the same state, pick up the item and
 compare with the box on and off; check the opening, the full display and the
 closing of the banner.
+
+## Tribal counter banner
+
+Rescuing or killing a tribal slides a second banner out of the weapon frame
+(overlay 14, `+0x1AD8`, drawn while the tribal counter timer at overlay 14
+data `+0x4894` runs). Front-end object 6 is its cap: `+0x19F4` slides it by
+8 pixels per frame from X = -91 (closed) to 69 (open) and back. Everything
+else is placed from the cap's X:
+
+| Element | Stock position |
+| --- | --- |
+| Background | Matrix translated to X = -91; its right-end vertices move by capX + 91 |
+| Icons, object 13 | capX - 140 + 48k (centred coordinates), k = 0..2 |
+| Counts | screen X = capX + 40 + 48k, through `fontPrintXY` |
+| Scissor | screen [69, capX + 155] |
+
+The sprite position stub classified each sprite by its own X. With the banner
+open, the first icon (-71) took the left bias, the other two (-23, 25) none and
+the cap (69) the right one; during the slide the cap changed anchor like the
+pickup cap once did. The counts and scissor stayed in 4:3 screen coordinates,
+so the last count left the bar and was clipped.
+
+The stub now keeps objects 5, 6 and 13 on the left anchor. It reaches them by
+their offset from object 5 and still fits its 32-word slot (31 words; a
+redundant `lui` and two empty delay slots were reclaimed). The instrument
+scope only opens after overlay 14 has drawn its region statistics, so their
+own object 13 keeps the stock placement. The 0.9.5 stub is recognised when a
+state saved with it is loaded, so the current one can replace it.
+
+`WidescreenHudTribalPatches` moves the counts and the scissor with the weapon
+group's screen mapping, `x' = 0.75 x + 4` at 320 pixels and `+53` at 448:
+
+- counts: `s0 = trunc(0.75 (capX + 91))`, then each print passes `s0 - 34`
+  (`+15` in high resolution) and the stride becomes 36. The value truncated is
+  positive, as in the stock code, and the FPU control word is untouched;
+- scissor: left 56 / 105, right `trunc(0.75 capX + 120 / 169)`, rows unchanged.
+
+The eleven original words are identical on PAL at `+0x10`.
+`test_jfg_tribal_hud.py` replays the stock slices with these words for every
+cap position in both resolutions, and `test_jfg_banner_hud.py` covers the
+anchor of objects 5, 6, 13 and their neighbours. The low-resolution display
+was validated in game; no high-resolution state was available.
 
 ## Observations reported by Claude
 
