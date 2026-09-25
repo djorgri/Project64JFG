@@ -15,6 +15,7 @@ constexpr unsigned Groups = 3; // health, weapons, packed font glyphs
 constexpr uint32_t ColorBase = 8 * 1024 * 1024;
 constexpr uint32_t DepthBase = ColorBase + Groups * ImageBytes;
 static_assert(DepthBase + Groups * ImageBytes <= RamSize, "Private HUD images exceed RAM");
+using Rect = JfgOverlayPlane::Rect;
 
 inline bool primitive(unsigned op) { return (op >= 8 && op <= 15) || op == 0x24 || op == 0x25 || op == 0x36; }
 struct Target
@@ -325,21 +326,213 @@ struct Capture
     }
 };
 
+// The private RAMs persist between replays. A replay reads guest RDRAM only
+// through texture loads and writes only inside its scissored primitives, so
+// mirroring the spans those loads read and restoring the rectangles the last
+// replay drew is equivalent to recopying all RDRAM and clearing every image.
+struct TextureImage
+{
+    uint32_t address = 0, width = 1, size = 0;
+};
+struct Span
+{
+    uint32_t begin, end;
+};
+
+// Append the RDRAM each load reads, computed as Parallel RDP's
+// Renderer::load_tile tracks it for incoherent hosts. SetTextureImage state
+// carries across replays in 'image'. Spans are 64-byte aligned within RamSize.
+inline void load_spans(const std::vector<uint32_t> &commands, TextureImage &image, std::vector<Span> &spans)
+{
+    for (size_t i = 0; i < commands.size();)
+    {
+        const uint32_t count = commands[i];
+        if (!count || i + 1 + count > commands.size()) break;
+        const uint32_t *w = &commands[i + 1];
+        i += 1 + count;
+        const unsigned op = (w[0] >> 24) & 63;
+        if (op == 0x3D) { image = { w[1] & 0xFFFFFF, (w[0] & 0x3FF) + 1, (w[0] >> 19) & 3 }; continue; }
+        if (op != 0x30 && op != 0x33 && op != 0x34) continue;
+        const uint32_t slo = (w[0] >> 12) & 0xFFF, tlo = w[0] & 0xFFF;
+        const uint32_t shi = (w[1] >> 12) & 0xFFF, thi = w[1] & 0xFFF;
+        uint64_t pixels, offset;
+        if (op == 0x33) // LoadBlock
+        {
+            pixels = (shi - slo + 1) & 0xFFF;
+            if (!pixels || pixels > 2048) continue;
+            offset = slo + uint64_t(image.width) * tlo;
+        }
+        else // LoadTile, LoadTLUT
+        {
+            const uint32_t maxX = ((shi >> 2) - (slo >> 2)) & 0xFFF;
+            if ((thi >> 2) < (tlo >> 2) || maxX == 0xFFF) continue;
+            pixels = uint64_t((thi >> 2) - (tlo >> 2)) * image.width + maxX + 1;
+            offset = (slo >> 2) + uint64_t(image.width) * (tlo >> 2);
+        }
+        // A 4-bit image cannot be loaded directly; cover a stray one anyway.
+        const uint64_t bytes = image.size ? pixels << (image.size - 1) : (pixels + 1) / 2;
+        uint64_t begin = image.address + (image.size ? offset << (image.size - 1) : offset / 2);
+        uint64_t end = std::min(begin + ((bytes + 7) & ~uint64_t(7)), begin + RamSize);
+        // The RDP addresses its RAM modulo its size.
+        begin &= ~uint64_t(63); end = (end + 63) & ~uint64_t(63);
+        const uint64_t wrap = begin / RamSize * RamSize;
+        begin -= wrap; end -= wrap;
+        spans.push_back({ uint32_t(begin), uint32_t(std::min<uint64_t>(end, RamSize)) });
+        if (end > RamSize) spans.push_back({ 0, uint32_t(end - RamSize) });
+    }
+}
+
+inline void merge_spans(std::vector<Span> &spans)
+{
+    std::sort(spans.begin(), spans.end(), [](const Span &a, const Span &b) { return a.begin < b.begin; });
+    size_t merged = 0;
+    for (const auto &span : spans)
+    {
+        if (merged && span.begin <= spans[merged - 1].end)
+            spans[merged - 1].end = std::max(spans[merged - 1].end, span.end);
+        else
+            spans[merged++] = span;
+    }
+    spans.resize(merged);
+}
+
+// Copy the guest RDRAM a replay will read into a private RAM. Everything else
+// below ColorBase is never read, so its content does not matter.
+inline void mirror(uint8_t *ram, const uint8_t *rdram, uint32_t rdramSize, const std::vector<Span> &spans)
+{
+    const uint32_t limit = std::min(rdramSize, ColorBase);
+    for (const auto &span : spans)
+        if (span.begin < limit)
+            std::memcpy(ram + span.begin, rdram + span.begin, std::min(span.end, limit) - span.begin);
+}
+
+// Where a replay can have written in the private images: each primitive's rows
+// (and columns, for rectangles) within the scissor, in private pixels after the
+// 4/3 X expansion of hud_coordinates.hpp. Bindings carry across replays.
+struct DrawBounds
+{
+    uint32_t color = ColorBase, colorWidth = Width, depth = 0;
+    std::array<uint32_t, 2> scissor = { 0, 0x00FFFFFF }; // Unknown until set: whole image.
+    std::array<Rect, Groups> colors, depths;
+    bool unknown = false; // A draw hit the private images at an unexpected place.
+
+    void scan(const std::vector<uint32_t> &commands)
+    {
+        colors = {}; depths = {}; unknown = false;
+        for (size_t i = 0; i < commands.size();)
+        {
+            const uint32_t count = commands[i];
+            if (!count || i + 1 + count > commands.size()) { unknown = true; break; }
+            const uint32_t *w = &commands[i + 1];
+            i += 1 + count;
+            const unsigned op = (w[0] >> 24) & 63;
+            if (op == 0x3F) { color = w[1] & 0xFFFFFF; colorWidth = (w[0] & 0x3FF) + 1; }
+            else if (op == 0x3E) depth = w[1] & 0xFFFFFF;
+            else if (op == 0x2D) scissor = { w[0], w[1] };
+            else if (primitive(op))
+            {
+                const Rect r = bounds(w, op);
+                if (r.empty()) continue;
+                mark(color, r);
+                mark(depth, r);
+            }
+        }
+    }
+
+private:
+    static int sign_extend14(uint32_t v) { return int32_t(v << 18) >> 18; }
+
+    Rect bounds(const uint32_t *w, unsigned op) const
+    {
+        // CommandProcessor::op_set_scissor expands X by 4/3 in this renderer.
+        int x0 = int(((scissor[0] >> 12) & 0xFFF) * 4 / 3) >> 2, y0 = int(scissor[0] & 0xFFF) >> 2;
+        int x1 = (int(((scissor[1] >> 12) & 0xFFF) * 4 / 3) >> 2) + 1, y1 = (int(scissor[1] & 0xFFF) >> 2) + 1;
+        if (op >= 8 && op <= 15)
+        {
+            // Triangle rows span YH..YL; their columns stay bounded by the scissor.
+            const int yh = sign_extend14(w[1]), yl = sign_extend14(w[0]);
+            y0 = std::max(y0, std::min(yh, yl) >> 2); y1 = std::min(y1, (std::max(yh, yl) >> 2) + 1);
+        }
+        else
+        {
+            const int xl = (w[0] >> 12) & 0xFFF, yl = w[0] & 0xFFF, xh = (w[1] >> 12) & 0xFFF, yh = w[1] & 0xFFF;
+            x0 = std::max(x0, (xh * 4 / 3) >> 2); x1 = std::min(x1, ((xl * 4 / 3) >> 2) + 1);
+            y0 = std::max(y0, yh >> 2); y1 = std::min(y1, (yl >> 2) + 1);
+        }
+        // Slack for edge rounding; restoring extra background is harmless. Keep
+        // X aligned to 4 pixels so swizzled halfwords and hidden bytes stay inside.
+        Rect r;
+        r.add(std::max(0, (x0 - 2) & ~3), std::max(0, y0 - 2),
+              std::min(int(Width), (x1 + 2 + 3) & ~3), std::min(int(Height), y1 + 2));
+        return r;
+    }
+
+    void mark(uint32_t address, const Rect &r)
+    {
+        // Writes below ColorBase land in mirrored guest RAM, which is refreshed
+        // before every read.
+        if (address < ColorBase) return;
+        const uint32_t offset = address - ColorBase;
+        if (colorWidth != Width || offset % ImageBytes || offset / ImageBytes >= 2 * Groups)
+        {
+            unknown = true;
+            return;
+        }
+        const uint32_t image = offset / ImageBytes;
+        auto &rect = image < Groups ? colors[image] : depths[image - Groups];
+        rect.add(r.x0, r.y0, r.x1, r.y1);
+    }
+};
+
+// Initial state of a private RAM: both images of every group at their background.
+inline void clear_all(uint8_t *ram, uint8_t *hidden, size_t hiddenSize, uint16_t background)
+{
+    auto colors = reinterpret_cast<uint16_t *>(ram + ColorBase);
+    std::fill(colors, colors + Groups * ImageBytes / 2, background);
+    std::memset(ram + DepthBase, 0xFF, Groups * ImageBytes);
+    // Coverage belongs to this fresh pair of backgrounds, not to antialiased edges.
+    std::memset(hidden, 3, hiddenSize);
+}
+
+// Return what a replay drew to the background, including hidden coverage bits
+// (one byte per halfword).
+inline void restore(uint8_t *ram, uint8_t *hidden, uint16_t background, const DrawBounds &drawn)
+{
+    auto rows = [&](uint32_t image, const Rect &r, bool color) {
+        for (int y = r.y0; y < r.y1; ++y)
+        {
+            const size_t first = image / 2 + size_t(y) * Width + r.x0, count = size_t(r.x1 - r.x0);
+            if (color) std::fill_n(reinterpret_cast<uint16_t *>(ram) + first, count, background);
+            else std::memset(ram + first * 2, 0xFF, count * 2);
+            std::memset(hidden + first, 3, count);
+        }
+    };
+    for (unsigned group = 0; group < Groups; ++group)
+    {
+        rows(ColorBase + group * ImageBytes, drawn.colors[group], true);
+        rows(DepthBase + group * ImageBytes, drawn.depths[group], false);
+    }
+}
+
 inline std::array<uint8_t, 3> rgb(uint16_t value)
 {
     auto expand = [](unsigned v) { return uint8_t((v << 3) | (v >> 2)); };
     return { expand((value >> 11) & 31), expand((value >> 6) & 31), expand((value >> 1) & 31) };
 }
-inline Layer extract(const uint8_t *black, const uint8_t *white, unsigned group, Target target)
+// 'drawn' may narrow the search to where the replay drew (DrawBounds); every
+// other pixel is known to hold its background.
+inline Layer extract(const uint8_t *black, const uint8_t *white, unsigned group, Target target,
+                     const Rect &drawn = Rect{ 0, 0, int(Width), int(Height) })
 {
     Layer layer; layer.target = target;
     if (!target.valid()) return layer;
     const auto b = reinterpret_cast<const uint16_t *>(black + ColorBase + group * ImageBytes);
     const auto w = reinterpret_cast<const uint16_t *>(white + ColorBase + group * ImageBytes);
     int x0 = Width, y0 = Height, x1 = -1, y1 = -1;
-    const unsigned limitX = (target.width * 4 + 2) / 3;
-    for (unsigned y = 0; y < target.height; ++y)
-        for (unsigned x = 0; x < limitX; ++x)
+    const unsigned limitX = std::min((target.width * 4 + 2) / 3, unsigned(std::max(0, drawn.x1)));
+    const unsigned limitY = std::min(target.height, unsigned(std::max(0, drawn.y1)));
+    for (unsigned y = unsigned(std::max(0, drawn.y0)); y < limitY; ++y)
+        for (unsigned x = unsigned(std::max(0, drawn.x0)); x < limitX; ++x)
         {
             const unsigned i = (y * Width + x) ^ 1;
             if ((b[i] & 0xFFFE) == 0 && (w[i] & 0xFFFE) == 0xFFFE) continue;
@@ -402,21 +595,24 @@ struct Bindings
 // Invert the final display mapping: the VI and window stretch will bring each
 // corrected source pixel back to the same size on both axes. Rasterize at the
 // scene's internal scale so 2x/4x/8x scanouts keep fractional HUD placement.
-inline RDP::VIOverlay before_vi(const View &view, unsigned scale, double aspect)
+// Draws into 'out' when it is unused or already shaped for this framebuffer;
+// 'touched' accumulates every pixel written, for JfgOverlayPlane::reset/publish.
+inline void before_vi(const View &view, unsigned scale, double aspect, RDP::VIOverlay &out,
+                      Rect *touched = nullptr)
 {
-    RDP::VIOverlay out;
     if (!view.frame || view.frame->layers.empty() || !view.frame->target.valid() ||
-        (scale != 1 && scale != 2 && scale != 4 && scale != 8) || aspect <= 0) return out;
+        (scale != 1 && scale != 2 && scale != 4 && scale != 8) || aspect <= 0) return;
     const auto &v = view.vi;
     const unsigned xa = v.xscale & 4095, ya = v.yscale & 4095;
     const double viewW = JfgReticleOverlay::view_width(v.crop, v.lines);
     const double viewH = JfgReticleOverlay::view_height(v.crop, v.lines);
-    if (!xa || !ya || viewW <= 0 || viewH <= 0) return out;
-    out.origin = view.frame->target.address; out.width = view.frame->target.width;
-    out.height = view.frame->target.height; out.scale = scale;
+    if (!xa || !ya || viewW <= 0 || viewH <= 0) return;
+    const auto &target = view.frame->target;
+    if (JfgOverlayPlane::unused(out))
+        JfgOverlayPlane::shape(out, target.address, target.width, target.height, scale);
+    if (out.origin != target.address || out.width != target.width || out.height != target.height ||
+        out.scale != scale) return;
     const int width = out.width * scale, height = out.height * scale;
-    out.pixels.resize(size_t(width) * height * 2);
-    for (size_t i = 1; i < out.pixels.size(); i += 2) out.pixels[i] = 0x00FFFFFF;
     const double horizontal = viewW / viewH / aspect * xa / ya;
     for (const auto &layer : view.frame->layers)
     {
@@ -441,6 +637,7 @@ inline RDP::VIOverlay before_vi(const View &view, unsigned scale, double aspect)
             const int x1 = std::min(cx1, int(std::round(left + (x + 1) * dx)));
             const int y0 = std::max(cy0, int(std::round(top + y * dy)));
             const int y1 = std::min(cy1, int(std::round(top + (y + 1) * dy)));
+            if (touched) touched->add(x0, y0, x1, y1);
             for (int py = y0; py < y1; ++py) for (int px = x0; px < x1; ++px)
             {
                 auto *dest = &out.pixels[(size_t(py) * width + px) * 2];
@@ -475,6 +672,12 @@ inline RDP::VIOverlay before_vi(const View &view, unsigned scale, double aspect)
             }
         }
     }
+}
+
+inline RDP::VIOverlay before_vi(const View &view, unsigned scale, double aspect)
+{
+    RDP::VIOverlay out;
+    before_vi(view, scale, aspect, out);
     return out;
 }
 

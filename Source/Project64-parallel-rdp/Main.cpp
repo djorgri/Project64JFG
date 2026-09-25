@@ -136,6 +136,8 @@ std::unique_ptr<RDP::CommandProcessor> g_processor;
 std::vector<uint32_t> g_pending_rdp_words;
 std::vector<uint32_t> g_pending_rdp_command_batch;
 std::vector<RDP::RGBA> g_scanout_colors;
+// Reused for every readback; swapped with g_scanout_colors when presented.
+std::vector<RDP::RGBA> g_readback_colors;
 std::vector<uint32_t> g_display_pixels;
 unsigned g_scanout_width = 0;
 unsigned g_scanout_height = 0;
@@ -148,6 +150,30 @@ JfgHudRaster::State g_hud_raster;
 std::array<std::unique_ptr<RDP::CommandProcessor>, 2> g_hud_processors;
 JfgHudLayer::Capture g_hud_capture;
 JfgHudLayer::Bindings g_hud_bindings;
+// What the HUD processors' RAMs hold between replays; see JfgHudLayer::DrawBounds.
+struct HudRamState
+{
+    bool initialized = false;
+    JfgHudLayer::TextureImage texture_image;
+    JfgHudLayer::DrawBounds drawn;
+    std::vector<JfgHudLayer::Span> spans;
+    std::array<uint64_t, 2> timeline = {}; // Last replay not waited for yet.
+    // What the last replay publishes; the GPU result is read back only when a
+    // scanout or the next replay needs it (see publish_hud_layers).
+    struct Pending
+    {
+        bool active = false, readback = false;
+        std::vector<JfgHudLayer::Target> touched;
+        std::array<JfgHudLayer::Target, 2> layers = {};
+        std::array<uint64_t, 2> layerOrders = {};
+        std::vector<JfgHudLayer::Fade> fades;
+        std::vector<JfgHudLayer::Glyph> glyphs;
+    } pending;
+};
+HudRamState g_hud_ram;
+// One HUD/reticle plane serves every scanout; only the touched part is reset and uploaded.
+RDP::VIOverlay g_overlay;
+JfgOverlayPlane::Rect g_overlay_touched;
 JfgReticleOverlay::View g_reticle_view, g_last_reticle_view;
 // Reading a VI image back to the CPU is needed by the current GDI presenter,
 // but it must not make the emulation thread wait for the GPU. Keep a small
@@ -380,7 +406,7 @@ void report_performance_if_due()
 
 	char message[512] = {};
 	_snprintf_s(message, sizeof(message), _TRUNCATE,
-		"perf: present %.1f Hz, present CPU %.2f ms, SyncFull %u waits %.2f ms (%.2f ms/wait), RDP callback %u %.2f ms lock %.2f ms batch %u %.2f ms cmds/words %u/%u, scanout queued/ready/skipped %u/%u/%u, HUD overlay health/weapon/text/primitives %u/%u/%u/%u GPU+readback %.2f ms",
+		"perf: present %.1f Hz, present CPU %.2f ms, SyncFull %u waits %.2f ms (%.2f ms/wait), RDP callback %u %.2f ms lock %.2f ms batch %u %.2f ms cmds/words %u/%u, scanout queued/ready/skipped %u/%u/%u, HUD overlay health/weapon/text/primitives %u/%u/%u/%u HUD render %.2f ms",
 		double(g_performance.present_count) / elapsed_seconds,
 		presentation_ms,
 		g_performance.sync_wait_count, wait_ms, wait_per_sync_ms,
@@ -412,6 +438,7 @@ void clear_hud_overlay()
     g_hud_raster = {};
     g_hud_capture = {};
     g_hud_bindings = {};
+    g_hud_ram = {};
     // The HUD is baked into scanouts now. A reset/state load must discard
     // those images too, instead of only clearing a separate overlay handle.
     for (auto &scanout : g_async_scanouts)
@@ -443,6 +470,9 @@ void destroy_renderer()
 	}
 	g_next_scanout_sequence = 1;
 	g_scanout_colors.clear();
+	g_readback_colors.clear();
+	g_overlay = {};
+	g_overlay_touched = {};
 	g_display_pixels.clear();
 	g_scanout_width = 0;
 	g_scanout_height = 0;
@@ -542,6 +572,7 @@ bool create_hud_renderers()
     // Two native backgrounds let the original RDP blender determine both
     // foreground color and transmission. No scene color is present in either.
     // Separate processors retain identical TMEM/state between completion points.
+    g_hud_ram = {};
     for (auto &p : g_hud_processors)
     {
         p = std::make_unique<RDP::CommandProcessor>(*g_device, nullptr, 0,
@@ -560,54 +591,107 @@ bool create_hud_renderers()
     return true;
 }
 
+// Read back the last replay and publish its frames. The GPU replays while the
+// emulation continues; the next scanout or replay is the first to need them.
+void publish_hud_layers()
+{
+    auto &state = g_hud_ram;
+    auto &pending = state.pending;
+    if (!pending.active) return;
+    pending.active = false;
+    LARGE_INTEGER start = {}, end = {};
+    QueryPerformanceCounter(&start);
+    const uint8_t *black = nullptr, *white = nullptr;
+    if (pending.readback)
+    {
+        for (unsigned background = 0; background < 2; ++background)
+            g_hud_processors[background]->wait_for_timeline(state.timeline[background]);
+        state.timeline = {};
+        black = static_cast<const uint8_t *>(g_hud_processors[0]->begin_read_rdram());
+        white = static_cast<const uint8_t *>(g_hud_processors[1]->begin_read_rdram());
+    }
+    const JfgHudLayer::Rect whole = { 0, 0, int(JfgHudLayer::Width), int(JfgHudLayer::Height) };
+    for (const auto &target : pending.touched)
+    {
+        auto frame = std::make_shared<JfgHudLayer::Frame>(); frame->target = target;
+        for (const auto &fade : pending.fades)
+            if (fade.target.address == target.address) frame->fades.push_back(fade);
+        for (unsigned group = 0; group < 2; ++group)
+            if (pending.layers[group].address == target.address)
+            {
+                auto layer = JfgHudLayer::extract(black, white, group, target,
+                    state.drawn.unknown ? whole : state.drawn.colors[group]);
+                layer.order = pending.layerOrders[group];
+                if (!layer.pixels.empty()) frame->layers.push_back(std::move(layer));
+            }
+        for (const auto &glyph : pending.glyphs)
+            if (glyph.target.address == target.address)
+                frame->layers.push_back(JfgHudLayer::extract_glyph(black, white, glyph));
+        // Empty frames remove the old HUD when a menu/scene replaces it.
+        g_hud_bindings.publish(std::move(frame));
+    }
+    QueryPerformanceCounter(&end);
+    g_performance.hud_render_ticks += end.QuadPart - start.QuadPart;
+}
+
 void render_hud_layers()
 {
     if (!g_hud_processors[0] || g_hud_capture.commands.empty()) return;
+    // The previous replay's frames must be read back before its RAM changes.
+    publish_hud_layers();
     // SyncFull has idled the scene processor. Private command recording stays
     // on this calling thread: separate worker threads would all register as
     // Granite index zero and race in descriptor/command-pool allocation. GPU
     // execution can still overlap; both replays complete before readback.
     LARGE_INTEGER start = {}, end = {};
     QueryPerformanceCounter(&start);
+    // Restore only what the previous replay drew and mirror only the guest RDRAM
+    // this replay loads, instead of rewriting both 16 MiB RAMs every frame.
+    auto &state = g_hud_ram;
+    // A replay nothing was read back from may still be running; finish it
+    // before rewriting the RAM it reads and draws into.
+    for (unsigned background = 0; background < 2; ++background)
+        if (state.timeline[background])
+            g_hud_processors[background]->wait_for_timeline(state.timeline[background]);
+    const auto previous = state.drawn;
+    const bool fresh = !state.initialized || previous.unknown;
+    state.spans.clear();
+    JfgHudLayer::load_spans(g_hud_capture.commands, state.texture_image, state.spans);
+    JfgHudLayer::merge_spans(state.spans);
+    state.drawn.scan(g_hud_capture.commands);
+    state.initialized = true;
     for (unsigned background = 0; background < 2; ++background)
     {
         auto &p = g_hud_processors[background];
         auto ram = static_cast<uint8_t *>(p->begin_read_rdram());
-        std::memcpy(ram, g_gfx.RDRAM, std::min(g_gfx.RDRAM_SIZE, JfgHudLayer::ColorBase));
-        auto color = reinterpret_cast<uint16_t *>(ram + JfgHudLayer::ColorBase);
-        std::fill(color, color + JfgHudLayer::Groups * JfgHudLayer::ImageBytes / 2, background ? 0xFFFF : 0x0001);
-        std::memset(ram + JfgHudLayer::DepthBase, 0xFF, JfgHudLayer::Groups * JfgHudLayer::ImageBytes);
+        auto hidden = static_cast<uint8_t *>(p->begin_read_hidden_rdram());
+        const uint16_t color = background ? 0xFFFF : 0x0001;
+        if (fresh) JfgHudLayer::clear_all(ram, hidden, p->get_hidden_rdram_size(), color);
+        else JfgHudLayer::restore(ram, hidden, color, previous);
+        JfgHudLayer::mirror(ram, g_gfx.RDRAM, g_gfx.RDRAM_SIZE, state.spans);
         p->end_write_rdram();
-        // Coverage belongs to this fresh pair of backgrounds, not to the
-        // preceding frame's antialiased edges.
-        std::memset(p->begin_read_hidden_rdram(), 3, p->get_hidden_rdram_size());
         p->end_write_hidden_rdram();
         p->enqueue_command_batch(unsigned(g_hud_capture.commands.size()), g_hud_capture.commands.data());
+        p->flush();
+        state.timeline[background] = p->signal_timeline();
     }
-    for (auto &p : g_hud_processors) p->idle();
-    auto black = static_cast<const uint8_t *>(g_hud_processors[0]->begin_read_rdram());
-    auto white = static_cast<const uint8_t *>(g_hud_processors[1]->begin_read_rdram());
-    for (const auto &target : g_hud_capture.touched)
-    {
-        auto frame = std::make_shared<JfgHudLayer::Frame>(); frame->target = target;
-        for (const auto &fade : g_hud_capture.fades)
-            if (fade.target.address == target.address) frame->fades.push_back(fade);
-        for (unsigned group = 0; group < 2; ++group)
-            if (g_hud_capture.layers[group].address == target.address)
-            {
-                auto layer = JfgHudLayer::extract(black, white, group, target);
-                layer.order = g_hud_capture.layerOrders[group];
-                if (!layer.pixels.empty()) frame->layers.push_back(std::move(layer));
-            }
-        for (const auto &glyph : g_hud_capture.glyphs)
-            if (glyph.target.address == target.address)
-                frame->layers.push_back(JfgHudLayer::extract_glyph(black, white, glyph));
-        // Empty frames remove the old HUD when a menu/scene replaces it.
-        g_hud_bindings.publish(std::move(frame));
-    }
+    // Only layers and glyphs are read back. A list without them (every other
+    // SyncFull, typically) still replays to keep the RDP state, and publishes
+    // its fades and empty frames at once.
+    auto &pending = state.pending;
+    pending.active = true;
+    pending.readback = g_hud_capture.layers[0].valid() || g_hud_capture.layers[1].valid() ||
+        !g_hud_capture.glyphs.empty();
+    pending.touched.swap(g_hud_capture.touched);
+    pending.layers = g_hud_capture.layers;
+    pending.layerOrders = g_hud_capture.layerOrders;
+    pending.fades.swap(g_hud_capture.fades);
+    pending.glyphs.swap(g_hud_capture.glyphs);
     g_hud_capture.next();
     QueryPerformanceCounter(&end);
     g_performance.hud_render_ticks += end.QuadPart - start.QuadPart;
+    if (!pending.readback)
+        publish_hud_layers();
 }
 
 void update_vi_registers()
@@ -765,7 +849,8 @@ bool is_completely_black(const std::vector<RDP::RGBA> &colors)
 	});
 }
 
-void select_scanout_for_presentation(std::vector<RDP::RGBA> &&colors, unsigned width, unsigned height,
+// Presents 'colors' by swapping buffers, so the caller gets an allocation to reuse.
+void select_scanout_for_presentation(std::vector<RDP::RGBA> &colors, unsigned width, unsigned height,
                                     const JfgReticleOverlay::View &reticle)
 {
 	if (colors.empty() || width == 0 || height == 0)
@@ -785,7 +870,7 @@ void select_scanout_for_presentation(std::vector<RDP::RGBA> &&colors, unsigned w
 		return;
 	}
 
-	g_scanout_colors = std::move(colors);
+	g_scanout_colors.swap(colors);
 	g_scanout_width = width;
 	g_scanout_height = height;
 	g_reticle_view = black ? JfgReticleOverlay::View{} : reticle;
@@ -822,11 +907,11 @@ bool consume_completed_scanout()
 
 	if (newest->buffer.buffer && newest->buffer.width != 0 && newest->buffer.height != 0)
 	{
-		std::vector<RDP::RGBA> colors(newest->buffer.width * newest->buffer.height);
+		g_readback_colors.resize(newest->buffer.width * newest->buffer.height);
 		const void *mapped = g_device->map_host_buffer(*newest->buffer.buffer, Vulkan::MEMORY_ACCESS_READ_BIT);
-		std::memcpy(colors.data(), mapped, colors.size() * sizeof(RDP::RGBA));
+		std::memcpy(g_readback_colors.data(), mapped, g_readback_colors.size() * sizeof(RDP::RGBA));
 		g_device->unmap_host_buffer(*newest->buffer.buffer, Vulkan::MEMORY_ACCESS_READ_BIT);
-		select_scanout_for_presentation(std::move(colors), newest->buffer.width, newest->buffer.height, newest->reticle);
+		select_scanout_for_presentation(g_readback_colors, newest->buffer.width, newest->buffer.height, newest->reticle);
 	}
 
 	// All older completed readbacks are obsolete once the newest image has been
@@ -883,13 +968,20 @@ void queue_async_scanout(const RDP::ScanoutOptions &options)
 		hud.frame = g_hud_bindings.find(r.origin);
 	}
 	// The overlay is uploaded synchronously into a buffer owned by this GPU
-	// submission. Later frames cannot change an in-flight scanout's HUD.
-	auto overlay = JfgHudLayer::before_vi(hud, unsigned(g_settings.upscaling),
-		g_settings.force_widescreen ? 16.0 / 9.0 : 4.0 / 3.0);
+	// submission. Later frames cannot change an in-flight scanout's HUD, so the
+	// plane itself is reused: only last frame's pixels are reset.
+	JfgOverlayPlane::reset(g_overlay, g_overlay_touched);
+	g_overlay_touched = {};
+	JfgHudLayer::before_vi(hud, unsigned(g_settings.upscaling),
+		g_settings.force_widescreen ? 16.0 / 9.0 : 4.0 / 3.0, g_overlay, &g_overlay_touched);
     JfgReticleOverlay::before_vi(free_scanout->reticle, unsigned(g_settings.upscaling),
-        g_settings.force_widescreen ? 16.0 / 9.0 : 4.0 / 3.0, overlay);
+        g_settings.force_widescreen ? 16.0 / 9.0 : 4.0 / 3.0, g_overlay, &g_overlay_touched);
 	auto filtered_options = options;
-	if (!overlay.pixels.empty()) filtered_options.overlay = &overlay;
+	if (!g_overlay_touched.empty())
+	{
+		JfgOverlayPlane::publish(g_overlay, g_overlay_touched);
+		filtered_options.overlay = &g_overlay;
+	}
 	g_processor->scanout_async_buffer(free_scanout->buffer, filtered_options);
 	if (free_scanout->buffer.fence)
 	{
@@ -912,6 +1004,8 @@ void present()
 {
 	if (!g_processor)
 		return;
+	// Counted as HUD rendering, not presentation.
+	publish_hud_layers();
 	LARGE_INTEGER presentation_start = {};
 	QueryPerformanceCounter(&presentation_start);
 	g_performance.present_count++;

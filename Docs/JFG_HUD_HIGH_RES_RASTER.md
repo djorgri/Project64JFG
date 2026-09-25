@@ -41,7 +41,7 @@ and the display aspect ratio to preserve its corrected proportions.
 
 Restart the emulator to load the rebuilt executable and DLL, then load a game
 or an existing state. `Logs/Project64-ParallelRDP.log` includes
-`HUD overlay health/weapon/text/primitives` and `GPU+readback` timing in its
+`HUD overlay health/weapon/text/primitives` and `HUD render` timing in its
 performance lines. Nonzero counts confirm interception of the intended draw
 scopes. Turning off the existing widescreen HUD option restores game drawing.
 
@@ -96,18 +96,28 @@ quantization, without copying the scene into the HUD. Arbitrary nonlinear
 or saturating blend modes are not guaranteed to reconstruct exactly. This
 experiment now applies VI gamma after composition, together with the scene.
 
-At SyncFull the scene completes, guest texture RAM is mirrored, private
-color/depth/coverage buffers are reset and the captured batch is replayed.
+At SyncFull the scene completes and the captured batch is replayed. The
+private 16 MiB RAMs persist between replays (`JfgHudLayer::DrawBounds`): a
+replay reads guest RDRAM only through texture loads and writes only inside its
+scissored primitives, so only the spans those loads read are mirrored
+(`load_spans`, the same arithmetic as `Renderer::load_tile`), and only the
+rectangles the previous replay drew are restored to their backgrounds,
+coverage and depth included. That is equivalent to recopying all RDRAM and
+clearing every image; `tests/JfgHudRamTest.h` checks it byte for byte.
 The cropped results are associated with the original framebuffer address.
+They are read back when first needed, by the next scanout or replay, so the
+emulation keeps running while the GPU replays. A list with no HUD layer or
+glyph (typically every other SyncFull) publishes its fades and empty frames at
+once without waiting for the GPU.
 Each scanout uploads its own immutable composition plane. GPU command buffers
 retain that upload until completion; later CPU frames cannot overwrite it.
 When presentation holds a previous frame, that image already includes its HUD. Scene draws without HUD publish an
 empty layer so old icons disappear. Reset and state load clear host state.
 
-This experiment adds two native GPU replays, RAM copies and readbacks per
-completion point while the private processors are active. They remain active
-until reset or renderer teardown, even if a later frame has no HUD scopes.
-In-game visual quality and performance still require user validation.
+This experiment adds two native GPU replays per completion point while the
+private processors are active. They remain active until reset or renderer
+teardown, even if a later frame has no HUD scopes. On the heavy scene measured
+in September 2026 the HUD costs the emulation thread about 0.3 ms per frame.
 
 ## Composition before the VI
 
@@ -119,7 +129,10 @@ framebuffer coordinates. This inverse mapping compensates for the stretch which
 will happen after filtering. At 1x, fractional positions necessarily quantize
 to the native framebuffer grid; it cannot retain every separate source column.
 
-`ScanoutOptions::overlay` uploads packed RGB color/transmission pairs.
+`ScanoutOptions::overlay` uploads packed RGB color/transmission pairs. The
+plugin reuses one plane for every scanout, resets only what the last frame
+touched, and uploads only the rectangle holding the current HUD and reticle
+pixels (`VIOverlay::rect_*`).
 `extract_vram.comp` combines them with the scene while producing the transient
 VI input, before any VI filters run. RGBA5551 results are quantized back to five
 bits per channel. Guest RDRAM and its upscaled counterpart are never modified;

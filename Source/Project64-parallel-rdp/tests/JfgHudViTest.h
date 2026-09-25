@@ -23,6 +23,21 @@ static void test_hud_before_vi(Vulkan::Device &device)
         for(unsigned y=0;y<plane.height*2;++y)for(unsigned x=0;x<plane.width*2;++x)
             if(x<162 || x>=180 || y<82 || y>=90)
                 require(plane.pixels[(y*plane.width*2+x)*2]==0,"pre-VI text clip escaped");
+        // The plugin reuses one plane: after reset() it must match a fresh one,
+        // and nothing may be written outside the reported rectangle.
+        RDP::VIOverlay reused;JfgOverlayPlane::Rect touched;
+        for(int x:{80,10,60}) {
+            f->layers[0].x=x;
+            JfgOverlayPlane::reset(reused,touched);touched={};
+            before_vi(v,2,aspect,reused,&touched);
+            require(reused.pixels==before_vi(v,2,aspect).pixels,"reused HUD plane kept stale pixels");
+            for(unsigned y=0;y<reused.height*2;++y)for(unsigned px=0;px<reused.width*2;++px)
+                if(int(px)<touched.x0 || int(px)>=touched.x1 || int(y)<touched.y0 || int(y)>=touched.y1) {
+                    const auto i=(y*reused.width*2+px)*2;
+                    require(reused.pixels[i]==0 && reused.pixels[i+1]==JfgOverlayPlane::Transparent,
+                        "HUD wrote outside its touched rectangle");
+                }
+        }
         f->layers.clear();require(before_vi(v,2,aspect).pixels.empty(),"empty frame retained HUD");
     }
 
@@ -80,6 +95,9 @@ static void test_hud_before_vi(Vulkan::Device &device)
         for(bool gamma:{false,true})for(unsigned offset:{0u,324u}) {
             setup(gamma,offset);fill(false);auto base=scan(nullptr);auto injected=scan(&overlay);
             require(!same(base,injected),"VI overlay was not applied");
+            auto compact=overlay;compact.rect_x=60*scale;compact.rect_y=40*scale;
+            compact.rect_width=36*scale;compact.rect_height=30*scale;
+            require(same(injected,scan(&compact)),"VI overlay rectangle upload differs from the whole plane");
             require(same(injected,scan(&overlay)),"repeated VI scanout double blended");
             require(same(base,scan(nullptr)),"VI overlay changed scene memory");
             fill(true);auto reference=scan(nullptr);
@@ -122,6 +140,14 @@ static void test_hud_before_vi(Vulkan::Device &device)
             }
             p.end_write_rdram();
             require(same(actual,scan(nullptr)),"reticle bypassed VI or additive HUD composition changed");
+        }
+        {
+            RDP::VIOverlay reticleOnly;JfgOverlayPlane::Rect reticleTouched;
+            JfgReticleOverlay::before_vi(reticle,scale,4.0/3.0,reticleOnly,&reticleTouched);
+            require(!reticleTouched.empty(),"reticle reported no touched pixels");
+            setup(false,0);fill(false);auto whole=scan(&reticleOnly);
+            JfgOverlayPlane::publish(reticleOnly,reticleTouched);
+            require(same(whole,scan(&reticleOnly)),"reticle rectangle upload differs from the whole plane");
         }
         // GPU submissions retain their own uploaded plane across CPU changes
         // and frame-context reuse; a later empty frame must not inherit it.

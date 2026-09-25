@@ -6,7 +6,7 @@
 #include <cstdint>
 #include <cstring>
 #include <vector>
-#include "../../external/parallel-rdp/parallel-rdp/vi_overlay.hpp"
+#include "JfgOverlayPlane.h"
 #include "JfgBuild.h"
 
 // Host copy of the game's CPU line queue, separate from the emulated image.
@@ -180,17 +180,16 @@ template<class Plot> void raster(const Line &l, Plot plot)
 // Additive CPU lines join the same immutable framebuffer plane as the HUD,
 // before extract_vram and all VI filters. Pixel footprints are constructed on
 // the internal framebuffer grid, rather than the final Windows blit surface.
-inline void before_vi(const View &v, unsigned scale, double aspect, RDP::VIOverlay &out)
+// 'touched' accumulates every pixel written, for JfgOverlayPlane::reset/publish.
+inline void before_vi(const View &v, unsigned scale, double aspect, RDP::VIOverlay &out,
+                      JfgOverlayPlane::Rect *touched = nullptr)
 {
     const unsigned xa=v.xscale&4095, ya=v.yscale&4095;
     const double viewW=view_width(v.crop,v.lines), viewH=view_height(v.crop,v.lines);
     if (v.frame.lines.empty() || !v.frame.width || !v.frame.height || !xa || !ya ||
         viewW<=0 || viewH<=0 || aspect<=0 || (scale!=1 && scale!=2 && scale!=4 && scale!=8)) return;
-    if (out.pixels.empty()) {
-        out.origin=v.frame.address;out.width=v.frame.width;out.height=v.frame.height;out.scale=scale;
-        out.pixels.resize(size_t(out.width)*out.height*scale*scale*2);
-        for(size_t i=1;i<out.pixels.size();i+=2)out.pixels[i]=0xFFFFFF;
-    }
+    if (JfgOverlayPlane::unused(out))
+        JfgOverlayPlane::shape(out,v.frame.address,v.frame.width,v.frame.height,scale);
     if (out.origin!=v.frame.address || out.width!=v.frame.width || out.height<v.frame.height || out.scale!=scale) return;
     const int width=int(out.width*scale),height=int(out.height*scale);
     const double dx=viewW/viewH/aspect*xa/ya*scale;
@@ -208,6 +207,7 @@ inline void before_vi(const View &v, unsigned scale, double aspect, RDP::VIOverl
             const int x0=std::max(clipLeft,int(std::floor(left)));
             const int x1=std::min(clipRight,int(std::ceil(right)));
             const int y0=std::max(clipTop,y*int(scale)),y1=std::min(clipBottom,(y+1)*int(scale));
+            if(touched)touched->add(std::max(0,x0),std::max(0,y0),std::min(width,x1),std::min(height,y1));
             for(int py=y0;py<y1;++py)for(int px=x0;px<x1;++px) {
                 if(px<0 || py<0 || px>=width || py>=height)continue;
                 auto &color=out.pixels[(size_t(py)*width+px)*2];

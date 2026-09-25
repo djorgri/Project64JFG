@@ -11,6 +11,7 @@ static void require(bool ok, const char *message) { if (!ok) throw std::runtime_
 #include "JfgHudViTest.h"
 #include "JfgHudFadeTest.h"
 #include "JfgMapTextTest.h"
+#include "JfgHudRamTest.h"
 
 int main(int argc, char **argv)
 {
@@ -209,6 +210,7 @@ int main(int argc, char **argv)
         test_hud_before_vi(device);
         test_hud_fade_order(device);
         test_map_text_order(device);
+        test_hud_private_ram(device);
         if (argc > 1 && std::string(argv[1]) == "--stress")
         {
             command({0xE7000000, JfgHudRaster::Marker | 5}, true);

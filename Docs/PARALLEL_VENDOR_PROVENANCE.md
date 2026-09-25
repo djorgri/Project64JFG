@@ -10,13 +10,14 @@ answered.
 
 ## What we modified
 
-Three sets of changes, 96 lines in total, already present in the frozen
-trees. They no longer need applying: they *are* the code.
+These changes are already present in the frozen trees. They no longer need
+applying: they *are* the code.
 
 | Location | Delta | Role |
 | --- | --- | --- |
 | `external/parallel-rdp/parallel-rdp/` (4 files) | +80 lines | `enqueue_command_batch()`, `drain_commands()`, enlarged command ring. Required by the optimised RDP adapter. |
 | `external/parallel-rdp/Granite/util/bitops.hpp` | +10 lines | 32-bit MSVC workaround: `_BitScanReverse64`/`_BitScanForward64` do not exist on x86. **Without it, Parallel-RDP does not compile for Win32.** Inert on x64. |
+| `external/parallel-rdp/parallel-rdp/` (`video_interface.cpp`, `vi_overlay.hpp`, `hud_coordinates.hpp`, `shaders/extract_vram.comp`) | JFG HUD | Pre-VI HUD/reticle composition plane (`ScanoutOptions::overlay`) and the private renderers' 4/3 coordinate quirk. Only the plane's touched rectangle (`VIOverlay::rect_*`) is uploaded, and the per-scanout scale/downscale images use `IMAGE_MISC_FORCE_NO_DEDICATED_BIT` so their memory is recycled instead of being returned to the driver every frame. |
 | `external/parallel-rsp/rsp_jit.cpp` | +6 lines | `code_size += 4096;` in `init_jit_thunks()` and `jit_region()`. GNU Lightning underestimates the x86 emission size on MinGW32 and `jit_emit()` cannot grow a caller-supplied buffer: without this headroom, a null function pointer and a crash at launch. |
 
 ### The RSP patch was removed, and it was already broken

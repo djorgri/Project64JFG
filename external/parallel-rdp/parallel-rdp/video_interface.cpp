@@ -26,6 +26,7 @@
 #include "luts.hpp"
 #include "bitops.hpp"
 #include <cmath>
+#include <cstring>
 
 #ifndef PARALLEL_RDP_SHADER_DIR
 #include "shaders/slangmosh.hpp"
@@ -488,26 +489,45 @@ Vulkan::ImageHandle VideoInterface::vram_fetch_stage(const Registers &regs, unsi
 	// Compose into the transient VI input, before AA/divot/scale/gamma. Keeping
 	// guest and upscaled RDRAM intact also makes repeated scanouts idempotent.
 	const unsigned pixel_bytes = (regs.status & VI_CONTROL_TYPE_MASK) == VI_CONTROL_TYPE_RGBA8888_BIT ? 4 : 2;
+	const bool whole_overlay = !overlay || !overlay->rect_width || !overlay->rect_height;
+	const uint32_t plane_width = overlay ? overlay->width * scaling_factor : 0;
+	const uint32_t plane_height = overlay ? overlay->height * scaling_factor : 0;
+	const uint32_t rect_x = whole_overlay ? 0 : overlay->rect_x;
+	const uint32_t rect_y = whole_overlay ? 0 : overlay->rect_y;
+	const uint32_t rect_width = whole_overlay ? plane_width : overlay->rect_width;
+	const uint32_t rect_height = whole_overlay ? plane_height : overlay->rect_height;
 	const bool use_overlay = overlay && overlay->width == unsigned(regs.vi_width) &&
 		overlay->scale == scaling_factor && overlay->width && overlay->height &&
 		overlay->width <= 1024 && overlay->height <= 1024 && scaling_factor <= 8 &&
 		unsigned(regs.vi_offset) >= overlay->origin &&
 		(unsigned(regs.vi_offset) - overlay->origin) % pixel_bytes == 0 &&
 		uint64_t(unsigned(regs.vi_offset) - overlay->origin) < uint64_t(overlay->width) * overlay->height * pixel_bytes &&
-		overlay->pixels.size() == uint64_t(overlay->width) * overlay->height * scaling_factor * scaling_factor * 2;
+		overlay->pixels.size() == uint64_t(overlay->width) * overlay->height * scaling_factor * scaling_factor * 2 &&
+		uint64_t(rect_x) + rect_width <= plane_width && uint64_t(rect_y) + rect_height <= plane_height;
 	Vulkan::BufferHandle overlay_buffer;
 	if (use_overlay)
 	{
+		// The shader addresses the uploaded rectangle; outside it the scene is left untouched.
 		const unsigned offset = (unsigned(regs.vi_offset) - overlay->origin) / pixel_bytes;
-		push.overlay_x = (offset % overlay->width) * scaling_factor;
-		push.overlay_y = (offset / overlay->width) * scaling_factor;
-		push.overlay_width = overlay->width * scaling_factor;
-		push.overlay_height = overlay->height * scaling_factor;
+		push.overlay_x = int32_t((offset % overlay->width) * scaling_factor) - int32_t(rect_x);
+		push.overlay_y = int32_t((offset / overlay->width) * scaling_factor) - int32_t(rect_y);
+		push.overlay_width = int32_t(rect_width);
+		push.overlay_height = int32_t(rect_height);
 		Vulkan::BufferCreateInfo info = {};
-		info.size = overlay->pixels.size() * sizeof(uint32_t);
+		info.size = uint64_t(rect_width) * rect_height * 2 * sizeof(uint32_t);
 		info.usage = VK_BUFFER_USAGE_STORAGE_BUFFER_BIT;
 		info.domain = Vulkan::BufferDomain::LinkedDeviceHost;
-		overlay_buffer = device->create_buffer(info, overlay->pixels.data());
+		if (whole_overlay)
+			overlay_buffer = device->create_buffer(info, overlay->pixels.data());
+		else
+		{
+			std::vector<uint32_t> rows(size_t(rect_width) * rect_height * 2);
+			for (uint32_t y = 0; y < rect_height; y++)
+				std::memcpy(rows.data() + size_t(y) * rect_width * 2,
+				            overlay->pixels.data() + ((size_t(rect_y) + y) * plane_width + rect_x) * 2,
+				            size_t(rect_width) * 2 * sizeof(uint32_t));
+			overlay_buffer = device->create_buffer(info, rows.data());
+		}
 		async_cmd->set_storage_buffer(0, 3, *overlay_buffer);
 	}
 	async_cmd->set_specialization_constant_mask(15);
@@ -814,6 +834,12 @@ Vulkan::ImageHandle VideoInterface::scale_stage(Vulkan::CommandBuffer &cmd, cons
 		rt_info.misc |= Vulkan::IMAGE_MISC_EXTERNAL_MEMORY_BIT;
 		rt_info.external.memory_handle_type = options.export_handle_type;
 	}
+	else
+	{
+		// A new image per scanout: a dedicated allocation would be returned to
+		// the driver every frame, whereas sub-allocated blocks are recycled.
+		rt_info.misc |= Vulkan::IMAGE_MISC_FORCE_NO_DEDICATED_BIT;
+	}
 
 	scale_image = device->create_image(rt_info);
 
@@ -1069,6 +1095,8 @@ Vulkan::ImageHandle VideoInterface::downscale_stage(Vulkan::CommandBuffer &cmd, 
 			rt_info.misc |= Vulkan::IMAGE_MISC_EXTERNAL_MEMORY_BIT;
 			rt_info.external.memory_handle_type = options.export_handle_type;
 		}
+		else
+			rt_info.misc |= Vulkan::IMAGE_MISC_FORCE_NO_DEDICATED_BIT; // See scale_stage().
 
 		downscale_image = device->create_image(rt_info);
 
