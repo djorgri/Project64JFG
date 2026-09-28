@@ -106,6 +106,9 @@ struct JFG_ADDRESSES
     uint32_t FrontCharSelectSetQuitModeFunction;
     uint32_t FrontGetModeFunction;
     uint32_t MainChangeLevelFunction;
+    // libultra's __osActiveQueue, the list of every thread; __osRunningThread
+    // follows it in all builds. Read to find stubs a pre-empted thread is in.
+    uint32_t OsActiveQueueAddress;
 
     // Offsets inside relocatable overlays. The module is always resolved from
     // the live overlay table; only the position of the code inside it moves

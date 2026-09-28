@@ -1614,6 +1614,15 @@ bool CN64System::SaveState()
         return false;
     }
 
+    // A game-specific runtime whose own guest code is still running (a call
+    // into the game from one of its stubs) takes that code out for the save,
+    // so the save waits: the event is retried a few instructions later.
+    if (m_Plugins && m_Plugins->Control() && !m_Plugins->Control()->GameStateSaveAllowed())
+    {
+        WriteTrace(TraceN64System, TraceDebug, "Done - game-specific code in use, retry");
+        return false;
+    }
+
     if (m_Plugins && m_Plugins->Control())
     {
         m_Plugins->Control()->GameStateSaving();

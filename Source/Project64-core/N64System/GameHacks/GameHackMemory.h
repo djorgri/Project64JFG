@@ -21,6 +21,10 @@ public:
     bool WriteU32(uint32_t Address, uint32_t Value);
     bool WriteF32(uint32_t Address, float Value);
 
+    // The program counter, $ra and $sp of the running CPU, for runtimes that
+    // must not rewrite guest code the CPU is still using.
+    bool ReadCpuState(uint32_t & ProgramCounter, uint32_t & ReturnAddress, uint32_t & StackPointer) const;
+
 private:
     CMipsMemoryVM & m_MMU;
 };

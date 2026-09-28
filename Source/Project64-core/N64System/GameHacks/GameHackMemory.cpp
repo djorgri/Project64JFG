@@ -2,7 +2,9 @@
 
 #include "GameHackMemory.h"
 #include <Project64-core/N64System/Mips/MemoryVirtualMem.h>
+#include <Project64-core/N64System/Mips/Register.h>
 #include <Project64-core/N64System/Recompiler/Recompiler.h>
+#include <Project64-core/N64System/SystemGlobals.h>
 
 CGameHackMemory::CGameHackMemory(CMipsMemoryVM & MMU) :
     m_MMU(MMU)
@@ -72,6 +74,18 @@ bool CGameHackMemory::WriteF32(uint32_t Address, float Value)
     uint32_t RawValue;
     memcpy(&RawValue, &Value, sizeof(RawValue));
     return WriteU32(Address, RawValue);
+}
+
+bool CGameHackMemory::ReadCpuState(uint32_t & ProgramCounter, uint32_t & ReturnAddress, uint32_t & StackPointer) const
+{
+    if (g_Reg == nullptr)
+    {
+        return false;
+    }
+    ProgramCounter = (uint32_t)g_Reg->m_PROGRAM_COUNTER;
+    ReturnAddress = g_Reg->m_GPR[31].UW[0];
+    StackPointer = g_Reg->m_GPR[29].UW[0];
+    return true;
 }
 
 CGameHackCodePatcher::CGameHackCodePatcher(CGameHackMemory & Memory, CRecompiler *& Recompiler) :

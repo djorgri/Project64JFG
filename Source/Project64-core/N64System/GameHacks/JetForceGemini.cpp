@@ -385,6 +385,8 @@ uint32_t MainFrontInitFunction = 0x80047608;
 uint32_t FrontCharSelectSetQuitModeFunction = 0x8005AAE8;
 uint32_t FrontGetModeFunction = 0x80058A5C;
 uint32_t MainChangeLevelFunction = 0x8004665C;
+// libultra's thread list (__osActiveQueue), see GuestCallInFlight.
+uint32_t OsActiveQueueAddress = 0x800A9E8C;
 uint32_t LandingCinematicSkipJump = 0x0C019C00; // jal LandingCinematicSkipStub
 // This free word sits with the existing JFG runtime scratch values. It carries
 // the physical E/Return state from the keyboard/mouse path directly to MIPS,
@@ -2649,6 +2651,7 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     FrontCharSelectSetQuitModeFunction = A.FrontCharSelectSetQuitModeFunction;
     FrontGetModeFunction = A.FrontGetModeFunction;
     MainChangeLevelFunction = A.MainChangeLevelFunction;
+    OsActiveQueueAddress = A.OsActiveQueueAddress;
 
     // Overlay-relative offsets. Every group keeps its internal spacing in all
     // builds, so only its anchor comes from the table.
@@ -2927,6 +2930,7 @@ CJetForceGeminiRuntime::CJetForceGeminiRuntime(CMipsMemoryVM & MMU, CRecompiler 
     m_HudAlignmentOverlay6Base(0),
     m_HudAlignmentOverlay14Base(0),
     m_HudAlignmentScopeOwned(false),
+    m_SaveStateDeferred(false),
     m_Fps60ToggleDown(false),
     m_Fps30ToggleDown(false),
     m_SyncAudioEnabledState(-1),
@@ -2972,6 +2976,185 @@ void CJetForceGeminiRuntime::Reset(void)
 // anything it does. A state written without them loads fine and the hooks then
 // install cleanly on top, so take them out before the state is written and
 // let the next video frame put it back.
+namespace
+{
+// Where the calls in a stub listing return to once the listing is placed at
+// Base: while such a call runs, the stub is still in use.
+void AddCallReturns(std::vector<uint32_t> & Returns, uint32_t Base, const uint32_t * Code, size_t Count)
+{
+    for (size_t i = 0; Base != 0 && i < Count; i++)
+    {
+        if ((Code[i] >> 26) == 3) // jal
+        {
+            Returns.push_back(Base + (uint32_t)(i * sizeof(uint32_t)) + 8);
+        }
+    }
+}
+
+template <size_t N>
+void AddCallReturns(std::vector<uint32_t> & Returns, JfgHudBuild::UsAddress Base, const uint32_t (&Code)[N])
+{
+    AddCallReturns(Returns, Base, Code, N);
+}
+} // namespace
+
+// The runtime rewrites guest code at arbitrary points of the game's frame: on
+// the video interrupt, on controller reads and for save states. Taking a stub
+// out while the CPU is inside it, or while a call the stub made has yet to
+// return into it, sends the game into the retail routine the stub borrowed
+// (the shot gauge's frontDrawRectangles call caught this way ended in a fetch
+// fault). A thread's registers and the top of its stack show either case: the
+// program counter inside the stubs' storage, or one of the stubs' own return
+// addresses in $ra or a stack slot. That holds for the running thread (the live
+// registers) and for every thread the game pre-empted (the context libultra
+// saved for it). A stale copy left in an uninitialised slot can only make this
+// report a call that already returned.
+bool CJetForceGeminiRuntime::GuestCallInFlight(void) const
+{
+    uint32_t ProgramCounter = 0, ReturnAddress = 0, StackPointer = 0;
+    if (!m_Memory.ReadCpuState(ProgramCounter, ReturnAddress, StackPointer))
+    {
+        return false;
+    }
+
+    struct REGION
+    {
+        uint32_t Start;
+        uint32_t Size;
+    };
+    std::vector<REGION> Regions;
+    // The retired diagnostic block holds every stub on the HUD builds; the
+    // Kiosk's movement stubs are packed into its own copy of those helpers.
+    const uint32_t DiagnosticBlock = JfgHudBuild::Address(0x80066B80);
+    if (DiagnosticBlock != 0)
+    {
+        Regions.push_back({ DiagnosticBlock, 0x800683D4 - 0x80066B80 });
+    }
+    for (uint32_t Stub : { SidekickStrafeStub, SidekickVerticalStub, SidekickPadProbeStub, ObjectMoveStub,
+                           LandingCinematicSkipStub, IntroCinematicSkipStub })
+    {
+        if (Stub != 0)
+        {
+            Regions.push_back({ Stub, 0x200 });
+        }
+    }
+    Regions.push_back({ CameraHelperBase, 0x40 });
+    Regions.push_back({ CameraTopDownHelperBase, 0x18 });
+
+    std::vector<uint32_t> Returns;
+    AddCallReturns(Returns, WidescreenHudShotGaugeWrapperStub, WidescreenHudShotGaugeWrapperCode);
+    AddCallReturns(Returns, JfgHudAlignmentCode::SpriteWeaponEntry, JfgHudAlignmentCode::SpriteWeaponCode);
+    AddCallReturns(Returns, JfgHudAlignmentCode::SpriteHealthEntry, JfgHudAlignmentCode::SpriteHealthCode);
+    AddCallReturns(Returns, JfgHudAlignmentCode::SpriteCommonEntry, JfgHudAlignmentCode::SpriteCommonCode);
+    AddCallReturns(Returns, JfgHudAlignmentCode::SpriteMatrixEntry, JfgHudAlignmentCode::SpriteMatrixCode);
+    AddCallReturns(Returns, JfgHudAlignmentCode::MatrixWeaponEntry, JfgHudAlignmentCode::MatrixWeaponCode);
+    AddCallReturns(Returns, JfgHudAlignmentCode::MatrixHealthEntry, JfgHudAlignmentCode::MatrixHealthCode);
+    AddCallReturns(Returns, JfgHudAlignmentRdp::Entry, JfgHudAlignmentRdp::Code);
+    if (const uint32_t MatrixReturn = JfgMultiplayerHud::MatrixReturn)
+    {
+        Returns.push_back(MatrixReturn);
+    }
+    if (LandingCinematicSkipStub != 0)
+    {
+        const std::vector<uint32_t> Landing = BuildLandingCinematicSkipImage();
+        AddCallReturns(Returns, LandingCinematicSkipStub, Landing.data(),
+                       std::min(Landing.size(), (size_t)LandingCinematicSkipTableWordOffset));
+    }
+    auto IsReturn = [&Returns](uint32_t Value) {
+        return std::find(Returns.begin(), Returns.end(), Value) != Returns.end();
+    };
+    auto InFlight = [&](uint32_t Pc, uint32_t Ra, uint32_t Sp) {
+        for (const REGION & Region : Regions)
+        {
+            if (Pc - Region.Start < Region.Size)
+            {
+                return true;
+            }
+        }
+        if (IsReturn(Ra))
+        {
+            return true;
+        }
+        // Deep enough for the stub's frame and the few callees below it.
+        const uint32_t StackWindow = 0x800;
+        for (uint32_t Offset = 0; Offset < StackWindow; Offset += sizeof(uint32_t))
+        {
+            uint32_t Value = 0;
+            if (!m_Memory.ReadU32(Sp + Offset, Value))
+            {
+                break;
+            }
+            if (IsReturn(Value))
+            {
+                return true;
+            }
+        }
+        return false;
+    };
+    if (InFlight(ProgramCounter, ReturnAddress, StackPointer))
+    {
+        return true;
+    }
+
+    // The other threads, through libultra's list: OSThread.tlnext at +0x0C,
+    // priority -1 for the list's tail, and the saved 64-bit $sp and $ra at
+    // +0xF0 and +0x100 (low words at +4) with the program counter at +0x11C.
+    // The running thread's saved context is stale; its live registers were
+    // checked above.
+    uint32_t Thread = 0, Running = 0;
+    if (!m_Memory.ReadU32(OsActiveQueueAddress, Thread) ||
+        !m_Memory.ReadU32(OsActiveQueueAddress + 4, Running))
+    {
+        return false;
+    }
+    for (uint32_t Count = 0; Count < 64 && m_Memory.IsRdramAddress(Thread, 0x120); Count++)
+    {
+        uint32_t Priority = 0, Next = 0, Sp = 0, Ra = 0, Pc = 0;
+        if (!m_Memory.ReadU32(Thread + 0x04, Priority) || Priority == 0xFFFFFFFF ||
+            !m_Memory.ReadU32(Thread + 0x0C, Next) ||
+            !m_Memory.ReadU32(Thread + 0xF4, Sp) || !m_Memory.ReadU32(Thread + 0x104, Ra) ||
+            !m_Memory.ReadU32(Thread + 0x11C, Pc))
+        {
+            break;
+        }
+        if (Thread != Running && InFlight(Pc, Ra, Sp))
+        {
+            return true;
+        }
+        Thread = Next;
+    }
+    return false;
+}
+
+bool CJetForceGeminiRuntime::StateSaveAllowed(void)
+{
+    if (!IsSupportedRom() || !GuestCallInFlight())
+    {
+        m_SaveStateDeferred = false;
+        return true;
+    }
+    // Hold the save while the call runs; the core retries it at the next
+    // backward jump. A stale return address could keep this true for good, so
+    // after a quarter second of continuous retries the save goes ahead as it
+    // always did. A gap in the retries means the emulator was paused: the
+    // wait starts again once it runs.
+    HighResTimeStamp Now;
+    Now.SetToNow();
+    const uint64_t NowMicroseconds = Now.GetMicroSeconds();
+    if (!m_SaveStateDeferred || NowMicroseconds - m_SaveStateLastRetry.GetMicroSeconds() > 100000)
+    {
+        m_SaveStateDeferred = true;
+        m_SaveStateDeferredSince = Now;
+    }
+    m_SaveStateLastRetry = Now;
+    if (NowMicroseconds - m_SaveStateDeferredSince.GetMicroSeconds() > 250000)
+    {
+        m_SaveStateDeferred = false;
+        return true;
+    }
+    return false;
+}
+
 void CJetForceGeminiRuntime::StateSaving(void)
 {
     // The guest words below exist only in a supported ROM, see Deactivate; the
@@ -3075,6 +3258,12 @@ bool CJetForceGeminiRuntime::SupportsCurrentRom(void) const
 // JetForceGeminiHudBuild.h, on PAL; the Kiosk demo's HUD has not been mapped.
 void CJetForceGeminiRuntime::ProcessRuntimeFrame(void)
 {
+    // Installing or removing the HUD rewrites its stubs; wait for the next call
+    // when the game is using one of them.
+    if (IsSupportedRom() && GuestCallInFlight())
+    {
+        return;
+    }
     const bool Supported = IsSupportedRom() && JfgHudBuild::Current() != JfgHudBuild::BuildNone;
     const bool WidescreenRequested = Supported && g_Settings->LoadBool(Setting_JfgWidescreenHud);
     const bool AlignmentRequested = Supported && g_Settings->LoadBool(Setting_JfgAlignHud);
@@ -3198,8 +3387,12 @@ void CJetForceGeminiRuntime::ProcessController(
     const bool LandingSkipArmed =
         CinematicSkipRequested && CurrentSceneIsCinematicSkippable();
     m_Memory.WriteU32(LandingCinematicSkipInputAddress, LandingSkipArmed ? 1 : 0);
-    PatchLandingCinematicSkip(LandingSkipArmed);
-    PatchIntroCinematicSkip(CinematicSkipRequested);
+    // The landing stub calls into the game; never swap it out mid-call.
+    if (!GuestCallInFlight())
+    {
+        PatchLandingCinematicSkip(LandingSkipArmed);
+        PatchIntroCinematicSkip(CinematicSkipRequested);
+    }
 
     // The live-switch keys are keyboard only
     if (Input.KeyboardMouse != nullptr)

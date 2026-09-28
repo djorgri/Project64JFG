@@ -393,6 +393,11 @@ void CControl_Plugin::ApplyJfgPortPresence(void)
     }
 }
 
+bool CControl_Plugin::GameStateSaveAllowed(void)
+{
+    return m_JfgRuntime == nullptr || m_JfgRuntime->StateSaveAllowed();
+}
+
 void CControl_Plugin::GameStateSaving(void)
 {
     if (m_JfgRuntime != nullptr)

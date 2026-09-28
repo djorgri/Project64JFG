@@ -93,6 +93,9 @@ the implementation still validates the live instructions before modifying them.
    stick into mouse counts, see `BankStickCamera()`.
 3. `StateSaving()` and `StateLoaded()` remove hooks or discard local state when
    needed so that a save state cannot preserve an unsafe injected hook.
+   `StateSaveAllowed()` runs first: while guest code the runtime owns is in
+   use, the save waits (the core retries it at the next backward jump), see
+   below.
 
 The design rules are important when adding a new hack:
 
@@ -162,6 +165,21 @@ zeroed whenever the camera state is cleared.
 Do not add another stub in this area casually. Check every occupied word,
 avoid overlap, and assume save states may retain old contents. Prefer a new,
 verified free region if the existing layout cannot accommodate a hook.
+
+Stubs are rewritten at arbitrary points of the game's frame (the video
+interrupt, controller reads, save states), so none may be taken out while it is
+in use. `GuestCallInFlight()` reports that from the live registers and from the
+context libultra saved for every other thread (`__osActiveQueue`, a table
+field): a program counter inside the stubs' storage, or one of the stubs' own
+return addresses in `$ra` or in the top 0x800 bytes of the stack. The return
+addresses are collected from the listings (every `jal` a stub makes), so a new
+stub that calls into the game is covered as long as its listing is added to
+`GuestCallInFlight()`. While a call is in flight, `ProcessRuntimeFrame()` and
+the cinematic-skip toggles wait, and a save is postponed; after a quarter
+second of continuous retries it goes ahead (a stale stack slot could otherwise
+hold it forever). This was found on the Japanese ROM: a save taken while the
+shot gauge's wrapper was inside `frontDrawRectangles` restored the retail
+diagnostic code under its return address.
 
 ## Implemented feature groups
 

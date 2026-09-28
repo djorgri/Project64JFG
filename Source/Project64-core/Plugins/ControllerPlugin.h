@@ -51,6 +51,7 @@ public:
     void SetControl(CControl_Plugin const * const Plugin);
     void GetControllerState(int32_t Control, BUTTONS * Keys);
     void ResetGameHack(void);
+    bool GameStateSaveAllowed(void);
     void GameStateSaving(void);
     void GameStateLoaded(void);
     void UpdateGameHackInput(void);

@@ -12,6 +12,8 @@ constexpr uint32_t UsStart = 0x800680B0;
 constexpr JfgHudBuild::UsAddress Start = { UsStart }, End = { 0x800681D0 };
 constexpr JfgHudBuild::UsAddress Matrix = { UsStart + 0x10 }, NumberEnter = { UsStart + 0x50 },
                                  NumberExit = { UsStart + 0x70 };
+// Where the matrix wrapper's call to mathMtxF2L returns (its fourth word, below).
+constexpr JfgHudBuild::UsAddress MatrixReturn = { UsStart + 0x10 + 0x14 };
 constexpr JfgHudBuild::UsAddress RadarPoint = { UsStart + 0x90 };
 constexpr JfgHudBuild::UsAddress ReticleCapture = { UsStart + 0xA0 }, ReticleSubmit = { UsStart + 0xF8 };
 constexpr uint32_t ReticleTag = 0x4A46524D;

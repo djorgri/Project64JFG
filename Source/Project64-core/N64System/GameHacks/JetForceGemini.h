@@ -29,6 +29,10 @@ public:
     ~CJetForceGeminiRuntime();
 
     void Reset(void);
+    // False while the CPU is inside guest code the runtime owns (or in a call
+    // one of its stubs made), so a save state must wait: StateSaving takes
+    // that code out. The core retries the save a few instructions later.
+    bool StateSaveAllowed(void);
     void StateSaving(void);
     void StateLoaded(void);
     void ProcessRuntimeFrame(void);
@@ -141,6 +145,7 @@ private:
     };
 
     static bool IsSupportedRom(void);
+    bool GuestCallInFlight(void) const;
     void PatchHudRaster(bool Enabled, bool TextOnly = false);
     static bool KeyDown(const KEYBOARD_MOUSE_STATE & Input, KeyboardMouseKey Key);
     static bool MouseButtonDown(const KEYBOARD_MOUSE_STATE & Input, uint32_t Button);
@@ -295,6 +300,12 @@ private:
     uint32_t m_HudAlignmentOverlay6Base;
     uint32_t m_HudAlignmentOverlay14Base;
     bool m_HudAlignmentScopeOwned;
+
+    // A save state postponed by StateSaveAllowed: since when, and when it was
+    // last retried (a paused emulator retries only once it resumes).
+    bool m_SaveStateDeferred;
+    HighResTimeStamp m_SaveStateDeferredSince;
+    HighResTimeStamp m_SaveStateLastRetry;
 
     // Live FPS switch edge state, see Fps60ToggleKey / Fps30ToggleKey
     bool m_Fps60ToggleDown;

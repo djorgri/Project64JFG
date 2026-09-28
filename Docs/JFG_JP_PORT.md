@@ -108,7 +108,7 @@ libultra), so the table was derived from the USA one by aligning the images:
 
 ## Core address table
 
-`JfgJpAddresses` lists all 106 fields; the full correspondence is at the end
+`JfgJpAddresses` lists all 107 fields; the full correspondence is at the end
 of this document. The overlay offsets that moved are those of module 16 (boy
 aim, `+0x12C` / `+0x14C`); modules 13, 22 and 57 are unchanged. The stub
 listings that encode their own addresses are built from the table as on PAL,
@@ -175,13 +175,25 @@ range covers. On PAL the retail words of that range were therefore taken from
 memory as it stood, which is wrong when a save state carries the installed
 overlay. The capture is now bounded by the image size.
 
+The first save state taken on the JP build then crashed the game (a fetch
+fault reported at `MemoryVirtualMem.cpp` line 226). The state showed why: the
+CPU was inside `frontDrawRectangles`, called by the shot gauge's wrapper stub,
+whose return address (`0x80067844`) was on the stack, and `StateSaving()` had
+already put the retail diagnostic code back under it. The race exists on every
+build. Saves now wait while any stub is in use and the per-frame HUD update does
+too (`GuestCallInFlight()`, see JET_FORCE_GEMINI_HACKING.md). Run against that
+state the check postpones the save; against the 27 other USA, PAL and JP states
+on hand it allows it. A state saved by the earlier build at such a moment
+cannot be repaired and should be discarded.
+
 ## In-game checks
 
 The Japanese build has not been played with the patches yet. These depend on
 the running game rather than on code signatures:
 
 1. Boot to the title screen and a level with every option on (the HUD hooks
-   must stay out of the boot sequence).
+   must stay out of the boot sequence). Save and load states repeatedly in a
+   level, with the HUD on screen.
 2. Intro and landing cinematic skips. The landing skip assumes the JP scene and
    setup numbers are the USA ones.
 3. Camera, mouse aim and gamepad aim, free camera in jumps, sprint, crouch and
@@ -280,6 +292,7 @@ the running game rather than on code signatures:
 | `FrontCharSelectSetQuitModeFunction` | `0x8005AAE8` | `0x8005A940` | -0x1a8 |
 | `FrontGetModeFunction` | `0x80058A5C` | `0x800588B4` | -0x1a8 |
 | `MainChangeLevelFunction` | `0x8004665C` | `0x80046588` | -0xd4 |
+| `OsActiveQueueAddress` | `0x800A9E8C` | `0x800A9D9C` | -0xf0 |
 | `FloydPadControlOffset` | `0x000002A4` | `0x000002A4` | same |
 | `IntroCinematicSkipEntryOffset` | `0x000000D0` | `0x000000D0` | same |
 | `LegacyIntroCinematicSkipEntryOffset` | `0x000000C0` | `0x000000C0` | same |

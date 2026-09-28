@@ -106,6 +106,7 @@ const JFG_ADDRESSES JfgUsAddresses =
     /* FrontCharSelectSetQuitModeFunction  */ 0x8005AAE8,
     /* FrontGetModeFunction                */ 0x80058A5C,
     /* MainChangeLevelFunction             */ 0x8004665C,
+    /* OsActiveQueueAddress                */ 0x800A9E8C,
 
     /* FloydPadControlOffset               */ 0x000002A4,
     /* IntroCinematicSkipEntryOffset       */ 0x000000D0,
@@ -223,6 +224,7 @@ const JFG_ADDRESSES JfgKioskAddresses =
     /* FrontCharSelectSetQuitModeFunction  */ 0x00000000,
     /* FrontGetModeFunction                */ 0x8005950C,
     /* MainChangeLevelFunction             */ 0x80045E50,
+    /* OsActiveQueueAddress                */ 0x800AA83C,
 
     /* FloydPadControlOffset               */ 0x000002A0,
     /* IntroCinematicSkipEntryOffset       */ 0x000000D0,
@@ -346,6 +348,7 @@ const JFG_ADDRESSES JfgPalAddresses =
     /* FrontCharSelectSetQuitModeFunction  */ 0x8005ACF8,
     /* FrontGetModeFunction                */ 0x80058C6C,
     /* MainChangeLevelFunction             */ 0x8004675C,
+    /* OsActiveQueueAddress                */ 0x800AA10C,
 
     /* FloydPadControlOffset               */ 0x000002A4,
     /* IntroCinematicSkipEntryOffset       */ 0x000000D0,
@@ -473,6 +476,7 @@ const JFG_ADDRESSES JfgJpAddresses =
     /* FrontCharSelectSetQuitModeFunction  */ 0x8005A940,
     /* FrontGetModeFunction                */ 0x800588B4,
     /* MainChangeLevelFunction             */ 0x80046588,
+    /* OsActiveQueueAddress                */ 0x800A9D9C,
 
     /* FloydPadControlOffset               */ 0x000002A4,
     /* IntroCinematicSkipEntryOffset       */ 0x000000D0,
