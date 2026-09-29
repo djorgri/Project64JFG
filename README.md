@@ -65,6 +65,11 @@ support and an optional 60 FPS mode.
   (50 and 25 FPS on the PAL ROM, which runs at 50 Hz)
 - 60 FPS gameplay-speed corrections for enemies (movement and animation),
   Squaddies, race opponents, projectiles, and the water wake
+- The emulated N64 CPU runs twice as fast for Jet Force Gemini (USA, PAL and
+  Japan), so busy scenes that used to drop individual frames to 30 FPS hold
+  close to 60. It only costs host CPU where the game uses it. On a slower PC,
+  set the game's *Overclock modifier* back to 1 under *Options → Settings*
+  (the game's *General* page)
 - Save states remain usable with the gameplay patches enabled
 - Source-built Win32 and x64 Parallel-RDP and Parallel-RSP plugins, with
   configurable RDP and Video Interface settings

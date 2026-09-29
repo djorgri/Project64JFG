@@ -108,6 +108,15 @@ function Reset-DistributionConfiguration {
             continue
         }
 
+        # The development template enables the debugger. Releases leave it
+        # off: it adds a check to every interpreted instruction (about 4% of
+        # the emulation thread in a busy scene) and its menu is of no use to
+        # players. Options > Settings can turn it back on.
+        if ($line -eq 'Debugger=1') {
+            'Debugger=0'
+            continue
+        }
+
         $line
     }
 

@@ -358,6 +358,23 @@ The generic movement hook sits after the caller has prepared the three movement
 deltas, so it scales distance without dropping the game's timer, collision, or
 event updates.
 
+On top of that, the ROM database sets `OverClockModifier=2` for the USA, PAL
+and Japanese builds (not the Kiosk demo). Unlike the VI budget, which only
+lengthens the video interrupt, it scales every system timer, so the emulated
+machine is simply a faster CPU: `COUNT`, audio and the other interrupts keep
+their relation to the VI, and it can apply from boot. Measured on a heavy
+scene with the VI budget already doubled, the game thread needed about 93% of a
+video period for its busiest frames; each such frame missed the buffer swap
+and left the next period idle, so the game fell to 30 FPS for that frame (51
+FPS on average, 30 at worst). With the overclock the same scene averages 57 to
+59.5 FPS (48 to 55 at worst). Idle time costs nothing (the idle loop is
+skipped), so scenes that already ran at 60 FPS keep the same host load. The
+host must keep up, however: on the x64 build, which interprets the CPU, the
+emulation thread went from 70% to 81-85% of a core there, and a slower PC runs
+the heaviest scenes slightly slow instead of dropping frames. The per-game
+*Overclock modifier* (game settings, `Project64.rdb.user`) overrides the
+database value.
+
 ### Sprint
 
 Sprint is host-side and is available only while the player is standing, in
