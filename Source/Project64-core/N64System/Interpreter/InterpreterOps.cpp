@@ -3,6 +3,7 @@
 #include <Project64-core/Debugger.h>
 #include <Project64-core/Logging.h>
 #include <Project64-core/N64System/Interpreter/InterpreterOps.h>
+#include <Project64-core/N64System/Interpreter/InterpreterFpuFast.h>
 #include <Project64-core/N64System/Mips/MemoryVirtualMem.h>
 #include <Project64-core/N64System/Mips/R4300iInstruction.h>
 #include <Project64-core/N64System/Mips/SystemTiming.h>
@@ -95,15 +96,29 @@ void R4300iOp::ExecuteOps(uint32_t Cycles)
     bool CheckTimer = false;
     bool updateInstructionMemory = true;
     m_InstructionRegion = (uint64_t)-1;
+    // Locals the compiler can keep in registers across the calls to the ops
+    uint64_t & ProgramCounter = m_PROGRAM_COUNTER;
+    MIPS_DWORD * const GPR = m_GPR;
+    uint32_t * InstructionPtr = m_InstructionPtr;
 
     while (!Done && Cycles > 0)
     {
         if (updateInstructionMemory)
         {
-            UpdateInstructionMemory();
+            if ((ProgramCounter & ~0xFFFLL) == m_InstructionRegion)
+            {
+                InstructionPtr = (uint32_t *)(m_InstructionMemory + (ProgramCounter & 0xFFFLL));
+            }
+            else
+            {
+                m_InstructionPtr = InstructionPtr;
+                UpdateInstructionMemory();
+                InstructionPtr = m_InstructionPtr;
+            }
             updateInstructionMemory = false;
         }
-        m_Opcode.Value = *m_InstructionPtr;
+        const uint32_t OpcodeValue = *InstructionPtr;
+        m_Opcode.Value = OpcodeValue;
         if (g_DebugSettings.haveDebugger)
         {
             if (g_DebugSettings.haveExecutionBP && g_Debugger->ExecutionBP((uint32_t)m_PROGRAM_COUNTER))
@@ -135,8 +150,18 @@ void R4300iOp::ExecuteOps(uint32_t Cycles)
             }
         }
 
-        (this->*Jump_Opcode[m_Opcode.op])();
-        m_GPR[0].DW = 0; // MIPS $zero hard-wired to 0
+        // SPECIAL() and COP1() / COP1_S() only dispatch: call their function directly
+        uint32_t Dispatch = OpcodeValue >> 26;
+        if (Dispatch == R4300i_SPECIAL)
+        {
+            Dispatch = 64 + (OpcodeValue & 0x3F);
+        }
+        else if ((OpcodeValue >> 21) == ((R4300i_CP1 << 5) | R4300i_COP1_S))
+        {
+            Dispatch = 128 + (OpcodeValue & 0x3F);
+        }
+        (this->*Jump_Dispatch[Dispatch])();
+        GPR[0].DW = 0; // MIPS $zero hard-wired to 0
         NextTimer -= CountPerOp;
         if (Cycles != (uint32_t)-1)
         {
@@ -148,12 +173,12 @@ void R4300iOp::ExecuteOps(uint32_t Cycles)
             g_Debugger->CPUStepEnded();
         }
 
-        m_PROGRAM_COUNTER += 4;
-        if ((((uint32_t)m_PROGRAM_COUNTER) & 0xFFFUL) == 0)
+        ProgramCounter += 4;
+        if ((((uint32_t)ProgramCounter) & 0xFFFUL) == 0)
         {
             updateInstructionMemory = true;
         }
-        m_InstructionPtr++;
+        InstructionPtr++;
 
         switch (PipelineStage)
         {
@@ -166,13 +191,13 @@ void R4300iOp::ExecuteOps(uint32_t Cycles)
             PipelineStage = PIPELINE_STAGE_PERMLOOP_DELAY_DONE;
             break;
         case PIPELINE_STAGE_JUMP:
-            CheckTimer = (JumpToLocation < m_PROGRAM_COUNTER - 4 || TestTimer);
-            m_PROGRAM_COUNTER = JumpToLocation;
+            CheckTimer = (JumpToLocation < ProgramCounter - 4 || TestTimer);
+            ProgramCounter = JumpToLocation;
             PipelineStage = PIPELINE_STAGE_NORMAL;
-            if ((m_PROGRAM_COUNTER & 0x3) != 0)
+            if ((ProgramCounter & 0x3) != 0)
             {
                 m_Reg.DoAddressError((int32_t)JumpToLocation, true);
-                m_PROGRAM_COUNTER = JumpToLocation;
+                ProgramCounter = JumpToLocation;
                 PipelineStage = PIPELINE_STAGE_NORMAL;
             }
             else if (CheckTimer)
@@ -191,12 +216,12 @@ void R4300iOp::ExecuteOps(uint32_t Cycles)
             break;
         case PIPELINE_STAGE_JUMP_DELAY_SLOT:
             PipelineStage = PIPELINE_STAGE_JUMP;
-            m_PROGRAM_COUNTER = JumpToLocation;
+            ProgramCounter = JumpToLocation;
             JumpToLocation = JumpDelayLocation;
             updateInstructionMemory = true;
             break;
         case PIPELINE_STAGE_PERMLOOP_DELAY_DONE:
-            m_PROGRAM_COUNTER = JumpToLocation;
+            ProgramCounter = JumpToLocation;
             PipelineStage = PIPELINE_STAGE_NORMAL;
             InPermLoop();
             g_SystemTimer->TimerDone();
@@ -210,6 +235,7 @@ void R4300iOp::ExecuteOps(uint32_t Cycles)
             g_Notify->BreakPoint(__FILE__, __LINE__);
         }
     }
+    m_InstructionPtr = InstructionPtr;
     g_SystemTimer->UpdateTimers();
 }
 
@@ -893,6 +919,13 @@ void R4300iOp::BuildInterpreter(bool Force32bit)
     Jump_CoP2[29] = &R4300iOp::CPO2_INVALID_OP;
     Jump_CoP2[30] = &R4300iOp::CPO2_INVALID_OP;
     Jump_CoP2[31] = &R4300iOp::CPO2_INVALID_OP;
+
+    for (uint32_t i = 0; i < 64; i++)
+    {
+        Jump_Dispatch[i] = Jump_Opcode[i];
+        Jump_Dispatch[64 + i] = Jump_Special[i];
+        Jump_Dispatch[128 + i] = Jump_CoP1_S[i];
+    }
 }
 
 // Opcode functions
@@ -1148,9 +1181,38 @@ void R4300iOp::LDR()
     }
 }
 
+// The start of CMipsMemoryVM's *_Memory functions: an aligned access to a
+// 32-bit address, with no memory breakpoint, in a page mapped directly. Page
+// is then the value to add the address to; otherwise the full function runs.
+static inline bool DirectRead(CMipsMemoryVM & MMU, uint64_t Address, uint64_t AlignMask, uint8_t *& Page)
+{
+    if ((Address & AlignMask) != 0 || (uint64_t)((int32_t)Address) != Address || g_DebugSettings.haveReadBP)
+    {
+        return false;
+    }
+    Page = MMU.DirectReadPage((uint32_t)Address);
+    return Page != (uint8_t *)-1;
+}
+
+static inline bool DirectWrite(CMipsMemoryVM & MMU, uint64_t Address, uint64_t AlignMask, uint8_t *& Page)
+{
+    if ((Address & AlignMask) != 0 || (uint64_t)((int32_t)Address) != Address || g_DebugSettings.haveWriteBP)
+    {
+        return false;
+    }
+    Page = MMU.DirectWritePage((uint32_t)Address);
+    return Page != (uint8_t *)-1;
+}
+
 void R4300iOp::LB()
 {
     uint64_t Address = m_GPR[m_Opcode.base].DW + (int16_t)m_Opcode.offset;
+    uint8_t * Page;
+    if (DirectRead(m_MMU, Address, 0, Page))
+    {
+        m_GPR[m_Opcode.rt].DW = (int8_t)*(Page + ((uint32_t)Address ^ 3));
+        return;
+    }
     uint8_t MemoryValue;
     if (m_MMU.LB_Memory(Address, MemoryValue))
     {
@@ -1171,6 +1233,12 @@ void R4300iOp::LB_32()
 void R4300iOp::LH()
 {
     uint64_t Address = m_GPR[m_Opcode.base].DW + (int16_t)m_Opcode.offset;
+    uint8_t * Page;
+    if (DirectRead(m_MMU, Address, 1, Page))
+    {
+        m_GPR[m_Opcode.rt].DW = *(int16_t *)(Page + ((uint32_t)Address ^ 2));
+        return;
+    }
     uint16_t MemoryValue;
     if (m_MMU.LH_Memory(Address, MemoryValue))
     {
@@ -1217,6 +1285,12 @@ void R4300iOp::LWL_32()
 void R4300iOp::LW()
 {
     uint64_t Address = m_GPR[m_Opcode.base].DW + (int16_t)m_Opcode.offset;
+    uint8_t * Page;
+    if (DirectRead(m_MMU, Address, 3, Page))
+    {
+        m_GPR[m_Opcode.rt].DW = *(int32_t *)(Page + (uint32_t)Address);
+        return;
+    }
     uint32_t MemoryValue;
 
     if (m_MMU.LW_Memory(Address, MemoryValue))
@@ -1239,6 +1313,12 @@ void R4300iOp::LW_32()
 void R4300iOp::LBU()
 {
     uint64_t Address = m_GPR[m_Opcode.base].DW + (int16_t)m_Opcode.offset;
+    uint8_t * Page;
+    if (DirectRead(m_MMU, Address, 0, Page))
+    {
+        m_GPR[m_Opcode.rt].UDW = *(Page + ((uint32_t)Address ^ 3));
+        return;
+    }
     uint8_t MemoryValue;
     if (m_MMU.LB_Memory(Address, MemoryValue))
     {
@@ -1259,6 +1339,12 @@ void R4300iOp::LBU_32()
 void R4300iOp::LHU()
 {
     uint64_t Address = m_GPR[m_Opcode.base].DW + (int16_t)m_Opcode.offset;
+    uint8_t * Page;
+    if (DirectRead(m_MMU, Address, 1, Page))
+    {
+        m_GPR[m_Opcode.rt].UDW = *(uint16_t *)(Page + ((uint32_t)Address ^ 2));
+        return;
+    }
     uint16_t MemoryValue;
     if (m_MMU.LH_Memory(Address, MemoryValue))
     {
@@ -1305,6 +1391,12 @@ void R4300iOp::LWR_32()
 void R4300iOp::LWU()
 {
     uint64_t Address = m_GPR[m_Opcode.base].DW + (int16_t)m_Opcode.offset;
+    uint8_t * Page;
+    if (DirectRead(m_MMU, Address, 3, Page))
+    {
+        m_GPR[m_Opcode.rt].UDW = *(uint32_t *)(Page + (uint32_t)Address);
+        return;
+    }
     uint32_t MemoryValue;
 
     if (m_MMU.LW_Memory(Address, MemoryValue))
@@ -1327,6 +1419,12 @@ void R4300iOp::LWU_32()
 void R4300iOp::SB()
 {
     uint64_t Address = m_GPR[m_Opcode.base].DW + (int16_t)m_Opcode.offset;
+    uint8_t * Page;
+    if (DirectWrite(m_MMU, Address, 0, Page))
+    {
+        *(Page + ((uint32_t)Address ^ 3)) = (uint8_t)m_GPR[m_Opcode.rt].UW[0];
+        return;
+    }
     m_MMU.SB_Memory(Address, m_GPR[m_Opcode.rt].UW[0]);
 }
 
@@ -1339,6 +1437,12 @@ void R4300iOp::SB_32()
 void R4300iOp::SH()
 {
     uint64_t Address = m_GPR[m_Opcode.base].DW + (int16_t)m_Opcode.offset;
+    uint8_t * Page;
+    if (DirectWrite(m_MMU, Address, 1, Page))
+    {
+        *(uint16_t *)(Page + ((uint32_t)Address ^ 2)) = (uint16_t)m_GPR[m_Opcode.rt].UW[0];
+        return;
+    }
     m_MMU.SH_Memory(Address, m_GPR[m_Opcode.rt].UW[0]);
 }
 
@@ -1387,6 +1491,12 @@ void R4300iOp::SWL_32()
 void R4300iOp::SW()
 {
     uint64_t Address = m_GPR[m_Opcode.base].DW + (int16_t)m_Opcode.offset;
+    uint8_t * Page;
+    if (DirectWrite(m_MMU, Address, 3, Page))
+    {
+        *(uint32_t *)(Page + (uint32_t)Address) = m_GPR[m_Opcode.rt].UW[0];
+        return;
+    }
     m_MMU.SW_Memory(Address, m_GPR[m_Opcode.rt].UW[0]);
 }
 
@@ -1569,6 +1679,12 @@ void R4300iOp::LWC1()
         return;
     }
     uint64_t Address = m_GPR[m_Opcode.base].DW + (int16_t)m_Opcode.offset;
+    uint8_t * Page;
+    if (DirectRead(m_MMU, Address, 3, Page))
+    {
+        *(uint32_t *)m_FPR_S[m_Opcode.ft] = *(uint32_t *)(Page + (uint32_t)Address);
+        return;
+    }
     m_MMU.LW_Memory(Address, *(uint32_t *)m_FPR_S[m_Opcode.ft]);
 }
 
@@ -1682,6 +1798,12 @@ void R4300iOp::SWC1()
     }
 
     uint64_t Address = m_GPR[m_Opcode.base].DW + (int16_t)m_Opcode.offset;
+    uint8_t * Page;
+    if (DirectWrite(m_MMU, Address, 3, Page))
+    {
+        *(uint32_t *)(Page + (uint32_t)Address) = *(uint32_t *)m_FPR_S[m_Opcode.ft];
+        return;
+    }
     m_MMU.SW_Memory(Address, *(uint32_t *)m_FPR_S[m_Opcode.ft]);
 }
 
@@ -2495,8 +2617,50 @@ void R4300iOp::COP1_BCTL()
 }
 
 // COP1: S functions
+
+// ADD, SUB, MUL and DIV of ordinary operands in round to nearest, without
+// softfloat (see InterpreterFpuFast.h). Returns false, having changed nothing,
+// when the operation must take the usual path; otherwise it had the same effect
+// as InitFpuOperation and the softfloat path, whose only possible exception
+// here is inexact.
+template <bool (*Operation)(uint32_t, uint32_t, uint32_t &, bool &)>
+bool R4300iOp::COP1_S_Fast(void)
+{
+    FPStatusReg & StatusReg = (FPStatusReg &)m_FPCR[31];
+    uint32_t A = *(uint32_t *)m_FPR_S_L[m_Opcode.fs];
+    uint32_t B = *(uint32_t *)m_FPR_UW[m_Opcode.ft];
+    uint32_t Result;
+    bool Inexact;
+    if (m_Reg.STATUS_REGISTER.CU1 == 0 || !InterpreterFpuFast::Available(StatusReg.RoundingMode) ||
+        !InterpreterFpuFast::Ordinary(A) || !InterpreterFpuFast::Ordinary(B) || !Operation(A, B, Result, Inexact))
+    {
+        return false;
+    }
+    m_FPCR[31] &= ~0x0003F000;
+    softfloat_roundingMode = softfloat_round_near_even;
+    softfloat_exceptionFlags = 0;
+    if (Inexact)
+    {
+        // What CheckFPUResult32 does with softfloat_flag_inexact alone
+        softfloat_exceptionFlags = softfloat_flag_inexact;
+        StatusReg.Cause.Inexact = 1;
+        if (StatusReg.Enable.Inexact)
+        {
+            m_Reg.TriggerException(EXC_FPE);
+            return true;
+        }
+        StatusReg.Flags.Inexact = 1;
+    }
+    *m_FPR_UDW[m_Opcode.fd] = Result;
+    return true;
+}
+
 void R4300iOp::COP1_S_ADD()
 {
+    if (COP1_S_Fast<InterpreterFpuFast::Add>())
+    {
+        return;
+    }
     if (InitFpuOperation(((FPStatusReg &)m_FPCR[31]).RoundingMode))
     {
         return;
@@ -2516,6 +2680,10 @@ void R4300iOp::COP1_S_ADD()
 
 void R4300iOp::COP1_S_SUB()
 {
+    if (COP1_S_Fast<InterpreterFpuFast::Sub>())
+    {
+        return;
+    }
     if (InitFpuOperation(((FPStatusReg &)m_FPCR[31]).RoundingMode))
     {
         return;
@@ -2534,6 +2702,10 @@ void R4300iOp::COP1_S_SUB()
 
 void R4300iOp::COP1_S_MUL()
 {
+    if (COP1_S_Fast<InterpreterFpuFast::Mul>())
+    {
+        return;
+    }
     if (InitFpuOperation(((FPStatusReg &)m_FPCR[31]).RoundingMode))
     {
         return;
@@ -2553,6 +2725,10 @@ void R4300iOp::COP1_S_MUL()
 
 void R4300iOp::COP1_S_DIV()
 {
+    if (COP1_S_Fast<InterpreterFpuFast::Div>())
+    {
+        return;
+    }
     if (InitFpuOperation(((FPStatusReg &)m_FPCR[31]).RoundingMode))
     {
         return;
@@ -2846,7 +3022,7 @@ void R4300iOp::COP1_S_CMP()
     float Temp1 = *(float *)m_FPR_UW[m_Opcode.ft];
 
     bool less, equal, unorded;
-    if (_isnan(Temp0) || _isnan(Temp1))
+    if ((*(uint32_t *)m_FPR_S_L[m_Opcode.fs] & 0x7FFFFFFF) > 0x7F800000 || (*(uint32_t *)m_FPR_UW[m_Opcode.ft] & 0x7FFFFFFF) > 0x7F800000)
     {
         less = false;
         equal = false;

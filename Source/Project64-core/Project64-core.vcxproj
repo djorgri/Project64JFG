@@ -186,6 +186,7 @@
     <ClInclude Include="N64System\GameHacks\JetForceGeminiHudJpOriginals.h" />
     <ClInclude Include="N64System\GameHacks\JetForceGeminiHudPalOriginals.h" />
     <ClInclude Include="N64System\FramePerSecond.h" />
+    <ClInclude Include="N64System\Interpreter\InterpreterFpuFast.h" />
     <ClInclude Include="N64System\Interpreter\InterpreterOps.h" />
     <ClInclude Include="N64System\MemoryHandler\AudioInterfaceHandler.h" />
     <ClInclude Include="N64System\MemoryHandler\CartridgeDomain1Address1Handler.h" />

@@ -103,6 +103,19 @@ public:
     bool SW_Memory(uint64_t VAddr, uint32_t Value);
     bool SD_Memory(uint64_t VAddr, uint64_t Value);
 
+    // Page of a 32-bit address in the direct read and write maps, as the
+    // *_Memory functions use them: (uint8_t *)-1 when the page is not mapped
+    // directly, otherwise the host address of the page minus its virtual
+    // address.
+    uint8_t * DirectReadPage(uint32_t VAddr32) const
+    {
+        return (uint8_t *)m_MemoryReadMap[VAddr32 >> 12];
+    }
+    uint8_t * DirectWritePage(uint32_t VAddr32) const
+    {
+        return (uint8_t *)m_MemoryWriteMap[VAddr32 >> 12];
+    }
+
     int32_t MemoryFilter(uint32_t dwExptCode, void * lpExceptionPointer);
 
     void ClearMemoryWriteMap(uint32_t VAddr, uint32_t Length);

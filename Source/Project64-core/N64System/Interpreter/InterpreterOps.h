@@ -316,6 +316,9 @@ private:
     Func Jump_CoP1_W[64];
     Func Jump_CoP1_L[64];
     Func Jump_CoP2[32];
+    // What ExecuteOps calls: the main opcodes, then the SPECIAL functions, then
+    // the COP1 S functions, so those skip their SPECIAL / COP1 / COP1_S calls
+    Func Jump_Dispatch[192];
 
     bool TestCop1UsableException(void);
     bool CheckFPUInput32(const uint32_t & Value);
@@ -329,6 +332,8 @@ private:
     bool CheckFPUInvalidException(void);
     bool InitFpuOperation(FPRoundingMode RoundingModel);
     bool SetFPUException(void);
+    template <bool (*Operation)(uint32_t, uint32_t, uint32_t &, bool &)>
+    bool COP1_S_Fast(void);
     void UpdateInstructionMemory();
 
     static const uint32_t SWL_MASK[4], SWR_MASK[4], LWL_MASK[4], LWR_MASK[4];

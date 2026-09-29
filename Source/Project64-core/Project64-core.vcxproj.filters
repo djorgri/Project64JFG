@@ -650,6 +650,9 @@
     <ClInclude Include="N64System\Mips\TLB.h">
       <Filter>Header Files\N64 System\Mips</Filter>
     </ClInclude>
+    <ClInclude Include="N64System\Interpreter\InterpreterFpuFast.h">
+      <Filter>Header Files\N64 System\Interpreter</Filter>
+    </ClInclude>
     <ClInclude Include="N64System\Interpreter\InterpreterOps.h">
       <Filter>Header Files\N64 System\Interpreter</Filter>
     </ClInclude>
