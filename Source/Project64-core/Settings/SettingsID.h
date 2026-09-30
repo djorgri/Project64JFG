@@ -363,6 +363,7 @@ enum SettingID
     Setting_JfgGamepadCameraSpeed,
     Setting_JfgGamepadStockAim,
     Setting_JfgSnapCameraOnAim,
+    Setting_JfgSprintSpeed,
     Setting_InterpreterJit,
 
     FirstUISettings = MaxPluginSetting + 1,

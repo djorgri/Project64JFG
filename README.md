@@ -38,7 +38,8 @@ support and an optional 60 FPS mode.
 - Optional **Snap camera when aiming**: aiming from the free camera swings the
   view behind the player, as the game does where the camera is not free,
   instead of turning the player to the view
-- Optional 1.25x sprint with synchronised animation and footsteps
+- Optional sprint with synchronised animation and footsteps, its speed set
+  from 105% to 175% (125% by default)
 - Boss encounters turn the view from the reticle, the way the stock game does
   from the stick, rather than swinging the rail the player runs along
 - Optional cutscene skip: with **Fast Cutscenes** enabled, press A or Start

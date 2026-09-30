@@ -145,6 +145,7 @@ void CSettings::AddHowToHandleSetting(const char * BaseDirectory)
     AddHandler(Setting_JfgDroneCameraDirect, new CSettingTypeApplication("Game Specific Hacks", "JFG Drone Camera Direct", false));
     AddHandler(Setting_JfgCrouchProneStickStrafe, new CSettingTypeApplication("Game Specific Hacks", "JFG Crouch Prone Stick Strafe", true));
     AddHandler(Setting_JfgEnableSprint, new CSettingTypeApplication("Game Specific Hacks", "JFG Enable Sprint", true));
+    AddHandler(Setting_JfgSprintSpeed, new CSettingTypeApplication("Game Specific Hacks", "JFG Sprint Speed", (uint32_t)125));
     AddHandler(Setting_JfgBoostViBudget30, new CSettingTypeApplication("Game Specific Hacks", "JFG Boost VI Budget 30fps", true));
     AddHandler(Setting_JfgSyncAudio, new CSettingTypeApplication("Game Specific Hacks", "JFG Sync Audio", true));
     AddHandler(Setting_JfgDroneLateralMovement, new CSettingTypeApplication("Game Specific Hacks", "JFG Drone Lateral Movement", true));

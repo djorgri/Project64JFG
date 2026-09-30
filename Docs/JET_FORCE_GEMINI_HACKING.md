@@ -379,11 +379,14 @@ database value.
 
 Sprint is host-side and is available only while the player is standing, in
 normal gameplay, moving, not aiming, and not controlling Floyd. Holding Left
-Shift ramps linearly over 0.5 seconds to a 1.25 multiplier. It observes the
-player's X/Z displacement and adds the remaining fraction, preserving the
-game's acceleration, collision and slope response. It advances the selected
-looped animation frame by the same fraction so the run animation and footstep
-events follow the speed increase.
+Shift ramps linearly over 0.5 seconds to the *Sprint speed* multiplier
+(`Setting_JfgSprintSpeed`, 105% to 175% in 5% steps, 125% by default). It
+observes the player's X/Z displacement and adds the remaining fraction,
+preserving the game's acceleration and slope response. The game's collision
+only sees the frame's own movement, not the added distance, so the higher
+speeds make it easier to slip through thin walls or off ledges. It advances
+the selected looped animation frame by 0.4 of that fraction (1.10 at 125%)
+so the run animation and footstep events follow the speed increase.
 
 ### Cutscene skip (*Skip cinematics*, `Setting_JfgFastCutscenes`)
 

@@ -9,6 +9,11 @@ namespace
 // The 60 fps patch set remains experimental, but is available for testing.
 constexpr bool Jfg60FpsAvailable = true;
 
+// The sprint speed slider moves in 5% steps, from 105% to 175%
+constexpr uint32_t SprintSpeedStep = 5;
+constexpr uint32_t SprintSpeedMinimum = 105;
+constexpr uint32_t SprintSpeedMaximum = 175;
+
 void add_tooltip(HWND tooltip, HWND dialog, int id, const wchar_t *text)
 {
     const auto control = GetDlgItem(dialog, id);
@@ -84,7 +89,9 @@ void initialize_tooltips(HWND dialog)
     add_tooltip(tooltip, dialog, IDC_GSH_FAST_CUTSCENES,
         L"Skips known JFG cinematics in the US and PAL ROMs. Press E or Enter, or A or Start on a gamepad, while a cinematic/logo screen plays. Requires a JFG input source on player 1.");
     add_tooltip(tooltip, dialog, IDC_GSH_ENABLE_SPRINT,
-        L"Holding Left Shift, or clicking the left stick, increases standing movement speed in normal gameplay. It is disabled while aiming, crouching, prone, or in boss modes.");
+        L"Holding Left Shift, or clicking the left stick, increases standing movement speed in normal gameplay, to the speed set below. It is disabled while aiming, crouching, prone, or in boss modes.");
+    add_tooltip(tooltip, dialog, IDC_GSH_SPRINT_SPEED,
+        L"Sprint speed, from 105% to 175% of the normal run. The run animation speeds up with it. The game's collision does not see the extra distance, so the highest speeds make it easier to slip through thin walls or off ledges.");
     add_tooltip(tooltip, dialog, IDC_GSH_WIDESCREEN_HUD,
         L"Experimental correction for gameplay HUD proportions, including ammunition digits. Requires the game's native widescreen mode and the US or PAL retail ROM.");
     add_tooltip(tooltip, dialog, IDC_GSH_ALIGN_HUD,
@@ -108,6 +115,11 @@ LRESULT CGameSpecificHacksDialog::OnInitDialog(UINT /*uMsg*/, WPARAM /*wParam*/,
     HWND StickSpeed = GetDlgItem(IDC_GSH_STICK_CAMERA_SPEED);
     ::SendMessageW(StickSpeed, TBM_SETRANGE, TRUE, MAKELONG(1, 10));
     ::SendMessageW(StickSpeed, TBM_SETTICFREQ, 1, 0);
+
+    HWND SprintSpeed = GetDlgItem(IDC_GSH_SPRINT_SPEED);
+    ::SendMessageW(SprintSpeed, TBM_SETRANGE, TRUE, MAKELONG(SprintSpeedMinimum / SprintSpeedStep, SprintSpeedMaximum / SprintSpeedStep));
+    ::SendMessageW(SprintSpeed, TBM_SETTICFREQ, 1, 0);
+    ::SendMessageW(SprintSpeed, TBM_SETPAGESIZE, 0, 2);
 
     LoadSettings();
     ::EnableWindow(FrameRate, Jfg60FpsAvailable ? TRUE : FALSE);
@@ -170,6 +182,11 @@ void CGameSpecificHacksDialog::LoadSettings(void)
     CheckDlgButton(IDC_GSH_HALVE_ENEMY_SPEED, g_Settings->LoadBool(Setting_JfgHalveEnemySpeed) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(IDC_GSH_FAST_CUTSCENES, g_Settings->LoadBool(Setting_JfgFastCutscenes) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(IDC_GSH_ENABLE_SPRINT, g_Settings->LoadBool(Setting_JfgEnableSprint) ? BST_CHECKED : BST_UNCHECKED);
+    uint32_t SprintSpeed = g_Settings->LoadDword(Setting_JfgSprintSpeed);
+    SprintSpeed = SprintSpeed < SprintSpeedMinimum ? SprintSpeedMinimum : (SprintSpeed > SprintSpeedMaximum ? SprintSpeedMaximum : SprintSpeed);
+    SprintSpeed = (SprintSpeed + SprintSpeedStep / 2) / SprintSpeedStep * SprintSpeedStep;
+    ::SendMessageW(GetDlgItem(IDC_GSH_SPRINT_SPEED), TBM_SETPOS, TRUE, SprintSpeed / SprintSpeedStep);
+    ShowSprintSpeed(SprintSpeed);
     CheckDlgButton(IDC_GSH_WIDESCREEN_HUD, g_Settings->LoadBool(Setting_JfgWidescreenHud) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(IDC_GSH_ALIGN_HUD, g_Settings->LoadBool(Setting_JfgAlignHud) ? BST_CHECKED : BST_UNCHECKED);
     CheckDlgButton(IDC_GSH_SHOW_INPUT_RATE, g_Settings->LoadBool(Setting_JfgShowInputRate) ? BST_CHECKED : BST_UNCHECKED);
@@ -212,6 +229,9 @@ void CGameSpecificHacksDialog::UpdateControlState(void)
     {
         ::EnableWindow(GetDlgItem(SchemeOptions[i]), AnySource ? TRUE : FALSE);
     }
+    const bool Sprint = AnySource && IsDlgButtonChecked(IDC_GSH_ENABLE_SPRINT) == BST_CHECKED;
+    ::EnableWindow(GetDlgItem(IDC_GSH_SPRINT_SPEED), Sprint ? TRUE : FALSE);
+    ::EnableWindow(GetDlgItem(IDC_GSH_SPRINT_SPEED_LABEL), Sprint ? TRUE : FALSE);
 
     bool Target60Fps = ::SendMessage(GetDlgItem(IDC_GSH_FRAME_RATE), CB_GETCURSEL, 0, 0) == 1;
     ::ShowWindow(GetDlgItem(IDC_GSH_KEEP_30FPS), Target60Fps ? SW_HIDE : SW_SHOW);
@@ -261,7 +281,10 @@ LRESULT CGameSpecificHacksDialog::OnCheckBoxClicked(WORD /*wNotifyCode*/, WORD w
     case IDC_GSH_SYNC_AUDIO: SaveCheckBox(wID, Setting_JfgSyncAudio); break;
     case IDC_GSH_HALVE_ENEMY_SPEED: SaveCheckBox(wID, Setting_JfgHalveEnemySpeed); break;
     case IDC_GSH_FAST_CUTSCENES: SaveCheckBox(wID, Setting_JfgFastCutscenes); break;
-    case IDC_GSH_ENABLE_SPRINT: SaveCheckBox(wID, Setting_JfgEnableSprint); break;
+    case IDC_GSH_ENABLE_SPRINT:
+        SaveCheckBox(wID, Setting_JfgEnableSprint);
+        UpdateControlState();
+        break;
     case IDC_GSH_WIDESCREEN_HUD: SaveCheckBox(wID, Setting_JfgWidescreenHud); break;
     case IDC_GSH_ALIGN_HUD: SaveCheckBox(wID, Setting_JfgAlignHud); break;
     case IDC_GSH_SHOW_INPUT_RATE:
@@ -310,19 +333,36 @@ LRESULT CGameSpecificHacksDialog::OnPortChanged(WORD /*wNotifyCode*/, WORD wID, 
     return 0;
 }
 
-LRESULT CGameSpecificHacksDialog::OnStickCameraSpeedChanged(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam, BOOL & bHandled)
+LRESULT CGameSpecificHacksDialog::OnSliderChanged(UINT /*uMsg*/, WPARAM /*wParam*/, LPARAM lParam, BOOL & bHandled)
 {
-    if ((HWND)lParam != GetDlgItem(IDC_GSH_STICK_CAMERA_SPEED))
+    if ((HWND)lParam == GetDlgItem(IDC_GSH_STICK_CAMERA_SPEED))
     {
-        bHandled = FALSE;
+        const LRESULT Speed = ::SendMessage((HWND)lParam, TBM_GETPOS, 0, 0);
+        if (Speed >= 1 && Speed <= 10)
+        {
+            g_Settings->SaveDword(Setting_JfgGamepadCameraSpeed, (uint32_t)Speed);
+        }
         return 0;
     }
-    const LRESULT Speed = ::SendMessage((HWND)lParam, TBM_GETPOS, 0, 0);
-    if (Speed >= 1 && Speed <= 10)
+    if ((HWND)lParam == GetDlgItem(IDC_GSH_SPRINT_SPEED))
     {
-        g_Settings->SaveDword(Setting_JfgGamepadCameraSpeed, (uint32_t)Speed);
+        const uint32_t Speed = (uint32_t)::SendMessage((HWND)lParam, TBM_GETPOS, 0, 0) * SprintSpeedStep;
+        if (Speed >= SprintSpeedMinimum && Speed <= SprintSpeedMaximum)
+        {
+            g_Settings->SaveDword(Setting_JfgSprintSpeed, Speed);
+            ShowSprintSpeed(Speed);
+        }
+        return 0;
     }
+    bHandled = FALSE;
     return 0;
+}
+
+void CGameSpecificHacksDialog::ShowSprintSpeed(uint32_t Percent)
+{
+    wchar_t Text[64];
+    swprintf(Text, sizeof(Text) / sizeof(Text[0]), L"Sprint speed: %u%%", Percent);
+    SetDlgItemTextW(IDC_GSH_SPRINT_SPEED_LABEL, Text);
 }
 
 LRESULT CGameSpecificHacksDialog::OnClose(WORD /*wNotifyCode*/, WORD /*wID*/, HWND /*hWndCtl*/, BOOL & /*bHandled*/)

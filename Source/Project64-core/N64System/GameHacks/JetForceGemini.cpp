@@ -20,8 +20,12 @@ namespace
 // The constants below are still the US ones, spelled out, so this file keeps
 // working exactly as before while the migration to the table proceeds.
 const int8_t JfgStickLimit = 80;
-const float SprintMovementMultiplier = 1.25f;
-const float SprintAnimationMultiplier = 1.10f;
+// Sprint speed in percent of the normal movement (Setting_JfgSprintSpeed).
+const uint32_t SprintSpeedMinimum = 105;
+const uint32_t SprintSpeedMaximum = 175;
+// The looped run animation takes this share of the extra movement speed, 1.10
+// at the original 1.25, so the footsteps keep up without looking frantic.
+const float SprintAnimationShare = 0.4f;
 const float SprintMaximumStep = 100.0f;
 const uint64_t SprintRampMicroseconds = 500000;
 const uint64_t SprintMaximumElapsedMicroseconds = 100000;
@@ -7978,7 +7982,10 @@ void CJetForceGeminiRuntime::UpdateSprintBlend(void)
 // independent of the game's own acceleration, collision and slopes.
 void CJetForceGeminiRuntime::ApplySprint(uint32_t PlayerObject)
 {
-    const float SprintMovementExtraMultiplier = m_SprintBlend * (SprintMovementMultiplier - 1.0f);
+    uint32_t SprintSpeed = g_Settings->LoadDword(Setting_JfgSprintSpeed);
+    SprintSpeed = SprintSpeed < SprintSpeedMinimum ? SprintSpeedMinimum : (SprintSpeed > SprintSpeedMaximum ? SprintSpeedMaximum : SprintSpeed);
+    const float SprintMovementExtra = (float)(SprintSpeed - 100) / 100.0f;
+    const float SprintMovementExtraMultiplier = m_SprintBlend * SprintMovementExtra;
     float PositionX = 0.0f;
     float PositionZ = 0.0f;
     if (!m_Memory.ReadF32(PlayerObject + TransformXOffset, PositionX) ||
@@ -8063,7 +8070,7 @@ void CJetForceGeminiRuntime::ApplySprint(uint32_t PlayerObject)
     }
 
     m_SprintAnimationApplied = false;
-    const float SprintAnimationExtraMultiplier = m_SprintBlend * (SprintAnimationMultiplier - 1.0f);
+    const float SprintAnimationExtraMultiplier = m_SprintBlend * SprintMovementExtra * SprintAnimationShare;
     if (SprintAnimationExtraMultiplier > 0.0f && fabs(AnimationDelta) <= 0.5f)
     {
         float SprintAnimationFrame = AnimationFrame + AnimationDelta * SprintAnimationExtraMultiplier;

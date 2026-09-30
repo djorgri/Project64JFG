@@ -17,7 +17,7 @@ public:
         COMMAND_HANDLER(IDC_GSH_KEYBOARD_MOUSE_PORT, CBN_SELCHANGE, OnPortChanged);
         COMMAND_HANDLER(IDC_GSH_GAMEPAD1_PORT, CBN_SELCHANGE, OnPortChanged);
         COMMAND_HANDLER(IDC_GSH_GAMEPAD2_PORT, CBN_SELCHANGE, OnPortChanged);
-        MESSAGE_HANDLER(WM_HSCROLL, OnStickCameraSpeedChanged);
+        MESSAGE_HANDLER(WM_HSCROLL, OnSliderChanged);
         COMMAND_HANDLER(IDC_GSH_LATERAL_MOVEMENT, BN_CLICKED, OnCheckBoxClicked);
         COMMAND_HANDLER(IDC_GSH_PRESERVE_CAMERA, BN_CLICKED, OnCheckBoxClicked);
         COMMAND_HANDLER(IDC_GSH_FREE_CAMERA_JUMP, BN_CLICKED, OnCheckBoxClicked);
@@ -52,11 +52,12 @@ private:
     LRESULT OnCheckBoxClicked(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL & bHandled);
     LRESULT OnFrameRateChanged(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL & bHandled);
     LRESULT OnPortChanged(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL & bHandled);
-    LRESULT OnStickCameraSpeedChanged(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL & bHandled);
+    LRESULT OnSliderChanged(UINT uMsg, WPARAM wParam, LPARAM lParam, BOOL & bHandled);
     LRESULT OnClose(WORD wNotifyCode, WORD wID, HWND hWndCtl, BOOL & bHandled);
 
     void LoadSettings(void);
     void SaveCheckBox(int ControlId, SettingID Setting);
     void FillPortList(int ControlId, SettingID Setting);
     void UpdateControlState(void);
+    void ShowSprintSpeed(uint32_t Percent);
 };
