@@ -109,6 +109,9 @@ struct JFG_ADDRESSES
     // libultra's __osActiveQueue, the list of every thread; __osRunningThread
     // follows it in all builds. Read to find stubs a pre-empted thread is in.
     uint32_t OsActiveQueueAddress;
+    // The event-type test in libultra's sound player voice handler, see
+    // SoundPlayerRecoveryPatches. Zero where the build has another handler.
+    uint32_t SoundPlayerEventTypeTest;
 
     // Offsets inside relocatable overlays. The module is always resolved from
     // the live overlay table; only the position of the code inside it moves

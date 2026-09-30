@@ -194,6 +194,7 @@ private:
     void PatchFramePacing60(bool Enabled);
     void PatchSchedulerRelease(bool Enabled);
     void PatchWaterWakeRingRate(bool Enabled);
+    void PatchSoundPlayerRecovery(bool Enabled);
     void ApplyViBudget(bool Boost);
     bool PatchLandingCinematicSkip(bool Enabled);
     bool PatchIntroCinematicSkip(bool Enabled);
@@ -254,6 +255,7 @@ private:
     bool m_FramePacing60PatchApplied;
     bool m_SchedulerReleasePatchApplied;
     bool m_WaterWakeRingRatePatchApplied;
+    bool m_SoundPlayerRecoveryPatchApplied;
     bool m_GameplayReady;
     bool m_SprintActive;
     bool m_SprintTimeValid;

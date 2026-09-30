@@ -188,6 +188,11 @@ const uint32_t WaterWakeObjectLimit = 1024;
 // alternating and needs no state of its own.
 uint32_t WaterWakeRingRateEntry = 0x8006AAC8;
 
+// libultra's sound player voice handler, _sndpVoiceHandler: the test of the
+// next event's type, `bne $t8, $at` against AL_SNDP_API_EVT. See
+// SoundPlayerRecoveryPatches.
+uint32_t SoundPlayerEventTypeTest = 0x80084488;
+
 // Enemy movement: objMoveXYZ below catches movers that add a step directly to
 // their transform; HalveNamedEnemyMovement handles the named fliers whose own
 // movers bypass it.
@@ -2144,6 +2149,23 @@ GAME_HACK_CODE_PATCH WaterWakeRingRatePatches[] =
     { WaterWakeRingRateEntry + 0x20, 0x00000000, 0x1020002D }, // beq  $at, $zero, 0x8006ABA0
 };
 
+// The sound player's event pool is fixed (200 events in JFG). A busy scene,
+// explosions above all and more so at 60fps where the game updates its sounds
+// twice as often, can have more pending than that: alEvtqPostEvent then drops
+// events without a word, first new sounds (the audio goes quiet), then the
+// handler's own API event, which brings it back every audio frame. The queue
+// drains, alEvtqNextEvent returns an empty event (type -1, no delay) for ever
+// and the audio thread spins at priority 12 ("Nonsense sndp event?"), which
+// freezes the game. Handling the empty event like the API event posts a new
+// one, so the player waits for the next audio frame and recovers. The dead
+// `b +1; nop` after the test makes room.
+GAME_HACK_CODE_PATCH SoundPlayerRecoveryPatches[] =
+{
+    { SoundPlayerEventTypeTest + 0x00, 0x1701000C, 0x13010003 }, // beq   $t8, $at, post the API event
+    { SoundPlayerEventTypeTest + 0x04, 0x00000000, 0x2401FFFF }, // addiu $at, $zero, -1
+    { SoundPlayerEventTypeTest + 0x08, 0x10000001, 0x1701000A }, // bne   $t8, $at, handle the event
+};
+
 // The stub is written before the jump that reaches it.
 GAME_HACK_CODE_PATCH ObjectMovePatches[] =
 {
@@ -2599,6 +2621,7 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     ObjectMoveStub = A.ObjectMoveStub;
     LandingCinematicSkipStub = A.LandingCinematicSkipStub;
     WaterWakeRingRateEntry = A.WaterWakeRingRateEntry;
+    SoundPlayerEventTypeTest = A.SoundPlayerEventTypeTest;
     CameraAngleHelper = A.CameraAngleHelper;
     CameraHelperBase = A.CameraHelperBase;
     CameraTopDownHelperBase = A.CameraTopDownHelperBase;
@@ -2790,6 +2813,9 @@ void ApplyAddressTable(const JFG_ADDRESSES & A)
     WaterWakeRingRatePatches[1] = { WaterWakeRingRateEntry + 0x08, 0x00000000, 0x01A36825 };
     WaterWakeRingRatePatches[2] = { WaterWakeRingRateEntry + 0x1C, 0x1020002E, 0x002D0824 };
     WaterWakeRingRatePatches[3] = { WaterWakeRingRateEntry + 0x20, 0x00000000, 0x1020002D };
+    SoundPlayerRecoveryPatches[0] = { SoundPlayerEventTypeTest + 0x00, 0x1701000C, 0x13010003 };
+    SoundPlayerRecoveryPatches[1] = { SoundPlayerEventTypeTest + 0x04, 0x00000000, 0x2401FFFF };
+    SoundPlayerRecoveryPatches[2] = { SoundPlayerEventTypeTest + 0x08, 0x10000001, 0x1701000A };
     ObjectMovePatches[0] = { ObjectMoveStub + 0x00, 0x00000000, 0x8FA70040 };
     ObjectMovePatches[1] = { ObjectMoveStub + 0x04, 0x00000000, WithHi(0x3C010000, DroneLateralFlagsAddress) };
     ObjectMovePatches[2] = { ObjectMoveStub + 0x08, 0x00000000, WithLo(0x8C290000, DroneLateralFlagsAddress) };
@@ -2895,6 +2921,7 @@ CJetForceGeminiRuntime::CJetForceGeminiRuntime(CMipsMemoryVM & MMU, CRecompiler 
     m_FramePacing60PatchApplied(false),
     m_SchedulerReleasePatchApplied(false),
     m_WaterWakeRingRatePatchApplied(false),
+    m_SoundPlayerRecoveryPatchApplied(false),
     m_GameplayReady(false),
     m_SprintActive(false),
     m_SprintTimeValid(false),
@@ -3171,6 +3198,7 @@ void CJetForceGeminiRuntime::StateSaving(void)
     PatchIntroCinematicSkip(false);
     m_Memory.WriteU32(LandingCinematicSkipInputAddress, 0);
     PatchWaterWakeRingRate(false);
+    PatchSoundPlayerRecovery(false);
     PatchObjectMove(false);
     PatchSidekickStrafe(false);
     PatchSidekickPadControlProbe(false);
@@ -3212,6 +3240,7 @@ void CJetForceGeminiRuntime::StateLoaded(void)
     RemoveLegacyIntroCinematicSkip();
     ApplyViBudget(false);
     PatchWaterWakeRingRate(false);
+    PatchSoundPlayerRecovery(false);
     ClearCameraState();
     ClearMovementState();
 
@@ -3258,6 +3287,9 @@ bool CJetForceGeminiRuntime::SupportsCurrentRom(void) const
 // JetForceGeminiHudBuild.h, on PAL; the Kiosk demo's HUD has not been mapped.
 void CJetForceGeminiRuntime::ProcessRuntimeFrame(void)
 {
+    // A fix to the game rather than an option: on whenever the ROM is known
+    PatchSoundPlayerRecovery(IsSupportedRom());
+
     // Installing or removing the HUD rewrites its stubs; wait for the next call
     // when the game is using one of them.
     if (IsSupportedRom() && GuestCallInFlight())
@@ -6540,6 +6572,46 @@ void CJetForceGeminiRuntime::PatchWaterWakeRingRate(bool Enabled)
     m_WaterWakeRingRatePatchApplied = Enabled;
 }
 
+// Keeps the sound player alive when its event pool runs out, see
+// SoundPlayerRecoveryPatches.
+void CJetForceGeminiRuntime::PatchSoundPlayerRecovery(bool Enabled)
+{
+    if (SoundPlayerEventTypeTest == 0)
+    {
+        return;
+    }
+    uint32_t Current = 0;
+    if (m_Memory.ReadU32(SoundPlayerEventTypeTest, Current))
+    {
+        m_SoundPlayerRecoveryPatchApplied = Current == SoundPlayerRecoveryPatches[0].Replacement;
+    }
+    if (Enabled == m_SoundPlayerRecoveryPatchApplied)
+    {
+        return;
+    }
+
+    // addiu $at, $zero, 0x20 and lh $t8, 0x2c($t7) set up the test, and
+    // addiu $t9, $zero, 0x20 starts posting the API event.
+    uint32_t Signature[3];
+    if (!m_Memory.ReadU32(SoundPlayerEventTypeTest - 0x08, Signature[0]) ||
+        !m_Memory.ReadU32(SoundPlayerEventTypeTest - 0x04, Signature[1]) ||
+        !m_Memory.ReadU32(SoundPlayerEventTypeTest + 0x10, Signature[2]) ||
+        Signature[0] != 0x24010020 || Signature[1] != 0x85F8002C || Signature[2] != 0x24190020)
+    {
+        return;
+    }
+
+    CGameHackCodePatcher::Result Result = m_CodePatcher.SetEnabled(
+        SoundPlayerRecoveryPatches, sizeof(SoundPlayerRecoveryPatches) / sizeof(SoundPlayerRecoveryPatches[0]), Enabled);
+    if (Result == CGameHackCodePatcher::Result_SignatureMismatch ||
+        Result == CGameHackCodePatcher::Result_MemoryUnavailable)
+    {
+        return;
+    }
+
+    m_SoundPlayerRecoveryPatchApplied = Enabled;
+}
+
 void CJetForceGeminiRuntime::Deactivate(void)
 {
     // This runs on every controller poll and video interrupt for as long as no
@@ -6569,6 +6641,7 @@ void CJetForceGeminiRuntime::Deactivate(void)
     m_Memory.WriteU32(DroneLateralPreviousObjectAddress, 0);
     PatchSchedulerRelease(false);
     PatchWaterWakeRingRate(false);
+    PatchSoundPlayerRecovery(false);
     PatchFramePacing60(false);
     PatchFramePacing(false);
     SetCameraCode(false, false, false, false);

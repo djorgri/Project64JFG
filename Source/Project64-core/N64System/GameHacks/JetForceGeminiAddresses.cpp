@@ -107,6 +107,7 @@ const JFG_ADDRESSES JfgUsAddresses =
     /* FrontGetModeFunction                */ 0x80058A5C,
     /* MainChangeLevelFunction             */ 0x8004665C,
     /* OsActiveQueueAddress                */ 0x800A9E8C,
+    /* SoundPlayerEventTypeTest            */ 0x80084488,
 
     /* FloydPadControlOffset               */ 0x000002A4,
     /* IntroCinematicSkipEntryOffset       */ 0x000000D0,
@@ -225,6 +226,7 @@ const JFG_ADDRESSES JfgKioskAddresses =
     /* FrontGetModeFunction                */ 0x8005950C,
     /* MainChangeLevelFunction             */ 0x80045E50,
     /* OsActiveQueueAddress                */ 0x800AA83C,
+    /* SoundPlayerEventTypeTest            */ 0x00000000,
 
     /* FloydPadControlOffset               */ 0x000002A0,
     /* IntroCinematicSkipEntryOffset       */ 0x000000D0,
@@ -349,6 +351,7 @@ const JFG_ADDRESSES JfgPalAddresses =
     /* FrontGetModeFunction                */ 0x80058C6C,
     /* MainChangeLevelFunction             */ 0x8004675C,
     /* OsActiveQueueAddress                */ 0x800AA10C,
+    /* SoundPlayerEventTypeTest            */ 0x800846F8,
 
     /* FloydPadControlOffset               */ 0x000002A4,
     /* IntroCinematicSkipEntryOffset       */ 0x000000D0,
@@ -477,6 +480,7 @@ const JFG_ADDRESSES JfgJpAddresses =
     /* FrontGetModeFunction                */ 0x800588B4,
     /* MainChangeLevelFunction             */ 0x80046588,
     /* OsActiveQueueAddress                */ 0x800A9D9C,
+    /* SoundPlayerEventTypeTest            */ 0x80084348,
 
     /* FloydPadControlOffset               */ 0x000002A4,
     /* IntroCinematicSkipEntryOffset       */ 0x000000D0,

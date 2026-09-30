@@ -408,6 +408,36 @@ that hook is unavailable there. The older `animseqUpdate` step experiment is
 gone; only the `RemoveLegacy*CinematicSkip()` cleanups remain, to take an old
 state's hooks down.
 
+### Sound player recovery (always on)
+
+A busy scene could freeze the game for good, the sound going quiet a few
+seconds before. The audio thread (priority 12) then spins in libultra's sound
+player, printing `Nonsense sndp event?`, and the game threads never run again.
+
+The sound player's event pool is fixed: 200 events in JFG. Every playing sound
+posts its volume, pitch, pan and effect events each frame, and a big explosion
+plays many sounds; at 60 FPS the game posts them twice as often. Once the pool
+is empty, `alEvtqPostEvent` drops events without a word: first new sounds,
+then the handler's own `AL_SNDP_API_EVT`, the event that brings it back every
+audio frame. The queue drains, `alEvtqNextEvent` keeps returning an empty
+event (type -1, no delay), and `_sndpVoiceHandler` loops on it for ever. The
+frozen states show exactly that: an empty `allocList`, all 200 items free.
+
+`PatchSoundPlayerRecovery()` rewrites the handler's event-type test at
+`SoundPlayerEventTypeTest` so that an empty event is handled like the API
+event: the handler posts a new one and waits for the next audio frame. The
+dead `b +1; nop` after the test makes room, so no stub is needed. It is a fix
+to the game rather than an option: on whenever the ROM is supported, and taken
+out before a state is saved like the other patches. Loading one of the frozen
+states with it applied lets the game run on at once.
+
+| Build | `SoundPlayerEventTypeTest` |
+| --- | --- |
+| USA | `0x80084488` |
+| PAL | `0x800846F8` |
+| Japan | `0x80084348` |
+| Kiosk | none (its handler is compiled differently; the patch is skipped) |
+
 ## Water wake / ripple investigation - not an active patch
 
 The 60 FPS water wake still has an unresolved rendering issue: it may vanish

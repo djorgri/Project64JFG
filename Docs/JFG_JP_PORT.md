@@ -293,6 +293,7 @@ the running game rather than on code signatures:
 | `FrontGetModeFunction` | `0x80058A5C` | `0x800588B4` | -0x1a8 |
 | `MainChangeLevelFunction` | `0x8004665C` | `0x80046588` | -0xd4 |
 | `OsActiveQueueAddress` | `0x800A9E8C` | `0x800A9D9C` | -0xf0 |
+| `SoundPlayerEventTypeTest` | `0x80084488` | `0x80084348` | -0x140 |
 | `FloydPadControlOffset` | `0x000002A4` | `0x000002A4` | same |
 | `IntroCinematicSkipEntryOffset` | `0x000000D0` | `0x000000D0` | same |
 | `LegacyIntroCinematicSkipEntryOffset` | `0x000000C0` | `0x000000C0` | same |

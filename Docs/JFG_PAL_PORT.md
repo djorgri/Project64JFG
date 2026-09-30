@@ -298,6 +298,7 @@ signatures, so they are the ones to recheck after a change:
 | `FrontGetModeFunction` | `0x80058A5C` | `0x80058C6C` | +0x210 |
 | `MainChangeLevelFunction` | `0x8004665C` | `0x8004675C` | +0x100 |
 | `OsActiveQueueAddress` | `0x800A9E8C` | `0x800AA10C` | +0x280 |
+| `SoundPlayerEventTypeTest` | `0x80084488` | `0x800846F8` | +0x270 |
 | `FloydPadControlOffset` | `0x000002A4` | `0x000002A4` | same |
 | `IntroCinematicSkipEntryOffset` | `0x000000D0` | `0x000000D0` | same |
 | `LegacyIntroCinematicSkipEntryOffset` | `0x000000C0` | `0x000000C0` | same |
