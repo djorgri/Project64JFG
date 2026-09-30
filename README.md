@@ -79,6 +79,9 @@ support and an optional 60 FPS mode.
 ### Fixes and quality of life
 
 - Restored 3D rendering behind the rain effect, fixing a black-screen issue
+- Fixed a freeze in busy scenes (explosions above all), where the sound went
+  quiet a few seconds before the game stopped for good: the game's sound
+  player now recovers when it runs out of events
 - More reliable audio: hardened against the crashes, stalls, and dropouts that
   could occur during heavy cutscenes, with click-free recovery when the frame
   rate dips
