@@ -4,6 +4,7 @@
 #include <Project64-core/Logging.h>
 #include <Project64-core/N64System/Interpreter/InterpreterOps.h>
 #include <Project64-core/N64System/Interpreter/InterpreterFpuFast.h>
+#include <Project64-core/N64System/Interpreter/InterpreterJit.h>
 #include <Project64-core/N64System/Mips/MemoryVirtualMem.h>
 #include <Project64-core/N64System/Mips/R4300iInstruction.h>
 #include <Project64-core/N64System/Mips/SystemTiming.h>
@@ -29,7 +30,7 @@ const int32_t R4300iOp::SWR_SHIFT[4] = {24, 16, 8, 0};
 const int32_t R4300iOp::LWL_SHIFT[4] = {0, 8, 16, 24};
 const int32_t R4300iOp::LWR_SHIFT[4] = {24, 16, 8, 0};
 
-R4300iOp::R4300iOp(CN64System & System, bool Force32bit) :
+R4300iOp::R4300iOp(CN64System & System, bool Force32bit, bool AllowJit) :
     m_System(System),
     m_Reg(System.m_Reg),
     m_TLB(System.m_TLB),
@@ -49,14 +50,112 @@ R4300iOp::R4300iOp(CN64System & System, bool Force32bit) :
     m_LLBit(System.m_Reg.m_LLBit),
     m_InstructionRegion(0),
     m_InstructionMemory(nullptr),
-    m_InstructionPtr(nullptr)
+    m_InstructionPtr(nullptr),
+    m_Jit(nullptr)
 {
     m_Opcode.Value = 0;
     BuildInterpreter(Force32bit);
+#if defined(__amd64__) || defined(_M_X64)
+    if (AllowJit && g_Settings->LoadBool(Setting_InterpreterJit))
+    {
+        CInterpreterJit::Context State;
+        State.Interpreter = this;
+        State.GPR = m_GPR;
+        State.HI = &m_RegHI;
+        State.LO = &m_RegLO;
+        State.ProgramCounter = &m_PROGRAM_COUNTER;
+        State.NextTimer = &System.m_NextTimer;
+        State.PipelineStage = &System.m_PipelineStage;
+        State.JumpToLocation = &System.m_JumpToLocation;
+        State.TestTimer = &System.m_TestTimer;
+        State.DoSomething = &System.m_SystemEvents.DoSomething();
+        State.Opcode = &m_Opcode.Value;
+        State.Status = (const uint32_t *)&m_Reg.STATUS_REGISTER;
+        State.FPR_S = m_FPR_S;
+        State.ReadMap = m_MMU.DirectReadMapAddress();
+        State.WriteMap = m_MMU.DirectWriteMapAddress();
+        State.Rdram = &m_MMU.Rdram();
+        State.RdramSize = &m_MMU.RdramSize();
+        State.Force32bit = Force32bit;
+        m_Jit = new CInterpreterJit(State);
+    }
+#else
+    (void)AllowJit;
+#endif
 }
 
 R4300iOp::~R4300iOp()
 {
+#if defined(__amd64__) || defined(_M_X64)
+    delete m_Jit;
+#endif
+}
+
+// The function the dispatch tables end at for an opcode, SPECIAL(), COP1()
+// and the other dispatchers only choosing the next table
+uint64_t R4300iOp::HandlerAddress(uint32_t OpcodeValue) const
+{
+    R4300iOpcode Opcode;
+    Opcode.Value = OpcodeValue;
+    Func Handler = Jump_Opcode[Opcode.op];
+    if (Handler == &R4300iOp::SPECIAL)
+    {
+        Handler = Jump_Special[Opcode.funct];
+    }
+    else if (Handler == &R4300iOp::REGIMM)
+    {
+        Handler = Jump_Regimm[Opcode.rt];
+    }
+    else if (Handler == &R4300iOp::COP0)
+    {
+        Handler = Jump_CoP0[Opcode.rs];
+        if (Handler == &R4300iOp::COP0_CO)
+        {
+            Handler = Jump_CoP0_Function[Opcode.funct];
+        }
+    }
+    else if (Handler == &R4300iOp::COP1)
+    {
+        Handler = Jump_CoP1[Opcode.fmt];
+        if (Handler == &R4300iOp::COP1_BC)
+        {
+            Handler = Jump_CoP1_BC[Opcode.ft];
+        }
+        else if (Handler == &R4300iOp::COP1_S)
+        {
+            Handler = Jump_CoP1_S[Opcode.funct];
+        }
+        else if (Handler == &R4300iOp::COP1_D)
+        {
+            Handler = Jump_CoP1_D[Opcode.funct];
+        }
+        else if (Handler == &R4300iOp::COP1_W)
+        {
+            Handler = Jump_CoP1_W[Opcode.funct];
+        }
+        else if (Handler == &R4300iOp::COP1_L)
+        {
+            Handler = Jump_CoP1_L[Opcode.funct];
+        }
+    }
+    else if (Handler == &R4300iOp::COP2)
+    {
+        Handler = Jump_CoP2[Opcode.fmt];
+    }
+    static_assert(sizeof(Handler) == sizeof(void *), "member function pointers must be plain code addresses");
+    void * Code;
+    memcpy(&Code, &Handler, sizeof(Code));
+    return (uint64_t)(uintptr_t)Code;
+}
+
+// Compiled blocks skip the per-instruction debugger hooks, so they only run
+// while none is in use
+bool R4300iOp::JitAllowed(void) const
+{
+    return !g_DebugSettings.haveDebugger ||
+           (!g_DebugSettings.haveExecutionBP && !g_DebugSettings.trackCPUStepStarted && !g_DebugSettings.stepping &&
+            !g_DebugSettings.skipOp && !g_DebugSettings.cpuLoggingEnabled && !g_DebugSettings.trackCPUStepEnded &&
+            !g_DebugSettings.haveReadBP && !g_DebugSettings.haveWriteBP);
 }
 
 void R4300iOp::InPermLoop()
@@ -100,6 +199,9 @@ void R4300iOp::ExecuteOps(uint32_t Cycles)
     uint64_t & ProgramCounter = m_PROGRAM_COUNTER;
     MIPS_DWORD * const GPR = m_GPR;
     uint32_t * InstructionPtr = m_InstructionPtr;
+#if defined(__amd64__) || defined(_M_X64)
+    CInterpreterJit * const Jit = Cycles == (uint32_t)-1 ? m_Jit : nullptr;
+#endif
 
     while (!Done && Cycles > 0)
     {
@@ -117,50 +219,71 @@ void R4300iOp::ExecuteOps(uint32_t Cycles)
             }
             updateInstructionMemory = false;
         }
-        const uint32_t OpcodeValue = *InstructionPtr;
-        m_Opcode.Value = OpcodeValue;
-        if (g_DebugSettings.haveDebugger)
+        bool Compiled = false;
+#if defined(__amd64__) || defined(_M_X64)
+        if (Jit != nullptr && PipelineStage == PIPELINE_STAGE_NORMAL && JitAllowed())
         {
-            if (g_DebugSettings.haveExecutionBP && g_Debugger->ExecutionBP((uint32_t)m_PROGRAM_COUNTER))
+            CInterpreterJit::Result Ran = Jit->Execute(ProgramCounter);
+            if (Ran != CInterpreterJit::Result_None)
             {
-                g_Settings->SaveBool(Debugger_SteppingOps, true);
-            }
-
-            if (g_DebugSettings.trackCPUStepStarted)
-            {
-                g_Debugger->CPUStepStarted(); // May set stepping ops/skip op
-            }
-
-            if (g_DebugSettings.stepping)
-            {
-                g_Debugger->WaitForStep();
-            }
-
-            if (g_DebugSettings.skipOp)
-            {
-                // Skip command if instructed by the debugger
-                g_Settings->SaveBool(Debugger_SkipOp, false);
-                m_PROGRAM_COUNTER += 4;
-                continue;
-            }
-
-            if (g_DebugSettings.cpuLoggingEnabled)
-            {
-                g_Debugger->CPUStep();
+                // Compiled code may have left the page
+                updateInstructionMemory = true;
+                if (Ran == CInterpreterJit::Result_Instructions)
+                {
+                    continue;
+                }
+                // The end of the last instruction is below
+                Compiled = true;
             }
         }
+#endif
+        if (!Compiled)
+        {
+            const uint32_t OpcodeValue = *InstructionPtr;
+            m_Opcode.Value = OpcodeValue;
+            if (g_DebugSettings.haveDebugger)
+            {
+                if (g_DebugSettings.haveExecutionBP && g_Debugger->ExecutionBP((uint32_t)m_PROGRAM_COUNTER))
+                {
+                    g_Settings->SaveBool(Debugger_SteppingOps, true);
+                }
 
-        // SPECIAL() and COP1() / COP1_S() only dispatch: call their function directly
-        uint32_t Dispatch = OpcodeValue >> 26;
-        if (Dispatch == R4300i_SPECIAL)
-        {
-            Dispatch = 64 + (OpcodeValue & 0x3F);
+                if (g_DebugSettings.trackCPUStepStarted)
+                {
+                    g_Debugger->CPUStepStarted(); // May set stepping ops/skip op
+                }
+
+                if (g_DebugSettings.stepping)
+                {
+                    g_Debugger->WaitForStep();
+                }
+
+                if (g_DebugSettings.skipOp)
+                {
+                    // Skip command if instructed by the debugger
+                    g_Settings->SaveBool(Debugger_SkipOp, false);
+                    m_PROGRAM_COUNTER += 4;
+                    continue;
+                }
+
+                if (g_DebugSettings.cpuLoggingEnabled)
+                {
+                    g_Debugger->CPUStep();
+                }
+            }
+
+            // SPECIAL() and COP1() / COP1_S() only dispatch: call their function directly
+            uint32_t Dispatch = OpcodeValue >> 26;
+            if (Dispatch == R4300i_SPECIAL)
+            {
+                Dispatch = 64 + (OpcodeValue & 0x3F);
+            }
+            else if ((OpcodeValue >> 21) == ((R4300i_CP1 << 5) | R4300i_COP1_S))
+            {
+                Dispatch = 128 + (OpcodeValue & 0x3F);
+            }
+            (this->*Jump_Dispatch[Dispatch])();
         }
-        else if ((OpcodeValue >> 21) == ((R4300i_CP1 << 5) | R4300i_COP1_S))
-        {
-            Dispatch = 128 + (OpcodeValue & 0x3F);
-        }
-        (this->*Jump_Dispatch[Dispatch])();
         GPR[0].DW = 0; // MIPS $zero hard-wired to 0
         NextTimer -= CountPerOp;
         if (Cycles != (uint32_t)-1)

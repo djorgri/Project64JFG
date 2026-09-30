@@ -115,6 +115,15 @@ public:
     {
         return (uint8_t *)m_MemoryWriteMap[VAddr32 >> 12];
     }
+    // Where the maps themselves are kept, for code compiled against them
+    size_t * const * DirectReadMapAddress() const
+    {
+        return &m_MemoryReadMap;
+    }
+    size_t * const * DirectWriteMapAddress() const
+    {
+        return &m_MemoryWriteMap;
+    }
 
     int32_t MemoryFilter(uint32_t dwExptCode, void * lpExceptionPointer);
 

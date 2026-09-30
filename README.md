@@ -70,6 +70,9 @@ support and an optional 60 FPS mode.
   close to 60. It only costs host CPU where the game uses it. On a slower PC,
   set the game's *Overclock modifier* back to 1 under *Options → Settings*
   (the game's *General* page)
+- The x64 build compiles the game's code to x64 as it runs, which emulates the
+  N64 CPU markedly faster with exactly the same results as the interpreter;
+  `Interpreter JIT=0` under `[Settings]` in `Project64.cfg` turns it off
 - Save states remain usable with the gameplay patches enabled
 - Source-built Win32 and x64 Parallel-RDP and Parallel-RSP plugins, with
   configurable RDP and Video Interface settings

@@ -55,6 +55,7 @@
     <ClCompile Include="N64System\GameHacks\JetForceGemini.cpp" />
     <ClCompile Include="N64System\GameHacks\JetForceGeminiAddresses.cpp" />
     <ClCompile Include="N64System\FramePerSecond.cpp" />
+    <ClCompile Include="N64System\Interpreter\InterpreterJit.cpp" />
     <ClCompile Include="N64System\Interpreter\InterpreterOps.cpp" />
     <ClCompile Include="N64System\MemoryHandler\AudioInterfaceHandler.cpp" />
     <ClCompile Include="N64System\MemoryHandler\CartridgeDomain1Address1Handler.cpp" />
@@ -187,6 +188,7 @@
     <ClInclude Include="N64System\GameHacks\JetForceGeminiHudPalOriginals.h" />
     <ClInclude Include="N64System\FramePerSecond.h" />
     <ClInclude Include="N64System\Interpreter\InterpreterFpuFast.h" />
+    <ClInclude Include="N64System\Interpreter\InterpreterJit.h" />
     <ClInclude Include="N64System\Interpreter\InterpreterOps.h" />
     <ClInclude Include="N64System\MemoryHandler\AudioInterfaceHandler.h" />
     <ClInclude Include="N64System\MemoryHandler\CartridgeDomain1Address1Handler.h" />

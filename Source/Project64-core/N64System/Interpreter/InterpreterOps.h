@@ -4,14 +4,16 @@
 #include <Project64-core/N64System/Mips/Register.h>
 
 class CX86RecompilerOps;
+class CInterpreterJit;
 
 class R4300iOp :
     public CLogging
 {
     friend CX86RecompilerOps;
+    friend CInterpreterJit;
 
 public:
-    R4300iOp(CN64System & System, bool Force32bit);
+    R4300iOp(CN64System & System, bool Force32bit, bool AllowJit);
     ~R4300iOp(void);
 
     void ExecuteCPU();
@@ -29,6 +31,8 @@ private:
     R4300iOp & operator=(const R4300iOp &);
 
     void BuildInterpreter(bool Force32bit);
+    uint64_t HandlerAddress(uint32_t OpcodeValue) const;
+    bool JitAllowed(void) const;
 
     typedef void (R4300iOp::*Func)();
 
@@ -303,6 +307,7 @@ private:
     uint64_t m_InstructionRegion;
     uint8_t * m_InstructionMemory;
     uint32_t * m_InstructionPtr;
+    CInterpreterJit * m_Jit;
 
     Func Jump_Opcode[64];
     Func Jump_Special[64];
